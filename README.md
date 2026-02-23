@@ -4,23 +4,39 @@
 [![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/hardwork9047/cfd-solver/main.yml?branch=main)](https://github.com/hardwork9047/cfd-solver/actions?query=workflow%3Abuild)
 [![License](https://img.shields.io/github/license/hardwork9047/cfd-solver)](https://github.com/hardwork9047/cfd-solver/blob/main/LICENSE)
 
-Welcome to our project! This is a specialized Python library for calculating fundamental flows in Computational Fluid Dynamics (CFD). I've designed it specifically to be easy to learn while remaining numerically robust.
+A specialized Python library for calculating fundamental flows in Computational Fluid Dynamics (CFD). Designed to be easy to learn while remaining numerically robust and suitable for educational and research purposes.
 
-## 🤝 Contributing
+## 🎯 Key Features
 
-We welcome contributions! Please see our [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on how to get started.
+| Feature | Description |
+|---------|-------------|
+| **Educational** | Clear implementations of FDM, SOR, and Upwind schemes |
+| **Robust** | Comprehensive logging and error handling for numerical stability |
+| **Non-Newtonian** | Support for Power-Law fluids (shear-thinning/thickening) |
+| **Visual** | Built-in plotting and easy animation workflows |
+| **Verified** | All solvers verified against analytical solutions |
 
-## 📜 License
+## 🔧 Capabilities
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+### 1. Newtonian Poiseuille Flow
+Classic pressure-driven laminar flows:
+- **Plane Poiseuille**: Flow between parallel plates
+- **Circular Poiseuille**: Flow in circular pipes
+- **Features**: SOR solver, analytical verification, convergence tracking
 
-## ✨ Latest Features
+### 2. Non-Newtonian Flow ✨
+Power-Law model for variable viscosity fluids:
+- **Shear-thinning** ($n < 1$): blood, paint
+- **Newtonian** ($n = 1$): water
+- **Shear-thickening** ($n > 1$): cornstarch suspension
+- **Features**: Non-linear iterative solver with robust stability controls
 
-- **SOR-Accelerated Solvers**: Fast and efficient steady-state calculations.
-- **Non-Newtonian Support**: Explore the world of shear-thinning and shear-thickening fluids.
-- **Stabilized Navier-Stokes**: 2D Cavity flow solver with Upwind differencing and dynamic DT.
-- **Animation Ready**: Dedicated workflows for creating fluid simulation videos.
-- **Devoted Support**: Comprehensive logging and error handling to guide you through every calculation.
+### 3. Lid-Driven Cavity Flow
+Benchmark 2D Navier-Stokes solver:
+- **Physics**: Incompressible, viscous flow in square cavity
+- **Stability**: Upwind differencing, dynamic time-stepping, numerical clipping
+- **Outputs**: Velocity field, pressure distribution, vorticity analysis
+- **Animation**: Frame generation for video creation
 
 ## 🛠 Installation
 
@@ -78,13 +94,37 @@ plt.grid(True)
 plt.show()
 ```
 
-## 📖 Learning Resources
+## � Numerical Methods
 
-I've prepared several guides to help you on your journey:
-- **[TUTORIAL.md](TUTORIAL.md)**: Your step-by-step learning path.
-- **[PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md)**: A high-level look at what we can do.
-- **[FEATURES.md](FEATURES.md)**: Detailed technical information.
-- **[VIDEO_TUTORIAL.md](VIDEO_TUTORIAL.md)**: How to make beautiful animations.
+To ensure robust and accurate simulations, this library implements:
+- **FDM (Finite Difference Method)**: 2nd-order central difference for diffusion
+- **Upwind Scheme**: 1st-order upwind for stable advection
+- **SOR (Successive Over-Relaxation)**: Accelerated iterative solver
+- **Dynamic Time-Stepping**: Automatic adjustment based on CFL and viscous stability limits
+
+## 📂 Project Structure
+
+```
+cfd/
+├── src/cfd/
+│   ├── poiseuille.py       # SOR-based Newtonian solvers
+│   ├── cavity.py           # Stabilized Navier-Stokes solver
+│   └── non_newtonian.py    # Power-Law fluid solvers
+├── examples/
+│   ├── verify_*.py         # Rigorous verification scripts
+│   ├── demo_*.py           # Feature demonstrations
+│   └── make_animation_frames.py   # Animation frame generator
+├── docs/
+│   ├── VERIFICATION_REPORT.md  # Test results and performance
+│   └── VIDEO_TUTORIAL.md       # Animation creation guide
+└── TUTORIAL.md             # Step-by-step learning path
+```
+
+## 📖 Documentation
+
+- **[TUTORIAL.md](TUTORIAL.md)**: Step-by-step learning path for beginners
+- **[docs/VERIFICATION_REPORT.md](docs/VERIFICATION_REPORT.md)**: Detailed verification results and performance metrics
+- **[docs/VIDEO_TUTORIAL.md](docs/VIDEO_TUTORIAL.md)**: Guide to creating animations with FFmpeg
 
 ## 🚀 Quick Demo
 
@@ -107,6 +147,15 @@ This library follows high standards for your safety and success:
 - **Robust Error Handling** (No more silent NaNs!)
 - **Comprehensive Logging**
 - **Strict Analytical Verification**
+- **Test Coverage**: 15+ tests, all passing ✅
+
+## 🤝 Contributing
+
+We welcome contributions! Please see our [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on how to get started.
+
+## 📜 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ---
-*Created with love and care to help you master the world of fluids.*
+*Created with care to help you master the world of fluids.* 🌊
