@@ -3,7 +3,7 @@
 This document outlines the core principles and boundaries for the CFD Solver Tutorial project, ensuring it remains secure, stable, and true to its educational mission.
 
 ## 🛡️ Security Practices
-- **No Secrets:** Never hardcode API keys, credentials, or personal information. Use environment variables for any external integrations.
+- **No Secrets:** Never hardcode API keys, credentials, or personal information. For GitHub operations (like `git push`), use environment variables to store your Personal Access Token (PAT). For example, set the `GITHUB_HARDWORK9047` environment variable with your PAT. You can then configure Git to use this variable for authentication, for instance, by setting a global Git configuration like `git config --global http.https://github.com/.extraheader 'AUTHORIZATION: token $GITHUB_HARDWORK9047'`.
 - **Dependency Safety:** Only use verified packages from PyPI. Always check `uv.lock` for reproducible and safe environments.
 - **Data Integrity:** Protect numerical results. Ensure simulation data is stored in designated directories and not committed unless necessary.
 - **Git commands:** All git commands are allowed via Gemini. (user:hardwork9047, password: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)
