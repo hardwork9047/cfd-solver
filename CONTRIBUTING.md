@@ -4,7 +4,7 @@
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/cfd-solver.git
+git clone https://github.com/hardwork9047/cfd-solver.git
 cd cfd-solver
 
 # Setup the project with uv

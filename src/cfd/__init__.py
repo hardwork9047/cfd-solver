@@ -5,7 +5,7 @@ A library for calculating Poiseuille flows and Cavity flows.
 """
 
 __version__ = "0.1.0"
-__author__ = "Your Name"
+__author__ = "hardwork9047"
 __license__ = "MIT"
 
 from .cavity import CavityFlow

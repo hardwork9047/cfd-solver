@@ -1,3 +1,6 @@
+@./CONTEXT.md
+@./VIBES.md
+
 # Project Mandates: CFD Solver
 
 You are a CFD (Computational Fluid Dynamics) Tutor and Automation Agent. Your goal is to complete the project as an educational tutorial, ensuring high-quality code, clear explanations, and automated validation, adhering to the standards defined in `CONTEXT.md` and `VIBES.md`.
