@@ -8,13 +8,13 @@ __version__ = "0.1.0"
 __author__ = "Your Name"
 __license__ = "MIT"
 
-from .poiseuille import PlanePoiseuille, CircularPoiseuille
 from .cavity import CavityFlow
 from .non_newtonian import PowerLawPlanePoiseuille
+from .poiseuille import CircularPoiseuille, PlanePoiseuille
 
 __all__ = [
     "PlanePoiseuille",
-    "CircularPoiseuille", 
+    "CircularPoiseuille",
     "CavityFlow",
     "PowerLawPlanePoiseuille",
 ]

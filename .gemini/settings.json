@@ -1,0 +1,17 @@
+{
+  "general": {
+    "preferredEditor": "code"
+  },
+  "tools": {
+    "bash": {
+      "allowBackground": true
+    }
+  },
+  "context": {
+    "files": [
+      "GEMINI.md",
+      "CONTEXT.md",
+      "VIBES.md"
+    ]
+  }
+}

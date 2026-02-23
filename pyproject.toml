@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
-    {name = "Your Name", email = "you@example.com"}
+    {name = "hardwork9047", email = "tomatosimple1104@gmail.com"}
 ]
 keywords = [
     "CFD",
@@ -47,10 +47,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/cfd-solver"
-Documentation = "https://github.com/yourusername/cfd-solver#readme"
-Repository = "https://github.com/yourusername/cfd-solver.git"
-Issues = "https://github.com/yourusername/cfd-solver/issues"
+Homepage = "https://github.com/hardwork9047/cfd-solver"
+Documentation = "https://github.com/hardwork9047/cfd-solver#readme"
+Repository = "https://github.com/hardwork9047/cfd-solver.git"
+Issues = "https://github.com/hardwork9047/cfd-solver/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cfd"]
