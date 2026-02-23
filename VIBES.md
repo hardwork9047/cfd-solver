@@ -6,6 +6,7 @@ This document outlines the core principles and boundaries for the CFD Solver Tut
 - **No Secrets:** Never hardcode API keys, credentials, or personal information. Use environment variables for any external integrations.
 - **Dependency Safety:** Only use verified packages from PyPI. Always check `uv.lock` for reproducible and safe environments.
 - **Data Integrity:** Protect numerical results. Ensure simulation data is stored in designated directories and not committed unless necessary.
+- **Git commands:** All git commands are allowed via Gemini. (user:hardwork9047, password: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)
 
 ## 💎 Code & Development Integrity
 - **Verification:** All code must pass `pytest` and maintain numerical stability (no NaNs or Infs). Refer to `CONTEXT.md` for testing infrastructure.
