@@ -1,0 +1,65 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cfd-solver"
+version = "0.2.0"
+description = "A robust Python library for Poiseuille and stabilized Cavity flow simulations."
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "Your Name", email = "you@example.com"}
+]
+keywords = [
+    "CFD",
+    "Fluid Dynamics",
+    "Navier-Stokes",
+    "Poiseuille",
+    "Lid-Driven Cavity",
+    "Non-Newtonian",
+    "Numerical Simulation"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Education",
+    "Topic :: Scientific/Engineering :: Physics",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    "numpy>=1.26.0",
+    "matplotlib>=3.8.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.1.0",
+    "twine>=5.0.0",
+    "black>=24.0.0",
+    "ruff>=0.3.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/cfd-solver"
+Documentation = "https://github.com/yourusername/cfd-solver#readme"
+Repository = "https://github.com/yourusername/cfd-solver.git"
+Issues = "https://github.com/yourusername/cfd-solver/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cfd"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+lint.select = ["E", "F", "W", "I"]
