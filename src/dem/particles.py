@@ -85,6 +85,9 @@ class ParticleSystem:
         # Simulation time
         self.time = 0.0
         self.iteration = 0
+        
+        # Store forces for visualization
+        self.forces = np.zeros((n_particles, 2))
 
         logger.info(
             f"Initialized DEM ParticleSystem: {n_particles} particles, "
@@ -163,6 +166,9 @@ class ParticleSystem:
         # Compute current forces
         forces = self.compute_forces()
         accelerations = forces / self.mass
+        
+        # Store forces for visualization
+        self.forces = forces.copy()
 
         # Update velocities (half-step)
         self.velocities += 0.5 * accelerations * self.dt
@@ -208,7 +214,7 @@ class ParticleSystem:
         return 0.5 * self.mass * np.sum(v_mag**2)
 
     def plot(self, figsize=(10, 12), save_path=None):
-        """Plot current particle positions."""
+        """Plot current particle positions with color based on force magnitude."""
         fig, ax = plt.subplots(figsize=figsize)
 
         # Draw domain boundaries
@@ -217,17 +223,33 @@ class ParticleSystem:
         ax.plot([0, 0], [0, self.height], "k-", linewidth=2)
         ax.plot([self.width, self.width], [0, self.height], "k-", linewidth=2)
 
-        # Draw particles
+        # Compute force magnitudes for coloring
+        force_magnitudes = np.linalg.norm(self.forces, axis=1)
+        
+        # Normalize force magnitudes for colormap (avoid division by zero)
+        max_force = np.max(force_magnitudes) if np.max(force_magnitudes) > 0 else 1.0
+        normalized_forces = force_magnitudes / max_force
+        
+        # Use colormap (blue for low force, red for high force)
+        cmap = plt.cm.coolwarm
+        
+        # Draw particles with color based on force
         for i in range(self.n_particles):
+            color = cmap(normalized_forces[i])
             circle = Circle(
                 self.positions[i],
                 self.radius,
-                facecolor="steelblue",
+                facecolor=color,
                 edgecolor="black",
                 linewidth=0.5,
-                alpha=0.7,
+                alpha=0.8,
             )
             ax.add_patch(circle)
+
+        # Add colorbar
+        sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=0, vmax=max_force))
+        sm.set_array([])
+        cbar = plt.colorbar(sm, ax=ax, label="Force Magnitude [N]", pad=0.02)
 
         ax.set_xlim(-0.5, self.width + 0.5)
         ax.set_ylim(-0.5, self.height + 0.5)

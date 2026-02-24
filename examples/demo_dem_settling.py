@@ -42,15 +42,24 @@ def demo_particle_settling():
     system.positions[2] = [0.8, 2.0]
     system.positions[3] = [1.2, 2.3]
     
-    # Create frames directory
-    frames_dir = "frames_dem"
+    # Create output directories
+    results_dir = "results"
+    frames_dir = os.path.join(results_dir, "frames")
+    images_dir = os.path.join(results_dir, "images")
+    video_dir = os.path.join(results_dir, "video")
+    
+    for directory in [results_dir, frames_dir, images_dir, video_dir]:
+        os.makedirs(directory, exist_ok=True)
+    
+    # Clean up old frames
     if os.path.exists(frames_dir):
-        shutil.rmtree(frames_dir)
-    os.makedirs(frames_dir)
+        for file in os.listdir(frames_dir):
+            if file.startswith("dem_frame_"):
+                os.remove(os.path.join(frames_dir, file))
     
     # Plot initial state
     print("Initial state:")
-    fig_init = system.plot(save_path=f"{frames_dir}/frame_0000.png")
+    fig_init = system.plot(save_path=os.path.join(frames_dir, "dem_frame_0000.png"))
     plt.close(fig_init)
 
     # Run simulation with frame capture
@@ -66,7 +75,7 @@ def demo_particle_settling():
         
         if step % frame_interval == 0:
             frame_count += 1
-            fig = system.plot(save_path=f"{frames_dir}/frame_{frame_count:04d}.png")
+            fig = system.plot(save_path=os.path.join(frames_dir, f"dem_frame_{frame_count:04d}.png"))
             plt.close(fig)
             
         if step % 2000 == 0:
@@ -75,12 +84,14 @@ def demo_particle_settling():
 
     # Final frame
     frame_count += 1
-    fig_final = system.plot(save_path=f"{frames_dir}/frame_{frame_count:04d}.png")
+    fig_final = system.plot(save_path=os.path.join(frames_dir, f"dem_frame_{frame_count:04d}.png"))
     plt.close(fig_final)
 
     print(f"\n✅ Generated {frame_count + 1} frames in '{frames_dir}/' directory")
+    
+    video_path = os.path.join(video_dir, "dem_settling.mp4")
     print("\nTo create video, run:")
-    print(f"  ffmpeg -framerate 10 -i {frames_dir}/frame_%04d.png -c:v libx264 -pix_fmt yuv420p dem_settling.mp4")
+    print(f"  ffmpeg -framerate 10 -i {frames_dir}/dem_frame_%04d.png -c:v libx264 -pix_fmt yuv420p -vf \"scale=trunc(iw/2)*2:trunc(ih/2)*2\" {video_path} -y")
     
     # Plot particle distribution
     bin_centers, hist = system.get_particle_distribution(n_bins=10)
@@ -92,12 +103,18 @@ def demo_particle_settling():
     ax.set_title(f"Vertical Distribution at t={system.time:.2f}s")
     ax.grid(True, alpha=0.3)
     plt.tight_layout()
-    plt.savefig("dem_distribution.png", dpi=150, bbox_inches="tight")
-    print("\nDistribution plot saved as: dem_distribution.png")
+    
+    dist_path = os.path.join(images_dir, "dem_distribution.png")
+    plt.savefig(dist_path, dpi=150, bbox_inches="tight")
+    print(f"\nDistribution plot saved as: {dist_path}")
 
     plt.show()
 
     print("\n✅ Demo complete!")
+    print("\nOutput locations:")
+    print(f"  - Frames: {frames_dir}/")
+    print(f"  - Images: {images_dir}/")
+    print(f"  - Video: {video_dir}/")
     print("\nWhat to observe in the video:")
     print("- 4 particles initially positioned at different heights")
     print("- Particles fall under gravity")
