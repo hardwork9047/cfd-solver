@@ -113,8 +113,8 @@ class ParticleSystem:
                     # Normal direction
                     normal = delta_pos / (distance + 1e-10)
 
-                    # Normal force (Hertzian contact - simplified linear)
-                    f_n = self.k_n * overlap
+                    # Normal force (Hertzian contact model: f_n ∝ overlap^(3/2))
+                    f_n = self.k_n * (overlap ** 1.5)
 
                     # Relative velocity
                     rel_vel = self.velocities[j] - self.velocities[i]
@@ -134,29 +134,37 @@ class ParticleSystem:
             # Bottom wall
             if self.positions[i, 1] < self.radius:
                 overlap = self.radius - self.positions[i, 1]
-                f_n = self.k_n * overlap
-                f_d = -self.damping * self.velocities[i, 1] * np.sqrt(self.k_n * self.mass)
+                f_n = self.k_n * (overlap ** 1.5)  # Hertzian contact
+                # Damping opposes normal velocity (negative velocity = moving into wall)
+                v_n = self.velocities[i, 1]  # Normal velocity (negative = into wall)
+                f_d = -self.damping * v_n * np.sqrt(self.k_n * self.mass)
                 forces[i, 1] += f_n + f_d
 
             # Top wall
             if self.positions[i, 1] > self.height - self.radius:
                 overlap = self.positions[i, 1] - (self.height - self.radius)
-                f_n = self.k_n * overlap
-                f_d = -self.damping * self.velocities[i, 1] * np.sqrt(self.k_n * self.mass)
+                f_n = self.k_n * (overlap ** 1.5)  # Hertzian contact
+                # Damping opposes normal velocity (positive velocity = moving into wall)
+                v_n = self.velocities[i, 1]  # Normal velocity (positive = into wall)
+                f_d = -self.damping * v_n * np.sqrt(self.k_n * self.mass)
                 forces[i, 1] -= f_n + f_d
 
             # Left wall
             if self.positions[i, 0] < self.radius:
                 overlap = self.radius - self.positions[i, 0]
-                f_n = self.k_n * overlap
-                f_d = -self.damping * self.velocities[i, 0] * np.sqrt(self.k_n * self.mass)
+                f_n = self.k_n * (overlap ** 1.5)  # Hertzian contact
+                # Damping opposes normal velocity (negative velocity = moving into wall)
+                v_n = self.velocities[i, 0]  # Normal velocity (negative = into wall)
+                f_d = -self.damping * v_n * np.sqrt(self.k_n * self.mass)
                 forces[i, 0] += f_n + f_d
 
             # Right wall
             if self.positions[i, 0] > self.width - self.radius:
                 overlap = self.positions[i, 0] - (self.width - self.radius)
-                f_n = self.k_n * overlap
-                f_d = -self.damping * self.velocities[i, 0] * np.sqrt(self.k_n * self.mass)
+                f_n = self.k_n * (overlap ** 1.5)  # Hertzian contact
+                # Damping opposes normal velocity (positive velocity = moving into wall)
+                v_n = self.velocities[i, 0]  # Normal velocity (positive = into wall)
+                f_d = -self.damping * v_n * np.sqrt(self.k_n * self.mass)
                 forces[i, 0] -= f_n + f_d
 
         return forces
@@ -184,10 +192,31 @@ class ParticleSystem:
         self.velocities += 0.5 * accelerations_new * self.dt
 
         # Enforce boundary conditions (keep particles strictly inside domain)
-        self.positions[:, 0] = np.clip(self.positions[:, 0], self.radius, self.width - self.radius)
-        self.positions[:, 1] = np.clip(
-            self.positions[:, 1], self.radius, self.height - self.radius
-        )
+        # Also reset velocities when particles hit walls
+        for i in range(self.n_particles):
+            # Left wall
+            if self.positions[i, 0] < self.radius:
+                self.positions[i, 0] = self.radius
+                if self.velocities[i, 0] < 0:
+                    self.velocities[i, 0] = 0.0
+            
+            # Right wall
+            if self.positions[i, 0] > self.width - self.radius:
+                self.positions[i, 0] = self.width - self.radius
+                if self.velocities[i, 0] > 0:
+                    self.velocities[i, 0] = 0.0
+            
+            # Bottom wall
+            if self.positions[i, 1] < self.radius:
+                self.positions[i, 1] = self.radius
+                if self.velocities[i, 1] < 0:
+                    self.velocities[i, 1] = 0.0
+            
+            # Top wall
+            if self.positions[i, 1] > self.height - self.radius:
+                self.positions[i, 1] = self.height - self.radius
+                if self.velocities[i, 1] > 0:
+                    self.velocities[i, 1] = 0.0
 
         self.time += self.dt
         self.iteration += 1

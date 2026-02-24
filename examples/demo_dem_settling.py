@@ -4,7 +4,9 @@ Demo: Particle Settling Simulation using DEM
 This demo shows particles falling and settling under gravity.
 """
 
+import csv
 import matplotlib.pyplot as plt
+import numpy as np
 import os
 import shutil
 
@@ -21,13 +23,13 @@ def demo_particle_settling():
     # Create particle system with fewer particles for stability
     system = ParticleSystem(
         n_particles=4,
-        domain_size=(2.0, 3.0),
+        domain_size=(0.6, 0.8),
         particle_radius=0.1,
         particle_density=2500,
         gravity=9.81,
-        k_n=1e4,
+        k_n=1e6,  # Very high stiffness to minimize penetration
         damping=0.8,
-        dt=1e-4,
+        dt=1e-5,
     )
 
     print(f"Number of particles: {system.n_particles}")
@@ -36,11 +38,26 @@ def demo_particle_settling():
     print(f"Particle mass: {system.mass:.3e}kg")
     print()
 
-    # Set initial positions manually for better visualization
-    system.positions[0] = [0.5, 2.5]
-    system.positions[1] = [1.5, 2.7]
-    system.positions[2] = [0.8, 2.0]
-    system.positions[3] = [1.2, 2.3]
+    # Set initial positions without overlap - manual placement for 4 particles
+    # Place particles in an unbalanced configuration to see rolling behavior
+    # Distance between particles must be > 0.2m (diameter)
+    system.positions[0] = [0.18, 0.12]  # Bottom - left side
+    system.positions[1] = [0.42, 0.12]  # Bottom - right side (asymmetric)
+    system.positions[2] = [0.25, 0.45]  # Top left - offset from bottom particles
+    system.positions[3] = [0.38, 0.60]  # Top right - higher and offset
+    
+    # Verify no initial overlaps
+    print("\nInitial particle positions:")
+    for i in range(system.n_particles):
+        print(f"  Particle {i}: {system.positions[i]}")
+    
+    print("\nInitial distances:")
+    for i in range(system.n_particles):
+        for j in range(i+1, system.n_particles):
+            dist = np.linalg.norm(system.positions[j] - system.positions[i])
+            overlap = 2*system.radius - dist
+            status = "OVERLAP!" if overlap > 0 else "OK"
+            print(f"  Particles {i}-{j}: distance={dist:.4f}m, overlap={overlap:.4f}m [{status}]")
     
     # Create output directories
     results_dir = "results"
@@ -62,9 +79,30 @@ def demo_particle_settling():
     fig_init = system.plot(save_path=os.path.join(frames_dir, "dem_frame_0000.png"))
     plt.close(fig_init)
 
+    # Open CSV file for logging particle data
+    csv_path = os.path.join(results_dir, "particle_data.csv")
+    csv_file = open(csv_path, 'w', newline='')
+    csv_writer = csv.writer(csv_file)
+    
+    # Write CSV header
+    header = ['step', 'time']
+    for i in range(system.n_particles):
+        header.extend([f'p{i}_x', f'p{i}_y', f'p{i}_vx', f'p{i}_vy', f'p{i}_fx', f'p{i}_fy'])
+    csv_writer.writerow(header)
+    
+    # Write initial state
+    row = [0, 0.0]
+    for i in range(system.n_particles):
+        row.extend([
+            system.positions[i, 0], system.positions[i, 1],
+            system.velocities[i, 0], system.velocities[i, 1],
+            0.0, -system.mass * system.gravity  # Initial forces (just gravity)
+        ])
+    csv_writer.writerow(row)
+
     # Run simulation with frame capture
     print("\nRunning simulation and generating frames...")
-    t_end = 2.0
+    t_end = 0.5
     frame_interval = 200  # Save frame every 200 iterations
     frame_count = 0
     
@@ -73,14 +111,28 @@ def demo_particle_settling():
     for step in range(n_steps):
         system.step()
         
+        # Write particle data to CSV
+        row = [step + 1, system.time]
+        for i in range(system.n_particles):
+            row.extend([
+                system.positions[i, 0], system.positions[i, 1],
+                system.velocities[i, 0], system.velocities[i, 1],
+                system.forces[i, 0], system.forces[i, 1]
+            ])
+        csv_writer.writerow(row)
+        
         if step % frame_interval == 0:
             frame_count += 1
             fig = system.plot(save_path=os.path.join(frames_dir, f"dem_frame_{frame_count:04d}.png"))
             plt.close(fig)
             
-        if step % 2000 == 0:
+        if step % 5000 == 0:
             ke = system.compute_kinetic_energy()
             print(f"  Step {step}/{n_steps}, Time {system.time:.3f}s, KE={ke:.2e}J")
+    
+    # Close CSV file
+    csv_file.close()
+    print(f"\nParticle data saved to: {csv_path}")
 
     # Final frame
     frame_count += 1
@@ -116,9 +168,10 @@ def demo_particle_settling():
     print(f"  - Images: {images_dir}/")
     print(f"  - Video: {video_dir}/")
     print("\nWhat to observe in the video:")
-    print("- 4 particles initially positioned at different heights")
+    print("- 20 particles initially distributed without overlap in upper half")
     print("- Particles fall under gravity")
     print("- Particles collide with each other and walls")
+    print("- Color indicates force magnitude (blue=low, red=high)")
     print("- Eventually settle at the bottom")
     print("- Energy dissipates due to damping")
 
