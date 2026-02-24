@@ -50,3 +50,7 @@ Thumbs.db
 
 # Project specific - output directories
 results/
+frames/
+*.png
+*.mp4
+*.gif

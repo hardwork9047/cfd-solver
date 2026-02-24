@@ -5,7 +5,7 @@ CFD Solver Test Suite
 import numpy as np
 import pytest
 
-from cfd import CavityFlow, CircularPoiseuille, PlanePoiseuille
+from cfd import CavityFlow, CircularPoiseuille, CylinderFlow, PlanePoiseuille
 
 
 class TestPlanePoiseuille:
@@ -161,6 +161,92 @@ class TestCavityFlow:
         assert np.allclose(flow.u[0, :], 0.0)
         assert np.allclose(flow.u[:, 0], 0.0)
         assert np.allclose(flow.u[:, -1], 0.0)
+
+
+class TestCylinderFlow:
+    """Tests for Flow around a Circular Cylinder."""
+
+    def test_initialization(self):
+        """Test basic initialization."""
+        L = 2.0
+        H = 1.0
+        D = 0.1
+        U_inf = 1.0
+        rho = 1.0
+        mu = 0.01
+
+        flow = CylinderFlow(L, H, D, U_inf, rho, mu, nx=100, ny=50)
+
+        assert flow.L == L
+        assert flow.H == H
+        assert flow.D == D
+        assert flow.R == D / 2
+        assert flow.U_inf == U_inf
+        assert flow.rho == rho
+        assert flow.mu == mu
+        assert flow.u.shape == (flow.ny, flow.nx)
+        assert flow.v.shape == (flow.ny, flow.nx)
+        assert flow.p.shape == (flow.ny, flow.nx)
+
+    def test_reynolds_number(self):
+        """Test Reynolds number calculation."""
+        flow = CylinderFlow(L=2.0, H=1.0, D=0.1, U_inf=1.0, rho=1.0, mu=0.01, nx=100, ny=50)
+        Re = flow.get_Reynolds_number()
+
+        # Re = rho * U_inf * D / mu = 1 * 1 * 0.1 / 0.01 = 10
+        expected = 10.0
+        assert np.isclose(Re, expected)
+
+    def test_cylinder_mask(self):
+        """Test cylinder mask creation."""
+        flow = CylinderFlow(L=2.0, H=1.0, D=0.1, U_inf=1.0, rho=1.0, mu=0.01, nx=100, ny=50)
+
+        # Mask should contain True values inside cylinder
+        assert flow.mask.any()
+        assert flow.mask.dtype == bool
+
+        # Center point should be inside cylinder
+        i_center = flow.ny // 2
+        j_center = int(flow.x_c / flow.dx)
+        assert flow.mask[i_center, j_center]
+
+    def test_boundary_conditions(self):
+        """Test boundary condition application."""
+        flow = CylinderFlow(L=2.0, H=1.0, D=0.1, U_inf=1.0, rho=1.0, mu=0.01, nx=100, ny=50)
+        flow.set_boundary_conditions()
+
+        # Inlet velocity
+        assert np.allclose(flow.u[:, 0], flow.U_inf)
+        assert np.allclose(flow.v[:, 0], 0.0)
+
+        # Cylinder surface (no-slip)
+        assert np.allclose(flow.u[flow.mask], 0.0)
+        assert np.allclose(flow.v[flow.mask], 0.0)
+
+    def test_invalid_geometry(self):
+        """Test that invalid geometry raises errors."""
+        with pytest.raises(ValueError):
+            # Cylinder too large for domain
+            CylinderFlow(L=2.0, H=1.0, D=1.5, U_inf=1.0, rho=1.0, mu=0.01)
+
+    def test_single_step(self):
+        """Test that a single time step executes without errors."""
+        flow = CylinderFlow(L=2.0, H=1.0, D=0.1, U_inf=1.0, rho=1.0, mu=0.1, nx=80, ny=40)
+
+        initial_time = flow.time
+        flow.step()
+
+        # Time should advance
+        assert flow.time > initial_time
+        assert flow.iteration == 1
+
+        # Fields should not contain NaN or Inf
+        assert not np.any(np.isnan(flow.u))
+        assert not np.any(np.isnan(flow.v))
+        assert not np.any(np.isnan(flow.p))
+        assert not np.any(np.isinf(flow.u))
+        assert not np.any(np.isinf(flow.v))
+        assert not np.any(np.isinf(flow.p))
 
 
 if __name__ == "__main__":
