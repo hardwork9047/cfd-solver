@@ -207,7 +207,7 @@ class ParticleSystem:
         v_mag = np.linalg.norm(self.velocities, axis=1)
         return 0.5 * self.mass * np.sum(v_mag**2)
 
-    def plot(self, figsize=(8, 8), save_path=None):
+    def plot(self, figsize=(10, 12), save_path=None):
         """Plot current particle positions."""
         fig, ax = plt.subplots(figsize=figsize)
 
