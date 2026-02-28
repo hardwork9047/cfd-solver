@@ -1,16 +1,15 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
 
-[project]
+[tool.poetry]
 name = "cfd-solver"
 version = "0.2.0"
 description = "A robust Python library for Poiseuille and stabilized Cavity flow simulations."
 readme = "README.md"
-requires-python = ">=3.11"
-license = {text = "MIT"}
+license = "MIT"
 authors = [
-    {name = "hardwork9047", email = "tomatosimple1104@gmail.com"}
+    "hardwork9047 <tomatosimple1104@gmail.com>"
 ]
 keywords = [
     "CFD",
@@ -31,29 +30,22 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
 ]
+homepage = "https://github.com/hardwork9047/cfd-solver"
+documentation = "https://github.com/hardwork9047/cfd-solver#readme"
+repository = "https://github.com/hardwork9047/cfd-solver.git"
+packages = [{include = "cfd", from = "src"}]
 
-dependencies = [
-    "numpy>=1.26.0",
-    "matplotlib>=3.8.0",
-]
+[tool.poetry.dependencies]
+python = ">=3.11"
+numpy = ">=1.26.0"
+matplotlib = ">=3.8.0"
 
-[project.optional-dependencies]
-dev = [
-    "pytest>=8.0.0",
-    "pytest-cov>=4.1.0",
-    "twine>=5.0.0",
-    "black>=24.0.0",
-    "ruff>=0.3.0",
-]
-
-[project.urls]
-Homepage = "https://github.com/hardwork9047/cfd-solver"
-Documentation = "https://github.com/hardwork9047/cfd-solver#readme"
-Repository = "https://github.com/hardwork9047/cfd-solver.git"
-Issues = "https://github.com/hardwork9047/cfd-solver/issues"
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/cfd"]
+[tool.poetry.group.dev.dependencies]
+pytest = ">=8.0.0"
+pytest-cov = ">=4.1.0"
+twine = ">=5.0.0"
+black = ">=24.0.0"
+ruff = ">=0.3.0"
 
 [tool.black]
 line-length = 100
