@@ -136,38 +136,37 @@ class LBM:
 
     def _boundary(self) -> None:
         """
-        Bounce-back on walls, moving-lid condition on top wall (y = ny-1).
-        Uses the non-equilibrium bounce-back (Zou & He, 1997) for the lid.
-        """
-        # --- Stationary walls: full bounce-back ---
-        # bottom (y=0), left (x=0), right (x=-1)
-        for wall_mask in [
-            self.solid[:, 0:1],    # bottom
-            self.solid[0:1, :],    # left
-            self.solid[-1:, :],    # right
-        ]:
-            pass  # handled below via solid mask
+        Bounce-back on stationary walls; Zou-He velocity BC on moving lid.
 
-        # Simple bounce-back on all solid nodes
+        After np.roll streaming, populations at y=ny-1 (lid):
+          - CORRECT (incoming from interior): f[2](N), f[5](NE), f[6](NW),
+            f[0](rest), f[1](E), f[3](W)
+          - GARBAGE (periodic wrap artefacts): f[4](S), f[7](SW), f[8](SE)
+        The lid must NOT be included in the bounce-back loop; its unknown
+        populations f[4,7,8] are set exclusively by the Zou-He scheme.
+
+        Zou-He moving-lid BC (north wall, ux=U, uy=0):
+          rho = f0+f1+f3 + 2*(f2+f5+f6)          [no division: uy_normal=0]
+          f4  = f2                                 [uy=0 → normal flux zero]
+          f7  = f5 - (1/6)*rho*U
+          f8  = f6 + (1/6)*rho*U
+        Satisfies mass and x-momentum to O(Ma²) (standard low-Ma approximation).
+        Reference: Zou & He (1997), Phys. Fluids 9(6).
+        """
+        # --- Stationary walls: full bounce-back (lid excluded) ---
         f_tmp = self.f.copy()
+        solid_walls = self.solid.copy()
+        solid_walls[:, -1] = False          # top lid handled separately below
         for i in range(Q):
             j = OPPOSITE[i]
-            self.f[i, self.solid] = f_tmp[j, self.solid]
+            self.f[i, solid_walls] = f_tmp[j, solid_walls]
 
         # --- Moving lid (top wall, y = ny-1): Zou-He velocity BC ---
-        # ux = u_lid, uy = 0 prescribed
         y = self.ny - 1
-        rho_lid = (self.f[0, :, y]
-                   + self.f[1, :, y] + self.f[3, :, y]
-                   + 2.0 * (self.f[2, :, y] + self.f[5, :, y] + self.f[6, :, y])
-                   ) / (1.0 + self.u_lid)
-
+        # f[2], f[5], f[6] are the correct post-streaming incoming populations
+        rho_lid = (self.f[0, :, y] + self.f[1, :, y] + self.f[3, :, y]
+                   + 2.0 * (self.f[2, :, y] + self.f[5, :, y] + self.f[6, :, y]))
         ru = rho_lid * self.u_lid
-        self.f[4, :, y] = self.f[2, :, y] - (2.0 / 3.0) * rho_lid * 0.0  # uy=0 correction
-        self.f[8, :, y] = self.f[6, :, y] + 0.5 * (self.f[1, :, y] - self.f[3, :, y]) + 0.5 * ru - (1.0 / 6.0) * rho_lid * 0.0
-        self.f[7, :, y] = self.f[5, :, y] - 0.5 * (self.f[1, :, y] - self.f[3, :, y]) - 0.5 * ru - (1.0 / 6.0) * rho_lid * 0.0
-
-        # Correct bounce-back for south-pointing populations at lid
         self.f[4, :, y] = self.f[2, :, y]
         self.f[7, :, y] = self.f[5, :, y] - ru / 6.0
         self.f[8, :, y] = self.f[6, :, y] + ru / 6.0
