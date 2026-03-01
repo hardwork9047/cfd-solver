@@ -120,6 +120,9 @@ class LBMDEMSolver:
     damping           : float — viscous damping coefficient (DEM, 0–1)
     dem_substeps      : int   — DEM sub-steps per LBM step (for stability)
     seed              : int   — RNG seed for particle initialisation
+    cylinder          : tuple[float, float, float] | None
+                        Fixed solid cylinder as (cx, cy, radius) in lattice units.
+                        ``None`` (default) means no cylinder.
     """
 
     def __init__(
@@ -137,6 +140,7 @@ class LBMDEMSolver:
         damping: float = 0.4,
         dem_substeps: int = 4,
         seed: int = 42,
+        cylinder: tuple | None = None,
     ):
         self.nx = nx
         self.ny = ny
@@ -151,6 +155,7 @@ class LBMDEMSolver:
         self.damping = damping
         self.dem_substeps = dem_substeps
         self.step_count = 0
+        self.cylinder = cylinder  # (cx, cy, cr) or None
 
         # --- Fluid parameters ---
         self.nu = u_max * ny / Re
@@ -179,6 +184,8 @@ class LBMDEMSolver:
         print(f"  Particles    : {n_particles}  r = {particle_radius:.1f} ± "
               f"{radius_variation*100:.0f}%  density_ratio = {density_ratio:.1f}")
         print(f"  Gravity (latt): {gravity:.2e}   DEM substeps = {dem_substeps}")
+        if cylinder is not None:
+            print(f"  Cylinder      : center=({cylinder[0]:.1f}, {cylinder[1]:.1f})  r={cylinder[2]:.1f}")
 
         # --- LBM distribution functions f[q, x, y] ---
         rho0 = np.ones((nx, ny))
@@ -188,6 +195,14 @@ class LBMDEMSolver:
         self.solid = np.zeros((nx, ny), dtype=bool)
         self.solid[:, 0] = True
         self.solid[:, -1] = True
+
+        # Solid nodes: fixed cylinder
+        if cylinder is not None:
+            cx, cy, cr = cylinder
+            ix = np.arange(nx)
+            iy = np.arange(ny)
+            XX, YY = np.meshgrid(ix, iy, indexing="ij")
+            self.solid |= (XX - cx) ** 2 + (YY - cy) ** 2 <= cr ** 2
 
         # Fluid body-force arrays (reset each step; includes driving + particle feedback)
         self.Fx = np.full((nx, ny), self.F_drive)
@@ -218,6 +233,11 @@ class LBMDEMSolver:
                 dists = np.hypot(x - self.pos[:placed, 0], y - self.pos[:placed, 1])
                 min_clearance = 1.1 * (self.radii[:placed] + r_new)
                 if (dists < min_clearance).any():
+                    continue
+            # Reject if overlapping the cylinder
+            if self.cylinder is not None:
+                cx, cy, cr = self.cylinder
+                if np.hypot(x - cx, y - cy) < cr + r_new * 1.1:
                     continue
             self.pos[placed] = [x, y]
             placed += 1
@@ -385,6 +405,25 @@ class LBMDEMSolver:
                 f_damp = -self.damping * v_n * float(np.sqrt(self.k_n * self.masses[i]))
                 forces[i, 1] -= f_n + f_damp
 
+        # 5. Cylinder contact (Hertz, per-particle radius / mass)
+        if self.cylinder is not None:
+            cx, cy, cr = self.cylinder
+            for i in range(self.n_p):
+                dx = self.pos[i, 0] - cx
+                dy = self.pos[i, 1] - cy
+                dist = float(np.hypot(dx, dy))
+                min_dist = cr + self.radii[i]
+                if dist < min_dist and dist > 1e-10:
+                    overlap = min_dist - dist
+                    nx_ = dx / dist
+                    ny_ = dy / dist
+                    f_n = self.k_n * overlap**1.5
+                    v_n = self.vel[i, 0] * nx_ + self.vel[i, 1] * ny_
+                    f_damp = -self.damping * v_n * float(np.sqrt(self.k_n * self.masses[i]))
+                    f_mag = f_n + f_damp
+                    forces[i, 0] += f_mag * nx_
+                    forces[i, 1] += f_mag * ny_
+
         return forces
 
     def _dem_substep(self, dt: float) -> None:
@@ -415,6 +454,23 @@ class LBMDEMSolver:
                 self.pos[i, 1] = wall_top
                 if self.vel[i, 1] > 0:
                     self.vel[i, 1] *= -0.2
+            # Clamp position outside cylinder surface
+            if self.cylinder is not None:
+                cx, cy, cr = self.cylinder
+                dx = self.pos[i, 0] - cx
+                dy = self.pos[i, 1] - cy
+                dist = float(np.hypot(dx, dy))
+                min_dist = cr + self.radii[i]
+                if dist < min_dist and dist > 1e-10:
+                    nx_ = dx / dist
+                    ny_ = dy / dist
+                    self.pos[i, 0] = cx + min_dist * nx_
+                    self.pos[i, 1] = cy + min_dist * ny_
+                    # Kill inward normal velocity
+                    v_n = self.vel[i, 0] * nx_ + self.vel[i, 1] * ny_
+                    if v_n < 0:
+                        self.vel[i, 0] -= v_n * nx_ * (1 + 0.2)
+                        self.vel[i, 1] -= v_n * ny_ * (1 + 0.2)
 
         self.forces_p = forces_new
 

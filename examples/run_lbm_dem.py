@@ -8,6 +8,7 @@ LBM-DEM 連成シミュレーション 実行スクリプト
 
 from __future__ import annotations
 
+import argparse
 import sys
 import time
 from pathlib import Path
@@ -20,6 +21,20 @@ import numpy as np
 # パッケージを src/ から読み込む
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from cfd_dem_lbm import LBMDEMSolver
+
+# ---------------------------------------------------------------------------
+# コマンドライン引数
+# ---------------------------------------------------------------------------
+
+parser = argparse.ArgumentParser(description="LBM-DEM coupled simulation runner")
+parser.add_argument("--cylinder", action="store_true", help="Add a fixed solid cylinder")
+parser.add_argument("--cyl-x", type=float, default=None,
+                    help="Cylinder center x [lattice] (default: NX/4)")
+parser.add_argument("--cyl-y", type=float, default=None,
+                    help="Cylinder center y [lattice] (default: NY/2)")
+parser.add_argument("--cyl-r", type=float, default=6.0,
+                    help="Cylinder radius [lattice] (default: 6.0)")
+args = parser.parse_args()
 
 # ---------------------------------------------------------------------------
 # キャッシュ付きサブクラス: _macroscopic() を各ステップ1回だけ計算
@@ -72,6 +87,15 @@ OUT_DIR      = Path("/tmp/lbm_dem_results")
 
 OUT_DIR.mkdir(exist_ok=True)
 
+# 円柱設定 (--cylinder が指定された場合のみ有効)
+if args.cylinder:
+    CYL_X = args.cyl_x if args.cyl_x is not None else NX / 4
+    CYL_Y = args.cyl_y if args.cyl_y is not None else NY / 2
+    CYL_R = args.cyl_r
+    CYLINDER = (CYL_X, CYL_Y, CYL_R)
+else:
+    CYLINDER = None
+
 # ---------------------------------------------------------------------------
 # 初期化
 # ---------------------------------------------------------------------------
@@ -90,6 +114,7 @@ sim = FastLBMDEM(
     gravity=GRAVITY,
     dem_substeps=4,
     seed=42,
+    cylinder=CYLINDER,
 )
 
 # ---------------------------------------------------------------------------
@@ -168,6 +193,14 @@ snap = snapshots[-1]
 x = np.arange(NX)
 y = np.arange(NY)
 
+def _add_cylinder_patch(ax, color="cyan", alpha=0.6, zorder=4):
+    """静止画用: 円柱パッチを追加する。"""
+    if CYLINDER is not None:
+        ax.add_patch(plt.Circle(
+            (CYLINDER[0], CYLINDER[1]), CYLINDER[2],
+            color=color, alpha=alpha, zorder=zorder,
+        ))
+
 ax = axes[0]
 im = ax.imshow(snap["speed"].T, origin="lower", cmap="inferno",
                extent=[0, NX, 0, NY], aspect="auto")
@@ -175,6 +208,7 @@ for i in range(sim.n_p):
     c = plt.Circle((snap["pos"][i,0], snap["pos"][i,1]), RADIUS,
                    color="white", lw=0.8, fill=False)
     ax.add_patch(c)
+_add_cylinder_patch(ax)
 ax.set_title("速度大きさ |u|")
 ax.set_xlabel("x [格子]"); ax.set_ylabel("y [格子]")
 fig_stat.colorbar(im, ax=ax, shrink=0.7)
@@ -188,6 +222,7 @@ for i in range(sim.n_p):
     c = plt.Circle((snap["pos"][i,0], snap["pos"][i,1]), RADIUS,
                    color="white", lw=0.8, fill=False)
     ax.add_patch(c)
+_add_cylinder_patch(ax)
 ax.set_xlim(0, NX); ax.set_ylim(0, NY)
 ax.set_title("流線"); ax.set_xlabel("x [格子]")
 
@@ -197,6 +232,7 @@ sc = ax.scatter(snap["pos"][:,0], snap["pos"][:,1],
                 edgecolors="k", lw=0.5, zorder=5)
 ax.imshow(snap["speed"].T, origin="lower", cmap="Blues",
           extent=[0, NX, 0, NY], aspect="auto", alpha=0.5)
+_add_cylinder_patch(ax)
 fig_stat.colorbar(sc, ax=ax, label="合力 |F_total| [格子単位]", shrink=0.7)
 ax.set_xlim(0, NX); ax.set_ylim(0, NY)
 ax.set_title("粒子位置 (合力でカラー)"); ax.set_xlabel("x [格子]")
@@ -245,6 +281,13 @@ cbar_force = fig_anim.colorbar(sm_force, ax=ax_anim, shrink=0.75, pad=0.12)
 cbar_force.set_label("|F_total| [格子単位]", color="white")
 cbar_force.ax.yaxis.set_tick_params(color="white")
 plt.setp(cbar_force.ax.yaxis.get_ticklabels(), color="white")
+
+# 固定円柱パッチ (アニメーション中は動かないので animated=False)
+if CYLINDER is not None:
+    ax_anim.add_patch(mpatches.Circle(
+        (CYLINDER[0], CYLINDER[1]), CYLINDER[2],
+        linewidth=1.5, edgecolor="cyan", facecolor="cyan", alpha=0.55, zorder=4,
+    ))
 
 # 粒子の円パッチ (合力に応じた初期色、per-particle半径でサイズ)
 particle_circles = []
