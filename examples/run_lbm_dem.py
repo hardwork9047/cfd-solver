@@ -115,6 +115,14 @@ for frame_idx in range(n_frames):
     sim.advance(SNAPSHOT_EVERY)
 
     rho, ux, uy = sim.get_fields()
+
+    # 各粒子が受けている Stokes 抗力の大きさを計算
+    drag_mags = np.empty(sim.n_p)
+    for i in range(sim.n_p):
+        uf_x, uf_y = sim._interp_velocity(sim.pos[i, 0], sim.pos[i, 1])
+        fd_x, fd_y = sim._stokes_drag(uf_x, uf_y, sim.vel[i, 0], sim.vel[i, 1])
+        drag_mags[i] = np.hypot(fd_x, fd_y)
+
     snapshots.append({
         "step": sim.step_count,
         "ux":   ux.copy(),
@@ -122,6 +130,7 @@ for frame_idx in range(n_frames):
         "speed": np.sqrt(ux**2 + uy**2).copy(),
         "pos":  sim.pos.copy(),
         "vel":  sim.vel.copy(),
+        "drag": drag_mags.copy(),
     })
 
     elapsed = time.perf_counter() - t1
@@ -184,15 +193,14 @@ ax.set_xlim(0, NX); ax.set_ylim(0, NY)
 ax.set_title("流線"); ax.set_xlabel("x [格子]")
 
 ax = axes[2]
-p_vel_mags = np.linalg.norm(snap["vel"], axis=1)
 sc = ax.scatter(snap["pos"][:,0], snap["pos"][:,1],
-                c=p_vel_mags, cmap="hot_r", s=(RADIUS*4)**2,
+                c=snap["drag"], cmap="YlOrRd", s=(RADIUS*4)**2,
                 edgecolors="k", lw=0.5, zorder=5)
 ax.imshow(snap["speed"].T, origin="lower", cmap="Blues",
           extent=[0, NX, 0, NY], aspect="auto", alpha=0.5)
-fig_stat.colorbar(sc, ax=ax, label="粒子速度 [格子単位]", shrink=0.7)
+fig_stat.colorbar(sc, ax=ax, label="Stokes 抗力 |F_drag| [格子単位]", shrink=0.7)
 ax.set_xlim(0, NX); ax.set_ylim(0, NY)
-ax.set_title("粒子位置 (速度でカラー)"); ax.set_xlabel("x [格子]")
+ax.set_title("粒子位置 (抗力でカラー)"); ax.set_xlabel("x [格子]")
 
 plt.tight_layout()
 static_path = OUT_DIR / "lbm_dem_final.png"
@@ -213,6 +221,12 @@ ax_anim.set_facecolor("#0a0a0a")
 snap0 = snapshots[0]
 speed_global_max = max(s["speed"].max() for s in snapshots)
 
+# 抗力の全フレームにわたるグローバルmin/max（カラースケール固定）
+drag_global_min = min(s["drag"].min() for s in snapshots)
+drag_global_max = max(s["drag"].max() for s in snapshots)
+drag_cmap = plt.cm.YlOrRd
+drag_norm = plt.Normalize(vmin=drag_global_min, vmax=drag_global_max)
+
 im_fluid = ax_anim.imshow(
     snap0["speed"].T,
     origin="lower", cmap="inferno",
@@ -220,20 +234,30 @@ im_fluid = ax_anim.imshow(
     vmin=0, vmax=speed_global_max,
     animated=True,
 )
-cbar = fig_anim.colorbar(im_fluid, ax=ax_anim, shrink=0.85, pad=0.02)
-cbar.set_label("|u| [格子単位]", color="white")
-cbar.ax.yaxis.set_tick_params(color="white")
-plt.setp(cbar.ax.yaxis.get_ticklabels(), color="white")
+cbar_fluid = fig_anim.colorbar(im_fluid, ax=ax_anim, shrink=0.75, pad=0.01)
+cbar_fluid.set_label("|u| [格子単位]", color="white")
+cbar_fluid.ax.yaxis.set_tick_params(color="white")
+plt.setp(cbar_fluid.ax.yaxis.get_ticklabels(), color="white")
 
-# 粒子の円パッチ (事前生成)
+# 抗力カラーバー（ScalarMappable で追加）
+sm_drag = plt.cm.ScalarMappable(cmap=drag_cmap, norm=drag_norm)
+sm_drag.set_array([])
+cbar_drag = fig_anim.colorbar(sm_drag, ax=ax_anim, shrink=0.75, pad=0.12)
+cbar_drag.set_label("|F_drag| [格子単位]", color="white")
+cbar_drag.ax.yaxis.set_tick_params(color="white")
+plt.setp(cbar_drag.ax.yaxis.get_ticklabels(), color="white")
+
+# 粒子の円パッチ (抗力に応じた初期色で生成)
 particle_circles = []
 for i in range(sim.n_p):
+    rgba = drag_cmap(drag_norm(snap0["drag"][i]))
     c = mpatches.Circle(
         (snap0["pos"][i, 0], snap0["pos"][i, 1]),
         RADIUS,
-        linewidth=1.0,
-        edgecolor="cyan",
-        facecolor=(0.2, 0.8, 1.0, 0.35),
+        linewidth=1.2,
+        edgecolor="white",
+        facecolor=rgba,
+        alpha=0.85,
         animated=True,
     )
     ax_anim.add_patch(c)
@@ -256,9 +280,14 @@ def update(frame_idx: int):
     im_fluid.set_data(snap["speed"].T)
     for i, c in enumerate(particle_circles):
         c.center = (snap["pos"][i, 0], snap["pos"][i, 1])
+        # 抗力の大きさに応じて色を更新
+        rgba = drag_cmap(drag_norm(snap["drag"][i]))
+        c.set_facecolor(rgba)
     p_ke = 0.5 * sim.mass_p * float(np.sum(snap["vel"] ** 2))
+    drag_mean = snap["drag"].mean()
     title_txt.set_text(
-        f"LBM-DEM  Re={RE:.0f}  step={snap['step']:,}  KE_p={p_ke:.3e}"
+        f"LBM-DEM  Re={RE:.0f}  step={snap['step']:,}"
+        f"  KE_p={p_ke:.3e}  |F_drag|_mean={drag_mean:.3e}"
     )
     artists = [im_fluid, title_txt] + particle_circles
     return artists
