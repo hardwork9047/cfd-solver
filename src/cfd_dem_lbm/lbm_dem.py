@@ -112,7 +112,8 @@ class LBMDEMSolver:
     Re                : float — Reynolds number  Re = u_max * ny / nu
     u_max             : float — target Poiseuille centreline velocity (<0.3 for stability)
     n_particles       : int   — number of DEM particles
-    particle_radius   : float — particle radius [lattice nodes]
+    particle_radius   : float — mean particle radius [lattice nodes]
+    radius_variation  : float — uniform ±fraction for per-particle radius (e.g. 0.15 = ±15%)
     density_ratio     : float — ρ_particle / ρ_fluid
     gravity           : float — gravitational acceleration [lattice units]
     k_n               : float — normal contact stiffness (DEM, Hertz)
@@ -129,6 +130,7 @@ class LBMDEMSolver:
         u_max: float = 0.05,
         n_particles: int = 20,
         particle_radius: float = 3.0,
+        radius_variation: float = 0.0,
         density_ratio: float = 2.0,
         gravity: float = 2e-5,
         k_n: float = 50.0,
@@ -141,7 +143,8 @@ class LBMDEMSolver:
         self.Re = Re
         self.u_max = u_max
         self.n_p = n_particles
-        self.r_p = particle_radius
+        self.r_p = particle_radius          # representative (mean) radius
+        self.radius_variation = radius_variation
         self.density_ratio = density_ratio
         self.g = gravity
         self.k_n = k_n
@@ -156,15 +159,25 @@ class LBMDEMSolver:
         # Body force to sustain Poiseuille flow: ∂p/∂x = -8 μ u_max / ny²
         self.F_drive = 8.0 * self.nu * u_max / ny**2
 
-        # Particle mass (2-D: area × thickness=1 × density_ratio)
-        self.mass_p = density_ratio * np.pi * particle_radius**2
+        # Per-particle radii (uniform ±radius_variation around r_p)
+        rng_rv = np.random.default_rng(seed + 999)
+        if radius_variation > 0.0:
+            self.radii = particle_radius * (
+                1.0 + rng_rv.uniform(-radius_variation, radius_variation, n_particles)
+            )
+        else:
+            self.radii = np.full(n_particles, particle_radius)
+
+        # Per-particle masses (2-D disc: area × density_ratio)
+        self.masses = density_ratio * np.pi * self.radii**2
+        self.mass_p = float(np.mean(self.masses))   # representative scalar (kept for display)
 
         print("LBM-DEM Coupled Solver")
         print(f"  Grid         : {nx} × {ny}")
         print(f"  Re           : {Re:.1f}   nu = {self.nu:.5f}   tau = {self.tau:.4f}")
         print(f"  u_max        : {u_max:.4f}   F_drive = {self.F_drive:.2e}")
-        print(f"  Particles    : {n_particles}  r = {particle_radius:.1f}  "
-              f"density_ratio = {density_ratio:.1f}")
+        print(f"  Particles    : {n_particles}  r = {particle_radius:.1f} ± "
+              f"{radius_variation*100:.0f}%  density_ratio = {density_ratio:.1f}")
         print(f"  Gravity (latt): {gravity:.2e}   DEM substeps = {dem_substeps}")
 
         # --- LBM distribution functions f[q, x, y] ---
@@ -193,17 +206,18 @@ class LBMDEMSolver:
     def _init_particles(self, seed: int) -> None:
         """Place particles randomly in the top 60 % of the channel (no overlap)."""
         rng = np.random.default_rng(seed)
-        r = self.r_p
         placed = 0
         for _ in range(200_000):
             if placed == self.n_p:
                 break
-            x = rng.uniform(r + 1, self.nx - r - 1)
-            y = rng.uniform(self.ny * 0.4 + r, self.ny - r - 2)
-            # Reject if overlapping an already-placed particle
+            r_new = self.radii[placed]
+            x = rng.uniform(r_new + 1, self.nx - r_new - 1)
+            y = rng.uniform(self.ny * 0.4 + r_new, self.ny - r_new - 2)
+            # Reject if overlapping an already-placed particle (sum-of-radii + 10%)
             if placed > 0:
                 dists = np.hypot(x - self.pos[:placed, 0], y - self.pos[:placed, 1])
-                if dists.min() < 2.1 * r:
+                min_clearance = 1.1 * (self.radii[:placed] + r_new)
+                if (dists < min_clearance).any():
                     continue
             self.pos[placed] = [x, y]
             placed += 1
@@ -214,6 +228,8 @@ class LBMDEMSolver:
             self.pos = self.pos[:placed]
             self.vel = self.vel[:placed]
             self.forces_p = self.forces_p[:placed]
+            self.radii = self.radii[:placed]
+            self.masses = self.masses[:placed]
 
     # ------------------------------------------------------------------
     # LBM — macroscopic fields
@@ -274,19 +290,25 @@ class LBMDEMSolver:
         uf_y: float,
         vp_x: float,
         vp_y: float,
+        radius: float | None = None,
     ) -> tuple[float, float]:
         """
         Stokes drag force on a sphere (circle in 2-D):
             F_drag = 3π μ d (u_fluid − v_particle)
-        where μ = ρ ν ≈ ν (ρ≈1) and d = 2 r_p (diameter).
+        where μ = ρ ν ≈ ν (ρ≈1) and d = 2 r (diameter).
+        ``radius`` defaults to the representative r_p if not given.
         """
-        coeff = 3.0 * np.pi * self.nu * 2.0 * self.r_p
+        r = radius if radius is not None else self.r_p
+        coeff = 3.0 * np.pi * self.nu * 2.0 * r
         return coeff * (uf_x - vp_x), coeff * (uf_y - vp_y)
 
-    def _distribute_force(self, x: float, y: float, fx: float, fy: float) -> None:
+    def _distribute_force(
+        self, x: float, y: float, fx: float, fy: float, radius: float | None = None
+    ) -> None:
         """
         Add a point force (fx, fy) at (x, y) to the fluid body-force field
         using bilinear (Peskin) distribution over the 4 nearest nodes.
+        ``radius`` sets the normalisation area (defaults to r_p).
         """
         xi = int(np.floor(x)) % self.nx
         yi = int(np.clip(np.floor(y), 0, self.ny - 2))
@@ -296,7 +318,8 @@ class LBMDEMSolver:
         ty = y - np.floor(y)
         w = [(1 - tx) * (1 - ty), tx * (1 - ty), (1 - tx) * ty, tx * ty]
         nodes = [(xi, yi), (xi1, yi), (xi, yi1), (xi1, yi1)]
-        area = np.pi * self.r_p**2  # normalise: force density on fluid node
+        r = radius if radius is not None else self.r_p
+        area = np.pi * r**2
         for wk, (ix, iy) in zip(w, nodes):
             if not self.solid[ix, iy]:
                 self.Fx[ix, iy] += wk * fx / area
@@ -314,63 +337,61 @@ class LBMDEMSolver:
         ``dt_sub`` is unused here but kept for future damping models.
         """
         forces = np.zeros((self.n_p, 2))
-        r = self.r_p
 
-        # 1. Gravity (buoyancy-corrected: net gravity = (ρ_p - ρ_f) g / ρ_p * mass)
+        # 1. Gravity (buoyancy-corrected, per-particle mass)
         buoyancy_factor = 1.0 - 1.0 / self.density_ratio
-        forces[:, 1] -= self.mass_p * self.g * buoyancy_factor
+        forces[:, 1] -= self.masses * self.g * buoyancy_factor
 
-        # 2. Stokes drag from interpolated fluid velocity
+        # 2. Stokes drag from interpolated fluid velocity (per-particle radius)
         for i in range(self.n_p):
             uf_x, uf_y = self._interp_velocity(self.pos[i, 0], self.pos[i, 1])
-            fd_x, fd_y = self._stokes_drag(uf_x, uf_y, self.vel[i, 0], self.vel[i, 1])
+            fd_x, fd_y = self._stokes_drag(
+                uf_x, uf_y, self.vel[i, 0], self.vel[i, 1], radius=self.radii[i]
+            )
             forces[i, 0] += fd_x
             forces[i, 1] += fd_y
 
-        # 3. Particle–particle Hertz contact
+        # 3. Particle–particle Hertz contact (per-particle radii / masses)
         for i in range(self.n_p):
             for j in range(i + 1, self.n_p):
                 dp = self.pos[j] - self.pos[i]
                 dist = float(np.linalg.norm(dp))
-                min_dist = 2.0 * r
+                min_dist = self.radii[i] + self.radii[j]
                 if dist < min_dist and dist > 1e-10:
                     overlap = min_dist - dist
                     n = dp / dist
                     f_n = self.k_n * overlap**1.5
                     v_n = float(np.dot(self.vel[j] - self.vel[i], n))
-                    f_damp = -self.damping * v_n * float(np.sqrt(self.k_n * self.mass_p))
+                    avg_m = (self.masses[i] + self.masses[j]) / 2.0
+                    f_damp = -self.damping * v_n * float(np.sqrt(self.k_n * avg_m))
                     f_total = (f_n + f_damp) * n
                     forces[i] -= f_total
                     forces[j] += f_total
 
-        # 4. Wall contacts (Hertz, bottom and top)
-        wall_bot = r + 0.5
-        wall_top = self.ny - 1.5 - r
+        # 4. Wall contacts (Hertz, per-particle radius / mass)
         for i in range(self.n_p):
+            wall_bot = self.radii[i] + 0.5
+            wall_top = self.ny - 1.5 - self.radii[i]
             if self.pos[i, 1] < wall_bot:
                 overlap = wall_bot - self.pos[i, 1]
                 f_n = self.k_n * overlap**1.5
                 v_n = -self.vel[i, 1]
-                f_damp = -self.damping * v_n * float(np.sqrt(self.k_n * self.mass_p))
+                f_damp = -self.damping * v_n * float(np.sqrt(self.k_n * self.masses[i]))
                 forces[i, 1] += f_n + f_damp
             if self.pos[i, 1] > wall_top:
                 overlap = self.pos[i, 1] - wall_top
                 f_n = self.k_n * overlap**1.5
                 v_n = self.vel[i, 1]
-                f_damp = -self.damping * v_n * float(np.sqrt(self.k_n * self.mass_p))
+                f_damp = -self.damping * v_n * float(np.sqrt(self.k_n * self.masses[i]))
                 forces[i, 1] -= f_n + f_damp
 
         return forces
 
     def _dem_substep(self, dt: float) -> None:
         """One DEM sub-step via Velocity Verlet with time step ``dt``."""
-        r = self.r_p
-        wall_bot = r + 0.5
-        wall_top = self.ny - 1.5 - r
-
-        # Half-velocity update
+        # Half-velocity update (per-particle mass)
         forces = self._dem_forces(dt)
-        acc = forces / self.mass_p
+        acc = forces / self.masses[:, np.newaxis]
         self.vel += 0.5 * dt * acc
 
         # Position update + periodic x BC
@@ -379,11 +400,13 @@ class LBMDEMSolver:
 
         # Second force evaluation
         forces_new = self._dem_forces(dt)
-        acc_new = forces_new / self.mass_p
+        acc_new = forces_new / self.masses[:, np.newaxis]
         self.vel += 0.5 * dt * acc_new
 
-        # Clamp positions and apply restitution at walls
+        # Clamp positions and apply restitution at walls (per-particle radius)
         for i in range(self.n_p):
+            wall_bot = self.radii[i] + 0.5
+            wall_top = self.ny - 1.5 - self.radii[i]
             if self.pos[i, 1] < wall_bot:
                 self.pos[i, 1] = wall_bot
                 if self.vel[i, 1] < 0:
@@ -416,12 +439,16 @@ class LBMDEMSolver:
             self.Fx[:] = self.F_drive
             self.Fy[:] = 0.0
 
-            # --- Particle → fluid back-reaction ---
+            # --- Particle → fluid back-reaction (per-particle radius) ---
             for i in range(self.n_p):
                 uf_x, uf_y = self._interp_velocity(self.pos[i, 0], self.pos[i, 1])
-                fd_x, fd_y = self._stokes_drag(uf_x, uf_y, self.vel[i, 0], self.vel[i, 1])
+                fd_x, fd_y = self._stokes_drag(
+                    uf_x, uf_y, self.vel[i, 0], self.vel[i, 1], radius=self.radii[i]
+                )
                 # Newton 3rd law: -drag acts on the fluid
-                self._distribute_force(self.pos[i, 0], self.pos[i, 1], -fd_x, -fd_y)
+                self._distribute_force(
+                    self.pos[i, 0], self.pos[i, 1], -fd_x, -fd_y, radius=self.radii[i]
+                )
 
             # --- LBM step ---
             rho, ux, uy = self._macroscopic()
