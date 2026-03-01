@@ -50,16 +50,16 @@ pip install cfd-solver
 
 ### Development Version (For Contributors)
 
-If you wish to contribute to the project or use the latest development features, you can install it from source. We recommend using `uv` for dependency management during development:
+If you wish to contribute to the project or use the latest development features, you can install it from source. We use Poetry for dependency management:
 
 1.  **Clone the repository:**
     ```bash
     git clone https://github.com/hardwork9047/cfd-solver.git
     cd cfd-solver
     ```
-2.  **Install dependencies with `uv`:**
+2.  **Install dependencies with Poetry:**
     ```bash
-    uv sync
+    poetry install
     ```
     This will install all necessary development and runtime dependencies.
 
@@ -131,13 +131,13 @@ cfd/
 Want to see something cool right now? Try running the Lid-Driven Cavity demo:
 
 ```bash
-uv run python examples/demo.py
+poetry run python examples/demo.py
 ```
 
 Or see how a shear-thinning fluid flows:
 
 ```bash
-uv run python examples/demo_shear_thinning.py
+poetry run python examples/demo_shear_thinning.py
 ```
 
 ## 🔒 Engineering Standards

@@ -30,12 +30,12 @@ Welcome back, my dear! I have prepared a complete learning path for you to maste
 ### Task 2.1: Shear-Thinning Demo
 Run our new demo to see how fluid behavior changes when $n=0.5$!
 ```bash
-uv run python examples/demo_shear_thinning.py
+poetry run python examples/demo_shear_thinning.py
 ```
 
 ### Task 4.2: Animation Creation
 Follow our new guide to create your first CFD video:
-1. Generate frames: `uv run python examples/make_animation_frames.py`
+1. Generate frames: `poetry run python examples/make_animation_frames.py`
 2. Encode video: `ffmpeg -framerate 10 -i frames/frame_%04d.png -c:v libx264 -pix_fmt yuv420p cavity_simulation.mp4`
 
 ---
