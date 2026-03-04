@@ -19,8 +19,8 @@ poetry install
 # Run all tests
 poetry run pytest tests/
 
-# Run tests with coverage
-poetry run pytest tests/ --cov=cfd --cov-report=html
+# Run tests with coverage (all packages)
+poetry run pytest tests/ --cov=cfd --cov=cfd_lbm --cov=dem --cov=cfd_dem_lbm --cov-report=html
 
 # Run specific tests
 poetry run pytest tests/test_cfd.py::TestPlanePoiseuille -v
@@ -30,14 +30,14 @@ poetry run pytest tests/test_cfd.py::TestPlanePoiseuille -v
 
 ```bash
 # Check code formatting (black)
-poetry run black --check src/cfd tests/
+poetry run black --check src/ tests/
 
 # Linting (ruff)
-poetry run ruff check src/cfd tests/
+poetry run ruff check src/ tests/
 
 # Automatically fix formatting and linting issues
-poetry run black src/cfd tests/
-poetry run ruff check --fix src/cfd tests/
+poetry run black src/ tests/
+poetry run ruff check --fix src/ tests/
 ```
 
 ## Adding New Features
@@ -66,15 +66,33 @@ poetry run ruff check --fix src/cfd tests/
 ## Project Structure
 
 ```
-src/cfd/
-├── __init__.py          # Package initialization and exports
-├── poiseuille.py        # Poiseuille flow implementations
-├── cavity.py            # Lid-driven cavity flow implementation
-└── non_newtonian.py     # Non-Newtonian fluid solvers
+src/
+├── cfd/                     # Navier-Stokes FDM solvers
+│   ├── __init__.py
+│   ├── poiseuille.py        # Poiseuille flow (Newtonian & Power-Law)
+│   ├── cavity.py            # Lid-driven cavity (projection method)
+│   ├── cylinder.py          # Flow past a cylinder (Kármán vortex)
+│   └── non_newtonian.py     # Non-Newtonian fluid solvers
+├── cfd_lbm/                 # Lattice-Boltzmann Method (D2Q9)
+│   ├── __init__.py
+│   ├── lbm.py               # LBM lid-driven cavity solver
+│   └── poiseuille.py        # LBM Poiseuille channel flow
+├── dem/                     # Discrete Element Method
+│   ├── __init__.py
+│   └── particles.py         # DEM particle system (Hertz contact)
+└── cfd_dem_lbm/             # Coupled LBM-DEM solver
+    ├── __init__.py
+    └── lbm_dem.py
 
 tests/
-├── test_cfd.py          # Unit tests
-└── conftest.py          # pytest configurations (optional)
+├── test_cfd.py              # Tests for cfd package
+├── test_lbm.py              # Tests for cfd_lbm package
+└── test_dem.py              # Tests for dem package
+
+examples/                    # Runnable example scripts
+.github/
+├── workflows/ci.yml         # GitHub Actions CI (tests + lint)
+└── ISSUE_TEMPLATE/          # Bug and feature request templates
 ```
 
 ## Release Procedure
@@ -91,7 +109,7 @@ This project supports both **Poetry** and **uv** for building and publishing.
 
 ### Understanding the Build System
 
-The project uses `hatchling` as its build backend (defined in `pyproject.toml`):
+The project uses **Poetry** (`poetry-core`) as its build backend (defined in `pyproject.toml`):
 - **Source Distribution (sdist)**: `.tar.gz` file containing source code
 - **Wheel**: `.whl` file - a built, ready-to-install package
 
@@ -191,10 +209,16 @@ For detailed API documentation, please refer to the docstrings in each module.
 
 ### Core Classes
 
-- `PlanePoiseuille`: Poiseuille flow between parallel plates.
-- `CircularPoiseuille`: Hagen-Poiseuille flow in a pipe.
-- `PowerLawPlanePoiseuille`: Flow of Power-Law fluids.
-- `CavityFlow`: Lid-driven cavity flow simulation.
+| Class | Module | Description |
+|-------|--------|-------------|
+| `PlanePoiseuille` | `cfd` | Poiseuille flow between parallel plates |
+| `CircularPoiseuille` | `cfd` | Hagen-Poiseuille flow in a pipe |
+| `PowerLawPlanePoiseuille` | `cfd` | Power-law non-Newtonian fluid flow |
+| `CavityFlow` | `cfd` | Lid-driven cavity (projection method) |
+| `CylinderFlow` | `cfd` | Flow past a cylinder with Kármán vortex shedding |
+| `LBM` | `cfd_lbm` | D2Q9 Lattice-Boltzmann cavity solver |
+| `PoiseuilleFlow` | `cfd_lbm` | LBM channel (Poiseuille) flow |
+| `ParticleSystem` | `dem` | DEM granular particle dynamics |
 
 Refer to [README.md](README.md) for further details.
 

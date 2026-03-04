@@ -4,8 +4,8 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
 name = "cfd-solver"
-version = "0.2.0"
-description = "A robust Python library for Poiseuille and stabilized Cavity flow simulations."
+version = "0.3.0"
+description = "Python library for CFD: Navier-Stokes FDM, Lattice-Boltzmann (D2Q9), and Discrete Element Method solvers."
 readme = "README.md"
 license = "MIT"
 authors = [
@@ -17,18 +17,30 @@ keywords = [
     "Navier-Stokes",
     "Poiseuille",
     "Lid-Driven Cavity",
+    "Cylinder Flow",
+    "Karman Vortex",
+    "Lattice-Boltzmann",
+    "LBM",
+    "Discrete Element Method",
+    "DEM",
     "Non-Newtonian",
-    "Numerical Simulation"
+    "Numerical Simulation",
+    "Computational Physics",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
     "Intended Audience :: Education",
     "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: Scientific/Engineering :: Mathematics",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+    "Natural Language :: English",
+    "Typing :: Typed",
 ]
 homepage = "https://github.com/hardwork9047/cfd-solver"
 documentation = "https://github.com/hardwork9047/cfd-solver#readme"
@@ -41,7 +53,7 @@ packages = [
 ]
 
 [tool.poetry.dependencies]
-python = ">=3.11"
+python = ">=3.11,<4.0"
 numpy = ">=1.26.0"
 matplotlib = ">=3.8.0"
 
@@ -54,9 +66,12 @@ ruff = ">=0.3.0"
 
 [tool.black]
 line-length = 100
-target-version = ["py311"]
+target-version = ["py311", "py312", "py313"]
 
 [tool.ruff]
 line-length = 100
 target-version = "py311"
 lint.select = ["E", "F", "W", "I"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

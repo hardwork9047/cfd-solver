@@ -1,10 +1,17 @@
 """
 DEM - Discrete Element Method Library
 
-A library for simulating particle dynamics using the Discrete Element Method.
+A library for simulating granular particle dynamics using the Discrete
+Element Method with Hertzian contact and velocity-Verlet integration.
 """
 
-__version__ = "0.1.0"
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("cfd-solver")
+except PackageNotFoundError:
+    __version__ = "0.3.0"
+
 __author__ = "hardwork9047"
 __license__ = "MIT"
 
