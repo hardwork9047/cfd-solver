@@ -48,9 +48,7 @@ class TestParticleSystemInit:
 
     def test_positions_within_domain(self):
         """Initial positions must lie inside the domain (accounting for radius)."""
-        ps = ParticleSystem(
-            n_particles=20, domain_size=(10.0, 10.0), particle_radius=0.1
-        )
+        ps = ParticleSystem(n_particles=20, domain_size=(10.0, 10.0), particle_radius=0.1)
 
         assert np.all(ps.positions[:, 0] >= 0.0)
         assert np.all(ps.positions[:, 0] <= 10.0)

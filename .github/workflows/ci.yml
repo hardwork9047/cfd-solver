@@ -40,12 +40,13 @@ jobs:
         run: poetry install --no-interaction
 
       - name: Run tests with coverage
+        env:
+          MPLBACKEND: Agg
         run: |
           poetry run pytest tests/ \
             --cov=cfd --cov=cfd_lbm --cov=dem --cov=cfd_dem_lbm \
             --cov-report=term-missing \
-            --cov-report=xml \
-            -v
+            --cov-report=xml
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4

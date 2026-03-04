@@ -37,14 +37,14 @@ import numpy as np
 # Velocity vectors  e[i] = (cx, cy)
 C = np.array(
     [
-        [0, 0],   # 0 rest
-        [1, 0],   # 1 E
-        [0, 1],   # 2 N
+        [0, 0],  # 0 rest
+        [1, 0],  # 1 E
+        [0, 1],  # 2 N
         [-1, 0],  # 3 W
         [0, -1],  # 4 S
-        [1, 1],   # 5 NE
+        [1, 1],  # 5 NE
         [-1, 1],  # 6 NW
-        [-1, -1], # 7 SW
+        [-1, -1],  # 7 SW
         [1, -1],  # 8 SE
     ],
     dtype=float,
@@ -147,7 +147,7 @@ class LBMDEMSolver:
         self.Re = Re
         self.u_max = u_max
         self.n_p = n_particles
-        self.r_p = particle_radius          # representative (mean) radius
+        self.r_p = particle_radius  # representative (mean) radius
         self.radius_variation = radius_variation
         self.density_ratio = density_ratio
         self.g = gravity
@@ -175,17 +175,20 @@ class LBMDEMSolver:
 
         # Per-particle masses (2-D disc: area × density_ratio)
         self.masses = density_ratio * np.pi * self.radii**2
-        self.mass_p = float(np.mean(self.masses))   # representative scalar (kept for display)
+        self.mass_p = float(np.mean(self.masses))  # representative scalar (kept for display)
 
         print("LBM-DEM Coupled Solver")
         print(f"  Grid         : {nx} × {ny}")
         print(f"  Re           : {Re:.1f}   nu = {self.nu:.5f}   tau = {self.tau:.4f}")
         print(f"  u_max        : {u_max:.4f}   F_drive = {self.F_drive:.2e}")
-        print(f"  Particles    : {n_particles}  r = {particle_radius:.1f} ± "
-              f"{radius_variation*100:.0f}%  density_ratio = {density_ratio:.1f}")
+        print(
+            f"  Particles    : {n_particles}  r = {particle_radius:.1f} ± "
+            f"{radius_variation*100:.0f}%  density_ratio = {density_ratio:.1f}"
+        )
         print(f"  Gravity (latt): {gravity:.2e}   DEM substeps = {dem_substeps}")
         if cylinder is not None:
-            print(f"  Cylinder      : center=({cylinder[0]:.1f}, {cylinder[1]:.1f})  r={cylinder[2]:.1f}")
+            cx, cy, cr = cylinder[0], cylinder[1], cylinder[2]
+            print(f"  Cylinder      : center=({cx:.1f}, {cy:.1f})  r={cr:.1f}")
 
         # --- LBM distribution functions f[q, x, y] ---
         rho0 = np.ones((nx, ny))
@@ -202,7 +205,7 @@ class LBMDEMSolver:
             ix = np.arange(nx)
             iy = np.arange(ny)
             XX, YY = np.meshgrid(ix, iy, indexing="ij")
-            self.solid |= (XX - cx) ** 2 + (YY - cy) ** 2 <= cr ** 2
+            self.solid |= (XX - cx) ** 2 + (YY - cy) ** 2 <= cr**2
 
         # Fluid body-force arrays (reset each step; includes driving + particle feedback)
         self.Fx = np.full((nx, ny), self.F_drive)
@@ -552,8 +555,11 @@ def plot_fields(sim: LBMDEMSolver, save_path: Path | None = None) -> None:
     # (a) Speed
     ax = axes[0]
     im = ax.imshow(
-        spd_T, origin="lower", cmap="inferno",
-        extent=[0, sim.nx, 0, sim.ny], aspect="auto",
+        spd_T,
+        origin="lower",
+        cmap="inferno",
+        extent=[0, sim.nx, 0, sim.ny],
+        aspect="auto",
     )
     _draw_particles(ax, sim)
     ax.set_title("Velocity Magnitude |u|")
@@ -564,8 +570,9 @@ def plot_fields(sim: LBMDEMSolver, save_path: Path | None = None) -> None:
     # (b) Streamlines
     ax = axes[1]
     lw = 1.5 * spd_T / (spd_T.max() + 1e-12)
-    ax.streamplot(x, y, ux_T, uy_T, color=spd_T, cmap="cool",
-                  linewidth=lw, density=1.2, arrowsize=0.8)
+    ax.streamplot(
+        x, y, ux_T, uy_T, color=spd_T, cmap="cool", linewidth=lw, density=1.2, arrowsize=0.8
+    )
     _draw_particles(ax, sim)
     ax.set_xlim(0, sim.nx)
     ax.set_ylim(0, sim.ny)
@@ -577,9 +584,13 @@ def plot_fields(sim: LBMDEMSolver, save_path: Path | None = None) -> None:
     ax = axes[2]
     vmax = float(np.percentile(np.abs(vort_T), 98)) + 1e-12
     im2 = ax.imshow(
-        vort_T, origin="lower", cmap="RdBu_r",
-        vmin=-vmax, vmax=vmax,
-        extent=[0, sim.nx, 0, sim.ny], aspect="auto",
+        vort_T,
+        origin="lower",
+        cmap="RdBu_r",
+        vmin=-vmax,
+        vmax=vmax,
+        extent=[0, sim.nx, 0, sim.ny],
+        aspect="auto",
     )
     _draw_particles(ax, sim)
     ax.set_title("Vorticity  ∂v/∂x − ∂u/∂y")
@@ -600,21 +611,29 @@ def plot_particles(sim: LBMDEMSolver, save_path: Path | None = None) -> None:
 
     fig, ax = plt.subplots(figsize=(12, 5))
     ax.imshow(
-        speed.T, origin="lower", cmap="Blues",
-        extent=[0, sim.nx, 0, sim.ny], aspect="auto", alpha=0.7,
+        speed.T,
+        origin="lower",
+        cmap="Blues",
+        extent=[0, sim.nx, 0, sim.ny],
+        aspect="auto",
+        alpha=0.7,
     )
 
     p_speeds = np.linalg.norm(sim.vel, axis=1)
     sc = ax.scatter(
-        sim.pos[:, 0], sim.pos[:, 1],
-        c=p_speeds, cmap="hot_r", s=(sim.r_p * 4) ** 2,
-        edgecolors="k", linewidths=0.5, zorder=5,
+        sim.pos[:, 0],
+        sim.pos[:, 1],
+        c=p_speeds,
+        cmap="hot_r",
+        s=(sim.r_p * 4) ** 2,
+        edgecolors="k",
+        linewidths=0.5,
+        zorder=5,
     )
     fig.colorbar(sc, ax=ax, label="Particle speed [lattice]", shrink=0.8)
     ax.set_xlim(0, sim.nx)
     ax.set_ylim(0, sim.ny)
-    ax.set_title(
-        f"Particles (n={sim.n_p}) + Fluid speed  |  step={sim.step_count:,}")
+    ax.set_title(f"Particles (n={sim.n_p}) + Fluid speed  |  step={sim.step_count:,}")
     ax.set_xlabel("x [lattice]")
     ax.set_ylabel("y [lattice]")
     plt.tight_layout()
@@ -644,30 +663,44 @@ def _draw_particles(ax: plt.Axes, sim: LBMDEMSolver) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="2-D LBM-DEM coupled fluid-particle simulation"
-    )
+    parser = argparse.ArgumentParser(description="2-D LBM-DEM coupled fluid-particle simulation")
     parser.add_argument("--nx", type=int, default=200, help="Grid width (default 200)")
     parser.add_argument("--ny", type=int, default=80, help="Grid height (default 80)")
     parser.add_argument("--Re", type=float, default=100.0, help="Reynolds number (default 100)")
-    parser.add_argument("--u-max", type=float, default=0.05,
-                        help="Max (centreline) fluid velocity in lattice units (default 0.05)")
-    parser.add_argument("--n-particles", type=int, default=20,
-                        help="Number of DEM particles (default 20)")
-    parser.add_argument("--radius", type=float, default=3.0,
-                        help="Particle radius in lattice nodes (default 3.0)")
-    parser.add_argument("--density-ratio", type=float, default=2.0,
-                        help="ρ_particle / ρ_fluid (default 2.0)")
-    parser.add_argument("--gravity", type=float, default=2e-5,
-                        help="Gravitational acceleration in lattice units (default 2e-5)")
-    parser.add_argument("--steps", type=int, default=10000,
-                        help="Total LBM steps (default 10000)")
-    parser.add_argument("--report-every", type=int, default=1000,
-                        help="Report interval (default 1000)")
-    parser.add_argument("--no-show", action="store_true",
-                        help="Save figures to files instead of displaying")
-    parser.add_argument("--out-dir", type=str, default="results",
-                        help="Output directory for figures (default: results/)")
+    parser.add_argument(
+        "--u-max",
+        type=float,
+        default=0.05,
+        help="Max (centreline) fluid velocity in lattice units (default 0.05)",
+    )
+    parser.add_argument(
+        "--n-particles", type=int, default=20, help="Number of DEM particles (default 20)"
+    )
+    parser.add_argument(
+        "--radius", type=float, default=3.0, help="Particle radius in lattice nodes (default 3.0)"
+    )
+    parser.add_argument(
+        "--density-ratio", type=float, default=2.0, help="ρ_particle / ρ_fluid (default 2.0)"
+    )
+    parser.add_argument(
+        "--gravity",
+        type=float,
+        default=2e-5,
+        help="Gravitational acceleration in lattice units (default 2e-5)",
+    )
+    parser.add_argument("--steps", type=int, default=10000, help="Total LBM steps (default 10000)")
+    parser.add_argument(
+        "--report-every", type=int, default=1000, help="Report interval (default 1000)"
+    )
+    parser.add_argument(
+        "--no-show", action="store_true", help="Save figures to files instead of displaying"
+    )
+    parser.add_argument(
+        "--out-dir",
+        type=str,
+        default="results",
+        help="Output directory for figures (default: results/)",
+    )
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -697,8 +730,7 @@ def main() -> None:
         speed_max = float(np.sqrt(ux**2 + uy**2).max())
         p_ke = 0.5 * sim.mass_p * float(np.sum(sim.vel**2))
         print(
-            f"  step {sim.step_count:>7,}  |u|_max = {speed_max:.5f}"
-            f"  particle KE = {p_ke:.3e}"
+            f"  step {sim.step_count:>7,}  |u|_max = {speed_max:.5f}" f"  particle KE = {p_ke:.3e}"
         )
 
     print("\nFinal plots …")

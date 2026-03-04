@@ -84,7 +84,8 @@ class PlanePoiseuille:
             if np.any(np.isnan(u)) or np.any(np.isinf(u)):
                 logger.error(f"Numerical instability detected at iteration {iteration+1}!")
                 raise RuntimeError(
-                    "Solver diverged (NaN or Inf detected). Try reducing omega or increasing resolution."
+                    "Solver diverged (NaN or Inf detected). "
+                    "Try reducing omega or increasing resolution."
                 )
 
             # Check for convergence

@@ -73,5 +73,3 @@ line-length = 100
 target-version = "py311"
 lint.select = ["E", "F", "W", "I"]
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]

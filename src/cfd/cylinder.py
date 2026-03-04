@@ -22,8 +22,18 @@ rcParams["font.family"] = "sans-serif"
 class CylinderFlow:
     """Flow around a circular cylinder solver with numerical stabilization."""
 
-    def __init__(self, L=2.0, H=1.0, D=0.1, U_inf=1.0, rho=1.0, mu=0.01, nx=200, ny=100,
-                 advection_scheme="upwind2"):
+    def __init__(
+        self,
+        L=2.0,
+        H=1.0,
+        D=0.1,
+        U_inf=1.0,
+        rho=1.0,
+        mu=0.01,
+        nx=200,
+        ny=100,
+        advection_scheme="upwind2",
+    ):
         """
         Parameters:
         -----------
@@ -167,10 +177,10 @@ class CylinderFlow:
             p_new[ii, jj] -= omega * res / coeff
 
             # Boundary conditions for pressure
-            p_new[:, 0] = p_new[:, 1]   # Inlet (Neumann)
-            p_new[:, -1] = 0.0          # Outlet (Dirichlet reference)
-            p_new[0, :] = p_new[1, :]   # Bottom (Neumann)
-            p_new[-1, :] = p_new[-2, :] # Top (Neumann)
+            p_new[:, 0] = p_new[:, 1]  # Inlet (Neumann)
+            p_new[:, -1] = 0.0  # Outlet (Dirichlet reference)
+            p_new[0, :] = p_new[1, :]  # Bottom (Neumann)
+            p_new[-1, :] = p_new[-2, :]  # Top (Neumann)
 
             # Cylinder: zero pressure (Dirichlet) keeps solution bounded inside obstacle
             p_new[self.mask] = 0.0
@@ -233,22 +243,20 @@ class CylinderFlow:
             u_in = u[2:-2, 2:-2]
             v_in = v[2:-2, 2:-2]
             # x: phi at j, j±1, j±2
-            dphi_dx_in = (
-                np.maximum(u_in, 0)
-                * (3 * phi[2:-2, 2:-2] - 4 * phi[2:-2, 1:-3] + phi[2:-2, :-4])
-                / (2.0 * self.dx)
-                + np.minimum(u_in, 0)
-                * (-phi[2:-2, 4:] + 4 * phi[2:-2, 3:-1] - 3 * phi[2:-2, 2:-2])
-                / (2.0 * self.dx)
+            dphi_dx_in = np.maximum(u_in, 0) * (
+                3 * phi[2:-2, 2:-2] - 4 * phi[2:-2, 1:-3] + phi[2:-2, :-4]
+            ) / (2.0 * self.dx) + np.minimum(u_in, 0) * (
+                -phi[2:-2, 4:] + 4 * phi[2:-2, 3:-1] - 3 * phi[2:-2, 2:-2]
+            ) / (
+                2.0 * self.dx
             )
             # y: phi at i, i±1, i±2
-            dphi_dy_in = (
-                np.maximum(v_in, 0)
-                * (3 * phi[2:-2, 2:-2] - 4 * phi[1:-3, 2:-2] + phi[:-4, 2:-2])
-                / (2.0 * self.dy)
-                + np.minimum(v_in, 0)
-                * (-phi[4:, 2:-2] + 4 * phi[3:-1, 2:-2] - 3 * phi[2:-2, 2:-2])
-                / (2.0 * self.dy)
+            dphi_dy_in = np.maximum(v_in, 0) * (
+                3 * phi[2:-2, 2:-2] - 4 * phi[1:-3, 2:-2] + phi[:-4, 2:-2]
+            ) / (2.0 * self.dy) + np.minimum(v_in, 0) * (
+                -phi[4:, 2:-2] + 4 * phi[3:-1, 2:-2] - 3 * phi[2:-2, 2:-2]
+            ) / (
+                2.0 * self.dy
             )
             # Overwrite the centre of the derivative arrays
             dphi_dx[1:-1, 1:-1] = dphi_dx_in
@@ -285,21 +293,19 @@ class CylinderFlow:
             if nx_phi >= 5 and ny_phi >= 5:
                 u_in = u[2:-2, 2:-2]
                 v_in = v[2:-2, 2:-2]
-                dphi_dx[1:-1, 1:-1] = (
-                    np.maximum(u_in, 0)
-                    * (3 * phi[2:-2, 2:-2] - 4 * phi[2:-2, 1:-3] + phi[2:-2, :-4])
-                    / (2.0 * self.dx)
-                    + np.minimum(u_in, 0)
-                    * (-phi[2:-2, 4:] + 4 * phi[2:-2, 3:-1] - 3 * phi[2:-2, 2:-2])
-                    / (2.0 * self.dx)
+                dphi_dx[1:-1, 1:-1] = np.maximum(u_in, 0) * (
+                    3 * phi[2:-2, 2:-2] - 4 * phi[2:-2, 1:-3] + phi[2:-2, :-4]
+                ) / (2.0 * self.dx) + np.minimum(u_in, 0) * (
+                    -phi[2:-2, 4:] + 4 * phi[2:-2, 3:-1] - 3 * phi[2:-2, 2:-2]
+                ) / (
+                    2.0 * self.dx
                 )
-                dphi_dy[1:-1, 1:-1] = (
-                    np.maximum(v_in, 0)
-                    * (3 * phi[2:-2, 2:-2] - 4 * phi[1:-3, 2:-2] + phi[:-4, 2:-2])
-                    / (2.0 * self.dy)
-                    + np.minimum(v_in, 0)
-                    * (-phi[4:, 2:-2] + 4 * phi[3:-1, 2:-2] - 3 * phi[2:-2, 2:-2])
-                    / (2.0 * self.dy)
+                dphi_dy[1:-1, 1:-1] = np.maximum(v_in, 0) * (
+                    3 * phi[2:-2, 2:-2] - 4 * phi[1:-3, 2:-2] + phi[:-4, 2:-2]
+                ) / (2.0 * self.dy) + np.minimum(v_in, 0) * (
+                    -phi[4:, 2:-2] + 4 * phi[3:-1, 2:-2] - 3 * phi[2:-2, 2:-2]
+                ) / (
+                    2.0 * self.dy
                 )
 
         return dphi_dx + dphi_dy
@@ -330,14 +336,12 @@ class CylinderFlow:
         ii, jj = slice(1, -1), slice(1, -1)
 
         # Viscous (diffusion) terms
-        lap_u = (
-            (self.u[2:, jj] - 2 * self.u[ii, jj] + self.u[:-2, jj]) / self.dy**2
-            + (self.u[ii, 2:] - 2 * self.u[ii, jj] + self.u[ii, :-2]) / self.dx**2
-        )
-        lap_v = (
-            (self.v[2:, jj] - 2 * self.v[ii, jj] + self.v[:-2, jj]) / self.dy**2
-            + (self.v[ii, 2:] - 2 * self.v[ii, jj] + self.v[ii, :-2]) / self.dx**2
-        )
+        lap_u = (self.u[2:, jj] - 2 * self.u[ii, jj] + self.u[:-2, jj]) / self.dy**2 + (
+            self.u[ii, 2:] - 2 * self.u[ii, jj] + self.u[ii, :-2]
+        ) / self.dx**2
+        lap_v = (self.v[2:, jj] - 2 * self.v[ii, jj] + self.v[:-2, jj]) / self.dy**2 + (
+            self.v[ii, 2:] - 2 * self.v[ii, jj] + self.v[ii, :-2]
+        ) / self.dx**2
 
         # Advection — dispatched through _advect() (upwind1 or upwind2)
         u_adv = self._advect(self.u, self.u, self.v)
@@ -348,11 +352,13 @@ class CylinderFlow:
         v_star = self.v.copy()
         u_star[ii, jj] = np.clip(
             self.u[ii, jj] + self.dt * (-u_adv + self.nu * lap_u),
-            -5 * self.U_inf, 5 * self.U_inf,
+            -5 * self.U_inf,
+            5 * self.U_inf,
         )
         v_star[ii, jj] = np.clip(
             self.v[ii, jj] + self.dt * (-v_adv + self.nu * lap_v),
-            -5 * self.U_inf, 5 * self.U_inf,
+            -5 * self.U_inf,
+            5 * self.U_inf,
         )
         u_star[self.mask] = 0.0
         v_star[self.mask] = 0.0
@@ -377,11 +383,13 @@ class CylinderFlow:
         v_new = v_star.copy()
         u_new[ii, jj] = np.clip(
             u_star[ii, jj] - self.dt / self.rho * dpdx,
-            -5 * self.U_inf, 5 * self.U_inf,
+            -5 * self.U_inf,
+            5 * self.U_inf,
         )
         v_new[ii, jj] = np.clip(
             v_star[ii, jj] - self.dt / self.rho * dpdy,
-            -5 * self.U_inf, 5 * self.U_inf,
+            -5 * self.U_inf,
+            5 * self.U_inf,
         )
 
         if np.any(np.isnan(u_new)) or np.any(np.isnan(v_new)):
@@ -443,7 +451,7 @@ class CylinderFlow:
                 p_avg = np.mean(p_neighbors)
                 # x-component of outward normal (cylinder center → surface cell)
                 dx_vec = self.X[i, j] - self.x_c
-                r = np.sqrt((self.X[i, j] - self.x_c)**2 + (self.Y[i, j] - self.y_c)**2)
+                r = np.sqrt((self.X[i, j] - self.x_c) ** 2 + (self.Y[i, j] - self.y_c) ** 2)
                 nx = dx_vec / (r + 1e-10)
                 # Drag force contribution: pressure pushes inward (-n̂), x-component gives drag
                 F_p += p_avg * (-nx) * self.dx * self.dy

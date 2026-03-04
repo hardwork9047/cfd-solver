@@ -23,7 +23,7 @@ rcParams["font.family"] = "sans-serif"
 class ParticleSystem:
     """
     Discrete Element Method (DEM) Particle System.
-    
+
     Simulates the dynamics of spherical particles using:
     - Gravity
     - Normal contact forces (Hertzian contact)
@@ -73,7 +73,7 @@ class ParticleSystem:
 
         # Particle mass (assuming 2D circular particles with unit thickness)
         self.mass = particle_density * np.pi * particle_radius**2
-        
+
         # Initialize radii and masses arrays (will be uniform initially, can be modified)
         self.radii = np.full(n_particles, particle_radius)
         self.masses = np.full(n_particles, self.mass)
@@ -89,10 +89,10 @@ class ParticleSystem:
         # Simulation time
         self.time = 0.0
         self.iteration = 0
-        
+
         # Store forces for visualization
         self.forces = np.zeros((n_particles, 2))
-        
+
         # Spatial partitioning grid (for efficient collision detection)
         # Set cell size to 4x the particle radius to capture nearby particles
         self.cell_size = max(4.0 * particle_radius, 0.1)
@@ -110,25 +110,25 @@ class ParticleSystem:
         """Build spatial grid for efficient collision detection."""
         # Initialize grid with empty lists
         grid = {}
-        
+
         # Assign each particle to grid cell(s)
         for i in range(self.n_particles):
             x, y = self.positions[i]
             r = self.radii[i]
-            
+
             # Determine which grid cells this particle overlaps
             min_cell_x = max(0, int(np.floor((x - r) / self.cell_size)))
             max_cell_x = min(self.grid_nx - 1, int(np.floor((x + r) / self.cell_size)))
             min_cell_y = max(0, int(np.floor((y - r) / self.cell_size)))
             max_cell_y = min(self.grid_ny - 1, int(np.floor((y + r) / self.cell_size)))
-            
+
             for cell_x in range(min_cell_x, max_cell_x + 1):
                 for cell_y in range(min_cell_y, max_cell_y + 1):
                     cell_key = (cell_x, cell_y)
                     if cell_key not in grid:
                         grid[cell_key] = []
                     grid[cell_key].append(i)
-        
+
         return grid
 
     def compute_forces(self):
@@ -140,7 +140,7 @@ class ParticleSystem:
 
         # Build spatial grid for efficient collision detection
         grid = self._build_spatial_grid()
-        
+
         # Track which particle pairs have been checked
         checked_pairs = set()
 
@@ -148,20 +148,20 @@ class ParticleSystem:
         for cell_key, particle_indices in grid.items():
             # Check collisions within this cell
             for i_idx, i in enumerate(particle_indices):
-                for j in particle_indices[i_idx + 1:]:
+                for j in particle_indices[i_idx + 1 :]:
                     pair_key = tuple(sorted([i, j]))
                     if pair_key in checked_pairs:
                         continue
                     checked_pairs.add(pair_key)
-                    
+
                     delta_pos = self.positions[j] - self.positions[i]
                     distance = np.linalg.norm(delta_pos)
                     contact_distance = self.radii[i] + self.radii[j]
-                    
+
                     # Quick check: only compute if particles are close enough
                     if distance >= contact_distance:
                         continue
-                    
+
                     overlap = contact_distance - distance
 
                     if overlap > 0:  # Collision detected
@@ -169,7 +169,7 @@ class ParticleSystem:
                         normal = delta_pos / (distance + 1e-10)
 
                         # Normal force (Hertzian contact model: f_n ∝ overlap^(3/2))
-                        f_n = self.k_n * (overlap ** 1.5)
+                        f_n = self.k_n * (overlap**1.5)
 
                         # Relative velocity
                         rel_vel = self.velocities[j] - self.velocities[i]
@@ -184,38 +184,38 @@ class ParticleSystem:
 
                         forces[i] -= f_total
                         forces[j] += f_total
-            
+
             # Check collisions with neighboring cells
             cell_x, cell_y = cell_key
             for dx in [-1, 0, 1]:
                 for dy in [-1, 0, 1]:
                     if dx == 0 and dy == 0:
                         continue  # Already checked this cell
-                    
+
                     neighbor_key = (cell_x + dx, cell_y + dy)
                     if neighbor_key not in grid:
                         continue
-                    
+
                     neighbor_indices = grid[neighbor_key]
-                    
+
                     for i in particle_indices:
                         for j in neighbor_indices:
                             if i >= j:
                                 continue  # Avoid duplicate checks
-                            
+
                             pair_key = tuple(sorted([i, j]))
                             if pair_key in checked_pairs:
                                 continue
                             checked_pairs.add(pair_key)
-                            
+
                             delta_pos = self.positions[j] - self.positions[i]
                             distance = np.linalg.norm(delta_pos)
                             contact_distance = self.radii[i] + self.radii[j]
-                            
+
                             # Quick check
                             if distance >= contact_distance:
                                 continue
-                            
+
                             overlap = contact_distance - distance
 
                             if overlap > 0:  # Collision detected
@@ -223,7 +223,7 @@ class ParticleSystem:
                                 normal = delta_pos / (distance + 1e-10)
 
                                 # Normal force
-                                f_n = self.k_n * (overlap ** 1.5)
+                                f_n = self.k_n * (overlap**1.5)
 
                                 # Relative velocity
                                 rel_vel = self.velocities[j] - self.velocities[i]
@@ -239,13 +239,12 @@ class ParticleSystem:
                                 forces[i] -= f_total
                                 forces[j] += f_total
 
-
         # Wall collisions (using individual radii)
         for i in range(self.n_particles):
             # Bottom wall
             if self.positions[i, 1] < self.radii[i]:
                 overlap = self.radii[i] - self.positions[i, 1]
-                f_n = self.k_n * (overlap ** 1.5)  # Hertzian contact
+                f_n = self.k_n * (overlap**1.5)  # Hertzian contact
                 # Damping opposes normal velocity (negative velocity = moving into wall)
                 v_n = self.velocities[i, 1]  # Normal velocity (negative = into wall)
                 f_d = -self.damping * v_n * np.sqrt(self.k_n * self.masses[i])
@@ -254,7 +253,7 @@ class ParticleSystem:
             # Top wall
             if self.positions[i, 1] > self.height - self.radii[i]:
                 overlap = self.positions[i, 1] - (self.height - self.radii[i])
-                f_n = self.k_n * (overlap ** 1.5)  # Hertzian contact
+                f_n = self.k_n * (overlap**1.5)  # Hertzian contact
                 # Damping opposes normal velocity (positive velocity = moving into wall)
                 v_n = self.velocities[i, 1]  # Normal velocity (positive = into wall)
                 f_d = -self.damping * v_n * np.sqrt(self.k_n * self.masses[i])
@@ -263,7 +262,7 @@ class ParticleSystem:
             # Left wall
             if self.positions[i, 0] < self.radii[i]:
                 overlap = self.radii[i] - self.positions[i, 0]
-                f_n = self.k_n * (overlap ** 1.5)  # Hertzian contact
+                f_n = self.k_n * (overlap**1.5)  # Hertzian contact
                 # Damping opposes normal velocity (negative velocity = moving into wall)
                 v_n = self.velocities[i, 0]  # Normal velocity (negative = into wall)
                 f_d = -self.damping * v_n * np.sqrt(self.k_n * self.masses[i])
@@ -272,7 +271,7 @@ class ParticleSystem:
             # Right wall
             if self.positions[i, 0] > self.width - self.radii[i]:
                 overlap = self.positions[i, 0] - (self.width - self.radii[i])
-                f_n = self.k_n * (overlap ** 1.5)  # Hertzian contact
+                f_n = self.k_n * (overlap**1.5)  # Hertzian contact
                 # Damping opposes normal velocity (positive velocity = moving into wall)
                 v_n = self.velocities[i, 0]  # Normal velocity (positive = into wall)
                 f_d = -self.damping * v_n * np.sqrt(self.k_n * self.masses[i])
@@ -285,7 +284,7 @@ class ParticleSystem:
         # Compute current forces
         forces = self.compute_forces()
         accelerations = forces / self.masses[:, np.newaxis]  # Use individual masses
-        
+
         # Store forces for visualization
         self.forces = forces.copy()
 
@@ -310,19 +309,19 @@ class ParticleSystem:
                 self.positions[i, 0] = self.radii[i]
                 if self.velocities[i, 0] < 0:
                     self.velocities[i, 0] = 0.0
-            
+
             # Right wall
             if self.positions[i, 0] > self.width - self.radii[i]:
                 self.positions[i, 0] = self.width - self.radii[i]
                 if self.velocities[i, 0] > 0:
                     self.velocities[i, 0] = 0.0
-            
+
             # Bottom wall
             if self.positions[i, 1] < self.radii[i]:
                 self.positions[i, 1] = self.radii[i]
                 if self.velocities[i, 1] < 0:
                     self.velocities[i, 1] = 0.0
-            
+
             # Top wall
             if self.positions[i, 1] > self.height - self.radii[i]:
                 self.positions[i, 1] = self.height - self.radii[i]
@@ -365,14 +364,14 @@ class ParticleSystem:
 
         # Compute force magnitudes for coloring
         force_magnitudes = np.linalg.norm(self.forces, axis=1)
-        
+
         # Normalize force magnitudes for colormap (avoid division by zero)
         max_force = np.max(force_magnitudes) if np.max(force_magnitudes) > 0 else 1.0
         normalized_forces = force_magnitudes / max_force
-        
+
         # Use colormap (blue for low force, red for high force)
         cmap = plt.cm.coolwarm
-        
+
         # Draw particles with color based on force (using individual radii)
         for i in range(self.n_particles):
             color = cmap(normalized_forces[i])
@@ -389,7 +388,7 @@ class ParticleSystem:
         # Add colorbar
         sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=0, vmax=max_force))
         sm.set_array([])
-        cbar = plt.colorbar(sm, ax=ax, label="Force Magnitude [N]", pad=0.02)
+        plt.colorbar(sm, ax=ax, label="Force Magnitude [N]", pad=0.02)
 
         ax.set_xlim(-0.5, self.width + 0.5)
         ax.set_ylim(-0.5, self.height + 0.5)
@@ -409,8 +408,6 @@ class ParticleSystem:
 
     def get_particle_distribution(self, n_bins=20):
         """Get vertical distribution of particles."""
-        hist, bin_edges = np.histogram(
-            self.positions[:, 1], bins=n_bins, range=(0, self.height)
-        )
+        hist, bin_edges = np.histogram(self.positions[:, 1], bins=n_bins, range=(0, self.height))
         bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
         return bin_centers, hist

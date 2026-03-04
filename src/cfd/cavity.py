@@ -22,8 +22,7 @@ rcParams["font.family"] = "sans-serif"
 class CavityFlow:
     """Lid-Driven Cavity Flow Solver using the fractional-step projection method."""
 
-    def __init__(self, L=1.0, rho=1.0, mu=0.01, nx=65, ny=65,
-                 advection_scheme="upwind"):
+    def __init__(self, L=1.0, rho=1.0, mu=0.01, nx=65, ny=65, advection_scheme="upwind"):
         """
         Parameters:
         -----------
@@ -119,21 +118,19 @@ class CavityFlow:
             if nx_phi >= 5 and ny_phi >= 5:
                 u_in = u[2:-2, 2:-2]
                 v_in = v[2:-2, 2:-2]
-                dphi_dx[1:-1, 1:-1] = (
-                    np.maximum(u_in, 0)
-                    * (3 * phi[2:-2, 2:-2] - 4 * phi[2:-2, 1:-3] + phi[2:-2, :-4])
-                    / (2.0 * self.dx)
-                    + np.minimum(u_in, 0)
-                    * (-phi[2:-2, 4:] + 4 * phi[2:-2, 3:-1] - 3 * phi[2:-2, 2:-2])
-                    / (2.0 * self.dx)
+                dphi_dx[1:-1, 1:-1] = np.maximum(u_in, 0) * (
+                    3 * phi[2:-2, 2:-2] - 4 * phi[2:-2, 1:-3] + phi[2:-2, :-4]
+                ) / (2.0 * self.dx) + np.minimum(u_in, 0) * (
+                    -phi[2:-2, 4:] + 4 * phi[2:-2, 3:-1] - 3 * phi[2:-2, 2:-2]
+                ) / (
+                    2.0 * self.dx
                 )
-                dphi_dy[1:-1, 1:-1] = (
-                    np.maximum(v_in, 0)
-                    * (3 * phi[2:-2, 2:-2] - 4 * phi[1:-3, 2:-2] + phi[:-4, 2:-2])
-                    / (2.0 * self.dy)
-                    + np.minimum(v_in, 0)
-                    * (-phi[4:, 2:-2] + 4 * phi[3:-1, 2:-2] - 3 * phi[2:-2, 2:-2])
-                    / (2.0 * self.dy)
+                dphi_dy[1:-1, 1:-1] = np.maximum(v_in, 0) * (
+                    3 * phi[2:-2, 2:-2] - 4 * phi[1:-3, 2:-2] + phi[:-4, 2:-2]
+                ) / (2.0 * self.dy) + np.minimum(v_in, 0) * (
+                    -phi[4:, 2:-2] + 4 * phi[3:-1, 2:-2] - 3 * phi[2:-2, 2:-2]
+                ) / (
+                    2.0 * self.dy
                 )
 
         return dphi_dx + dphi_dy
@@ -198,14 +195,12 @@ class CavityFlow:
         ii, jj = slice(1, -1), slice(1, -1)
 
         # Viscous terms
-        lap_u = (
-            (self.u[2:, jj] - 2 * self.u[ii, jj] + self.u[:-2, jj]) / self.dy**2
-            + (self.u[ii, 2:] - 2 * self.u[ii, jj] + self.u[ii, :-2]) / self.dx**2
-        )
-        lap_v = (
-            (self.v[2:, jj] - 2 * self.v[ii, jj] + self.v[:-2, jj]) / self.dy**2
-            + (self.v[ii, 2:] - 2 * self.v[ii, jj] + self.v[ii, :-2]) / self.dx**2
-        )
+        lap_u = (self.u[2:, jj] - 2 * self.u[ii, jj] + self.u[:-2, jj]) / self.dy**2 + (
+            self.u[ii, 2:] - 2 * self.u[ii, jj] + self.u[ii, :-2]
+        ) / self.dx**2
+        lap_v = (self.v[2:, jj] - 2 * self.v[ii, jj] + self.v[:-2, jj]) / self.dy**2 + (
+            self.v[ii, 2:] - 2 * self.v[ii, jj] + self.v[ii, :-2]
+        ) / self.dx**2
 
         # Advection terms
         u_adv = self._advect(self.u, self.u, self.v)
@@ -214,12 +209,8 @@ class CavityFlow:
         # --- Step 1: Predict u* (advection + diffusion, no pressure) ---
         u_star = self.u.copy()
         v_star = self.v.copy()
-        u_star[ii, jj] = np.clip(
-            self.u[ii, jj] + self.dt * (-u_adv + self.nu * lap_u), -2.0, 2.0
-        )
-        v_star[ii, jj] = np.clip(
-            self.v[ii, jj] + self.dt * (-v_adv + self.nu * lap_v), -2.0, 2.0
-        )
+        u_star[ii, jj] = np.clip(self.u[ii, jj] + self.dt * (-u_adv + self.nu * lap_u), -2.0, 2.0)
+        v_star[ii, jj] = np.clip(self.v[ii, jj] + self.dt * (-v_adv + self.nu * lap_v), -2.0, 2.0)
         # Apply BCs to predicted velocity
         u_star[-1, :] = self.U_lid
         v_star[-1, :] = 0.0
@@ -240,12 +231,8 @@ class CavityFlow:
 
         u_new = u_star.copy()
         v_new = v_star.copy()
-        u_new[ii, jj] = np.clip(
-            u_star[ii, jj] - self.dt / self.rho * dpdx, -2.0, 2.0
-        )
-        v_new[ii, jj] = np.clip(
-            v_star[ii, jj] - self.dt / self.rho * dpdy, -2.0, 2.0
-        )
+        u_new[ii, jj] = np.clip(u_star[ii, jj] - self.dt / self.rho * dpdx, -2.0, 2.0)
+        v_new[ii, jj] = np.clip(v_star[ii, jj] - self.dt / self.rho * dpdy, -2.0, 2.0)
 
         if np.any(np.isnan(u_new)) or np.any(np.isnan(v_new)):
             logger.error("Instability detected (NaN). Aborting step.")
@@ -276,5 +263,46 @@ class CavityFlow:
         mag = np.sqrt(self.u**2 + self.v**2)
         cf = ax.contourf(self.X, self.Y, mag, levels=20, cmap="viridis")
         ax.streamplot(self.x, self.y, self.u, self.v, color="white", density=1.0)
+        ax.set_xlabel("x [m]")
+        ax.set_ylabel("y [m]")
+        ax.set_title(
+            f"Velocity Magnitude — Re={self.get_Reynolds_number():.0f}, t={self.time:.3f}s"
+        )
         plt.colorbar(cf, label="Velocity [m/s]")
+        return fig
+
+    def plot_streamlines(self, figsize=(10, 8)):
+        """Plot streamlines coloured by velocity magnitude."""
+        fig, ax = plt.subplots(figsize=figsize)
+        mag = np.sqrt(self.u**2 + self.v**2)
+        strm = ax.streamplot(
+            self.x,
+            self.y,
+            self.u,
+            self.v,
+            color=mag,
+            cmap="cool",
+            linewidth=1.5,
+            density=1.5,
+        )
+        ax.set_xlim(0, self.L)
+        ax.set_ylim(0, self.L)
+        ax.set_aspect("equal")
+        ax.set_xlabel("x [m]")
+        ax.set_ylabel("y [m]")
+        ax.set_title(f"Streamlines — Re={self.get_Reynolds_number():.0f}, t={self.time:.3f}s")
+        plt.colorbar(strm.lines, ax=ax, label="Velocity [m/s]")
+        return fig
+
+    def plot_pressure_field(self, figsize=(10, 8)):
+        """Plot the pressure distribution in the cavity."""
+        fig, ax = plt.subplots(figsize=figsize)
+        cf = ax.contourf(self.X, self.Y, self.p, levels=20, cmap="RdBu_r")
+        ax.set_xlim(0, self.L)
+        ax.set_ylim(0, self.L)
+        ax.set_aspect("equal")
+        ax.set_xlabel("x [m]")
+        ax.set_ylabel("y [m]")
+        ax.set_title(f"Pressure — Re={self.get_Reynolds_number():.0f}, t={self.time:.3f}s")
+        plt.colorbar(cf, ax=ax, label="Pressure [Pa]")
         return fig

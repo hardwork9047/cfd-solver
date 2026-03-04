@@ -26,16 +26,17 @@ References:
 
 from __future__ import annotations
 
-import numpy as np
-import matplotlib.pyplot as plt
 from pathlib import Path
 
-from .lbm import C, W, OPPOSITE, Q, CS2, equilibrium
+import matplotlib.pyplot as plt
+import numpy as np
 
+from .lbm import CS2, OPPOSITE, C, Q, W, equilibrium
 
 # ---------------------------------------------------------------------------
 # Guo forcing term
 # ---------------------------------------------------------------------------
+
 
 def guo_force(
     ux: np.ndarray,
@@ -60,10 +61,7 @@ def guo_force(
     for i in range(Q):
         cx, cy = C[i, 0], C[i, 1]
         eu = cx * ux + cy * uy
-        term = (
-            ((cx - ux) * Fx + (cy - uy) * Fy) / CS2
-            + eu * (cx * Fx + cy * Fy) / CS2**2
-        )
+        term = ((cx - ux) * Fx + (cy - uy) * Fy) / CS2 + eu * (cx * Fx + cy * Fy) / CS2**2
         Fi[i] = coeff * W[i] * term
     return Fi
 
@@ -71,6 +69,7 @@ def guo_force(
 # ---------------------------------------------------------------------------
 # PoiseuilleFlow solver
 # ---------------------------------------------------------------------------
+
 
 class PoiseuilleFlow:
     """
@@ -115,10 +114,7 @@ class PoiseuilleFlow:
 
         print("LBM D2Q9 — Poiseuille Channel Flow")
         print(f"  Grid    : {nx} x {ny}   (fluid layers: {ny - 2})")
-        print(
-            f"  H (eff) : {self.H:.1f}"
-            f"  (no-slip at y=0.5 and y={ny - 1.5})"
-        )
+        print(f"  H (eff) : {self.H:.1f}" f"  (no-slip at y=0.5 and y={ny - 1.5})")
         print(f"  Re      : {Re:.2f}")
         print(f"  u_max   : {u_max:.5f}")
         print(f"  nu      : {self.nu:.6f}   tau : {self.tau:.4f}")
@@ -132,8 +128,8 @@ class PoiseuilleFlow:
 
         # ---- wall mask ----
         self.solid = np.zeros((nx, ny), dtype=bool)
-        self.solid[:, 0] = True    # bottom wall
-        self.solid[:, -1] = True   # top wall
+        self.solid[:, 0] = True  # bottom wall
+        self.solid[:, -1] = True  # top wall
 
         self.step = 0
 
@@ -152,9 +148,7 @@ class PoiseuilleFlow:
         ux[fluid] += 0.5 * self.Fx / rho[fluid]
         return rho, ux, uy
 
-    def _collide(
-        self, rho: np.ndarray, ux: np.ndarray, uy: np.ndarray
-    ) -> None:
+    def _collide(self, rho: np.ndarray, ux: np.ndarray, uy: np.ndarray) -> None:
         """BGK collision + Guo force — fluid nodes only.
 
         Solid nodes must NOT be collided: they retain their bounce-back
@@ -165,7 +159,7 @@ class PoiseuilleFlow:
         feq = equilibrium(rho, ux, uy)
         Fi = guo_force(ux, uy, self.Fx, self.Fy, self.omega)
         delta = self.omega * (feq - self.f) + Fi
-        delta[:, self.solid] = 0.0   # no collision at solid nodes
+        delta[:, self.solid] = 0.0  # no collision at solid nodes
         self.f += delta
 
     def _stream(self) -> None:
@@ -219,9 +213,7 @@ class PoiseuilleFlow:
         j = np.arange(1, self.ny - 1)
         u_lbm = ux[0, j]
         u_anal = self.analytical_u(j.astype(float))
-        err = np.linalg.norm(u_lbm - u_anal) / (
-            np.linalg.norm(u_anal) + 1e-30
-        )
+        err = np.linalg.norm(u_lbm - u_anal) / (np.linalg.norm(u_anal) + 1e-30)
         return float(err)
 
 
@@ -229,16 +221,15 @@ class PoiseuilleFlow:
 # Visualization
 # ---------------------------------------------------------------------------
 
-def plot_profile(
-    sim: PoiseuilleFlow, save_path: Path | None = None
-) -> None:
+
+def plot_profile(sim: PoiseuilleFlow, save_path: Path | None = None) -> None:
     """Plot LBM velocity profile vs. analytical Hagen-Poiseuille parabola."""
     _, ux, _ = sim.get_fields()
 
     j = np.arange(1, sim.ny - 1)
     u_lbm = ux[0, j]
     u_anal = sim.analytical_u(j.astype(float))
-    y_norm = (j - 0.5) / sim.H   # normalised coordinate  xi/H in [0,1]
+    y_norm = (j - 0.5) / sim.H  # normalised coordinate  xi/H in [0,1]
 
     l2 = sim.l2_error()
 
@@ -253,7 +244,10 @@ def plot_profile(
     ax = axes[0]
     ax.plot(u_lbm, y_norm, "b-", lw=2.0, label="LBM")
     ax.plot(
-        u_anal, y_norm, "r--", lw=1.5,
+        u_anal,
+        y_norm,
+        "r--",
+        lw=1.5,
         label="Analytical (Hagen-Poiseuille)",
     )
     ax.set_xlabel("u  (lattice units)")
@@ -287,9 +281,7 @@ def plot_convergence(
     ax.semilogy(steps, errors, "b-", lw=1.5)
     ax.set_xlabel("Time step")
     ax.set_ylabel("L2 relative error")
-    ax.set_title(
-        f"Convergence — Poiseuille Flow   Re={sim.Re:.1f}   ny={sim.ny}"
-    )
+    ax.set_title(f"Convergence — Poiseuille Flow   Re={sim.Re:.1f}   ny={sim.ny}")
     ax.grid(True, which="both", alpha=0.3)
     plt.tight_layout()
     if save_path:
@@ -301,6 +293,7 @@ def plot_convergence(
 # ---------------------------------------------------------------------------
 # Grid-refinement study (optional)
 # ---------------------------------------------------------------------------
+
 
 def grid_refinement_study(
     ny_list: list[int] | None = None,
@@ -334,14 +327,14 @@ def grid_refinement_study(
     ax.loglog(dy_list, err_list, "bo-", ms=6, lw=1.5, label="LBM L2 error")
     dy_ref = np.array([dy_list[0], dy_list[-1]])
     ax.loglog(
-        dy_ref, np.exp(intercept) * dy_ref**slope, "r--",
+        dy_ref,
+        np.exp(intercept) * dy_ref**slope,
+        "r--",
         label=f"O(dy^{slope:.2f})",
     )
     ax.set_xlabel("Grid spacing dy = 1/(ny-1)")
     ax.set_ylabel("L2 relative error")
-    ax.set_title(
-        f"Grid Refinement Study — Poiseuille Flow  Re={Re:.1f}"
-    )
+    ax.set_title(f"Grid Refinement Study — Poiseuille Flow  Re={Re:.1f}")
     ax.legend()
     ax.grid(True, which="both", alpha=0.3)
     plt.tight_layout()
@@ -352,38 +345,49 @@ def grid_refinement_study(
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     import argparse
 
-    parser = argparse.ArgumentParser(
-        description="D2Q9 LBM Poiseuille Channel Flow"
-    )
+    parser = argparse.ArgumentParser(description="D2Q9 LBM Poiseuille Channel Flow")
     parser.add_argument(
-        "--nx", type=int, default=8,
+        "--nx",
+        type=int,
+        default=8,
         help="Channel length (default 8, periodic)",
     )
     parser.add_argument(
-        "--ny", type=int, default=64,
+        "--ny",
+        type=int,
+        default=64,
         help="Grid height incl. walls (default 64)",
     )
     parser.add_argument(
-        "--Re", type=float, default=10.0,
+        "--Re",
+        type=float,
+        default=10.0,
         help="Reynolds number (default 10)",
     )
     parser.add_argument(
-        "--umax", type=float, default=0.05,
+        "--umax",
+        type=float,
+        default=0.05,
         help="Target max velocity in lattice units (default 0.05)",
     )
     parser.add_argument(
-        "--steps", type=int, default=10000,
+        "--steps",
+        type=int,
+        default=10000,
         help="Time steps to run (default 10 000)",
     )
     parser.add_argument(
-        "--refinement", action="store_true",
+        "--refinement",
+        action="store_true",
         help="Run grid refinement study instead",
     )
     parser.add_argument(
-        "--no-show", action="store_true",
+        "--no-show",
+        action="store_true",
         help="Save figures instead of displaying",
     )
     parser.add_argument("--out-dir", type=str, default="results")
@@ -396,9 +400,7 @@ def main() -> None:
         grid_refinement_study(Re=args.Re, u_max=args.umax)
         return
 
-    sim = PoiseuilleFlow(
-        nx=args.nx, ny=args.ny, Re=args.Re, u_max=args.umax
-    )
+    sim = PoiseuilleFlow(nx=args.nx, ny=args.ny, Re=args.Re, u_max=args.umax)
 
     errors: list[float] = []
     step_log: list[int] = []
@@ -418,14 +420,8 @@ def main() -> None:
     print(f"\nFinal L2 error : {errors[-1]:.4e}")
 
     suffix = f"Re{args.Re:.0f}_ny{args.ny}"
-    sp1 = (
-        out_dir / f"poiseuille_profile_{suffix}.png"
-        if args.no_show else None
-    )
-    sp2 = (
-        out_dir / f"poiseuille_conv_{suffix}.png"
-        if args.no_show else None
-    )
+    sp1 = out_dir / f"poiseuille_profile_{suffix}.png" if args.no_show else None
+    sp2 = out_dir / f"poiseuille_conv_{suffix}.png" if args.no_show else None
 
     plot_profile(sim, save_path=sp1)
     plot_convergence(sim, errors, step_log, save_path=sp2)
