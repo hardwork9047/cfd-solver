@@ -258,6 +258,52 @@ class CylinderFlow:
         phi_new[self.mask] = 0.0
         return phi_new
 
+    def _advect(self, phi, u, v):
+        """Return the advection term u·∂φ/∂x + v·∂φ/∂y for interior cells [1:-1,1:-1].
+
+        Dispatches to the scheme selected at construction time.
+        Returns an array of shape (ny-2, nx-2) — no intermediate phi_new allocation.
+        """
+        ii = slice(1, -1)
+        jj = slice(1, -1)
+        u_ij = u[ii, jj]
+        v_ij = v[ii, jj]
+
+        # 1st-order upwind (boundary fallback and "upwind" scheme)
+        dphi_dx = (
+            np.maximum(u_ij, 0) * (phi[ii, jj] - phi[ii, :-2]) / self.dx
+            + np.minimum(u_ij, 0) * (phi[ii, 2:] - phi[ii, jj]) / self.dx
+        )
+        dphi_dy = (
+            np.maximum(v_ij, 0) * (phi[ii, jj] - phi[:-2, jj]) / self.dy
+            + np.minimum(v_ij, 0) * (phi[2:, jj] - phi[ii, jj]) / self.dy
+        )
+
+        if self.advection_scheme == "upwind2":
+            # Override inner cells with 2nd-order one-sided stencils
+            ny_phi, nx_phi = phi.shape
+            if nx_phi >= 5 and ny_phi >= 5:
+                u_in = u[2:-2, 2:-2]
+                v_in = v[2:-2, 2:-2]
+                dphi_dx[1:-1, 1:-1] = (
+                    np.maximum(u_in, 0)
+                    * (3 * phi[2:-2, 2:-2] - 4 * phi[2:-2, 1:-3] + phi[2:-2, :-4])
+                    / (2.0 * self.dx)
+                    + np.minimum(u_in, 0)
+                    * (-phi[2:-2, 4:] + 4 * phi[2:-2, 3:-1] - 3 * phi[2:-2, 2:-2])
+                    / (2.0 * self.dx)
+                )
+                dphi_dy[1:-1, 1:-1] = (
+                    np.maximum(v_in, 0)
+                    * (3 * phi[2:-2, 2:-2] - 4 * phi[1:-3, 2:-2] + phi[:-4, 2:-2])
+                    / (2.0 * self.dy)
+                    + np.minimum(v_in, 0)
+                    * (-phi[4:, 2:-2] + 4 * phi[3:-1, 2:-2] - 3 * phi[2:-2, 2:-2])
+                    / (2.0 * self.dy)
+                )
+
+        return dphi_dx + dphi_dy
+
     def diffusion_central(self, phi):
         """2nd-order central difference for diffusion - vectorized."""
         phi_new = phi.copy()
@@ -282,8 +328,6 @@ class CylinderFlow:
         self.set_boundary_conditions()
 
         ii, jj = slice(1, -1), slice(1, -1)
-        u_ij = self.u[ii, jj]
-        v_ij = self.v[ii, jj]
 
         # Viscous (diffusion) terms
         lap_u = (
@@ -295,50 +339,32 @@ class CylinderFlow:
             + (self.v[ii, 2:] - 2 * self.v[ii, jj] + self.v[ii, :-2]) / self.dx**2
         )
 
-        # Advection — scheme selected at construction time
-        if self.advection_scheme == "upwind2":
-            # 2nd-order upwind: no numerical diffusion → Re_eff ≈ Re_physical
-            u_tmp = self.advection_upwind2(self.u, self.u, self.v)
-            v_tmp = self.advection_upwind2(self.v, self.u, self.v)
-            u_adv = (self.u[ii, jj] - u_tmp[ii, jj]) / self.dt
-            v_adv = (self.v[ii, jj] - v_tmp[ii, jj]) / self.dt
-        else:
-            # 1st-order upwind (original)
-            u_pos = np.maximum(u_ij, 0)
-            u_neg = np.minimum(u_ij, 0)
-            v_pos = np.maximum(v_ij, 0)
-            v_neg = np.minimum(v_ij, 0)
-            u_adv = (
-                u_pos * (self.u[ii, jj] - self.u[ii, :-2]) / self.dx
-                + u_neg * (self.u[ii, 2:] - self.u[ii, jj]) / self.dx
-                + v_pos * (self.u[ii, jj] - self.u[:-2, jj]) / self.dy
-                + v_neg * (self.u[2:, jj] - self.u[ii, jj]) / self.dy
-            )
-            v_adv = (
-                u_pos * (self.v[ii, jj] - self.v[ii, :-2]) / self.dx
-                + u_neg * (self.v[ii, 2:] - self.v[ii, jj]) / self.dx
-                + v_pos * (self.v[ii, jj] - self.v[:-2, jj]) / self.dy
-                + v_neg * (self.v[2:, jj] - self.v[ii, jj]) / self.dy
-            )
+        # Advection — dispatched through _advect() (upwind1 or upwind2)
+        u_adv = self._advect(self.u, self.u, self.v)
+        v_adv = self._advect(self.v, self.u, self.v)
 
         # --- Step 1: Predict velocity u* (advection + diffusion, no pressure) ---
         u_star = self.u.copy()
         v_star = self.v.copy()
         u_star[ii, jj] = np.clip(
-            u_ij + self.dt * (-u_adv + self.nu * lap_u),
+            self.u[ii, jj] + self.dt * (-u_adv + self.nu * lap_u),
             -5 * self.U_inf, 5 * self.U_inf,
         )
         v_star[ii, jj] = np.clip(
-            v_ij + self.dt * (-v_adv + self.nu * lap_v),
+            self.v[ii, jj] + self.dt * (-v_adv + self.nu * lap_v),
             -5 * self.U_inf, 5 * self.U_inf,
         )
         u_star[self.mask] = 0.0
         v_star[self.mask] = 0.0
         # Apply BCs to predicted velocity
-        u_star[:, 0] = self.U_inf;  v_star[:, 0] = 0.0
-        u_star[:, -1] = u_star[:, -2];  v_star[:, -1] = v_star[:, -2]
-        u_star[0, :] = u_star[1, :];  u_star[-1, :] = u_star[-2, :]
-        v_star[0, :] = 0.0;  v_star[-1, :] = 0.0
+        u_star[:, 0] = self.U_inf
+        v_star[:, 0] = 0.0
+        u_star[:, -1] = u_star[:, -2]
+        v_star[:, -1] = v_star[:, -2]
+        u_star[0, :] = u_star[1, :]
+        u_star[-1, :] = u_star[-2, :]
+        v_star[0, :] = 0.0
+        v_star[-1, :] = 0.0
 
         # --- Step 2: Solve ∇²p = (ρ/dt) ∇·u* ---
         self.solve_poisson_pressure(u=u_star, v=v_star)

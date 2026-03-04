@@ -33,7 +33,12 @@ classifiers = [
 homepage = "https://github.com/hardwork9047/cfd-solver"
 documentation = "https://github.com/hardwork9047/cfd-solver#readme"
 repository = "https://github.com/hardwork9047/cfd-solver.git"
-packages = [{include = "cfd", from = "src"}]
+packages = [
+    {include = "cfd", from = "src"},
+    {include = "cfd_lbm", from = "src"},
+    {include = "dem", from = "src"},
+    {include = "cfd_dem_lbm", from = "src"},
+]
 
 [tool.poetry.dependencies]
 python = ">=3.11"

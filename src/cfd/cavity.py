@@ -1,8 +1,8 @@
 """
 Cavity Flow Calculation Module
 
-This module simulates the Lid-Driven Cavity Flow using a stabilized
-numerical solver for the incompressible Navier-Stokes equations.
+This module simulates the Lid-Driven Cavity Flow using the fractional-step
+(projection) method for the incompressible Navier-Stokes equations.
 """
 
 import logging
@@ -20,9 +20,10 @@ rcParams["font.family"] = "sans-serif"
 
 
 class CavityFlow:
-    """Lid-Driven Cavity Flow Solver with Numerical Stabilization."""
+    """Lid-Driven Cavity Flow Solver using the fractional-step projection method."""
 
-    def __init__(self, L=1.0, rho=1.0, mu=0.01, nx=65, ny=65):
+    def __init__(self, L=1.0, rho=1.0, mu=0.01, nx=65, ny=65,
+                 advection_scheme="upwind"):
         """
         Parameters:
         -----------
@@ -34,6 +35,8 @@ class CavityFlow:
             Dynamic viscosity [Pa·s]
         nx, ny : int
             Grid resolution
+        advection_scheme : str
+            "upwind" for 1st-order or "upwind2" for 2nd-order linear-upwind
         """
         self.L = L
         self.rho = rho
@@ -41,6 +44,7 @@ class CavityFlow:
         self.nu = mu / rho
         self.nx = nx
         self.ny = ny
+        self.advection_scheme = advection_scheme
 
         self.dx = L / (nx - 1)
         self.dy = L / (ny - 1)
@@ -60,7 +64,10 @@ class CavityFlow:
         self.time = 0.0
         self.iteration = 0
 
-        logger.info(f"Initialized CavityFlow: Re={self.get_Reynolds_number():.1f}, Grid={nx}x{ny}")
+        logger.info(
+            f"Initialized CavityFlow: Re={self.get_Reynolds_number():.1f}, "
+            f"Grid={nx}x{ny}, scheme={advection_scheme}"
+        )
 
     def get_Reynolds_number(self):
         return self.rho * self.U_lid * self.L / self.mu
@@ -86,14 +93,69 @@ class CavityFlow:
         self.v[:, -1] = 0.0
         self.v[-1, :] = 0.0
 
-    def solve_poisson_pressure(self, max_iter=50, tol=1e-4):
-        """Pressure Poisson Equation solver with SOR and clipping."""
+    def _advect(self, phi, u, v):
+        """Return u·∂φ/∂x + v·∂φ/∂y for interior cells [1:-1,1:-1].
+
+        Dispatches to the scheme selected at construction time.
+        Returns an array of shape (ny-2, nx-2).
+        """
+        ii = slice(1, -1)
+        jj = slice(1, -1)
+        u_ij = u[ii, jj]
+        v_ij = v[ii, jj]
+
+        # 1st-order upwind (boundary fallback and "upwind" scheme)
+        dphi_dx = (
+            np.maximum(u_ij, 0) * (phi[ii, jj] - phi[ii, :-2]) / self.dx
+            + np.minimum(u_ij, 0) * (phi[ii, 2:] - phi[ii, jj]) / self.dx
+        )
+        dphi_dy = (
+            np.maximum(v_ij, 0) * (phi[ii, jj] - phi[:-2, jj]) / self.dy
+            + np.minimum(v_ij, 0) * (phi[2:, jj] - phi[ii, jj]) / self.dy
+        )
+
+        if self.advection_scheme == "upwind2":
+            ny_phi, nx_phi = phi.shape
+            if nx_phi >= 5 and ny_phi >= 5:
+                u_in = u[2:-2, 2:-2]
+                v_in = v[2:-2, 2:-2]
+                dphi_dx[1:-1, 1:-1] = (
+                    np.maximum(u_in, 0)
+                    * (3 * phi[2:-2, 2:-2] - 4 * phi[2:-2, 1:-3] + phi[2:-2, :-4])
+                    / (2.0 * self.dx)
+                    + np.minimum(u_in, 0)
+                    * (-phi[2:-2, 4:] + 4 * phi[2:-2, 3:-1] - 3 * phi[2:-2, 2:-2])
+                    / (2.0 * self.dx)
+                )
+                dphi_dy[1:-1, 1:-1] = (
+                    np.maximum(v_in, 0)
+                    * (3 * phi[2:-2, 2:-2] - 4 * phi[1:-3, 2:-2] + phi[:-4, 2:-2])
+                    / (2.0 * self.dy)
+                    + np.minimum(v_in, 0)
+                    * (-phi[4:, 2:-2] + 4 * phi[3:-1, 2:-2] - 3 * phi[2:-2, 2:-2])
+                    / (2.0 * self.dy)
+                )
+
+        return dphi_dx + dphi_dy
+
+    def solve_poisson_pressure(self, u=None, v=None, max_iter=50, tol=1e-4):
+        """Pressure Poisson equation: ∇²p = (ρ/dt) ∇·u* with SOR.
+
+        Parameters
+        ----------
+        u, v : ndarray, optional
+            Intermediate (predicted) velocity fields. Defaults to self.u, self.v.
+        """
+        if u is None:
+            u = self.u
+        if v is None:
+            v = self.v
         p_new = self.p.copy()
 
-        # RHS = -rho/dt * (du/dx + dv/dy)
-        dudx = (self.u[1:-1, 2:] - self.u[1:-1, :-2]) / (2 * self.dx)
-        dvdy = (self.v[2:, 1:-1] - self.v[:-2, 1:-1]) / (2 * self.dy)
-        rhs = -self.rho * np.clip(dudx + dvdy, -10, 10) / (self.dt + 1e-10)
+        # RHS = +rho/dt * div(u*)  — positive sign for divergence-free projection
+        dudx = (u[1:-1, 2:] - u[1:-1, :-2]) / (2 * self.dx)
+        dvdy = (v[2:, 1:-1] - v[:-2, 1:-1]) / (2 * self.dy)
+        rhs = self.rho * np.clip(dudx + dvdy, -10, 10) / (self.dt + 1e-10)
 
         omega_sor = 1.4
         coeff = 2.0 / (self.dx**2) + 2.0 / (self.dy**2)
@@ -101,15 +163,13 @@ class CavityFlow:
         for _ in range(max_iter):
             p_old = p_new.copy()
 
-            # Vectorized Laplace-like update (partially)
             lap_x = (p_new[1:-1, 2:] + p_new[1:-1, :-2]) / (self.dx**2)
             lap_y = (p_new[2:, 1:-1] + p_new[:-2, 1:-1]) / (self.dy**2)
 
-            # Local residual clipping for stability
             res = np.clip(rhs - (lap_x + lap_y - coeff * p_new[1:-1, 1:-1]), -1e3, 1e3)
-            p_new[1:-1, 1:-1] = p_new[1:-1, 1:-1] + omega_sor * res / coeff
+            p_new[1:-1, 1:-1] -= omega_sor * res / coeff
 
-            # Neumann BCs
+            # Neumann BCs (all walls)
             p_new[0, :] = p_new[1, :]
             p_new[-1, :] = p_new[-2, :]
             p_new[:, 0] = p_new[:, 1]
@@ -124,63 +184,75 @@ class CavityFlow:
 
         self.p = p_new
 
-    def update_velocity(self):
-        """Stabilized velocity update using Upwind differencing and clipping."""
-        u_new = self.u.copy()
-        v_new = self.v.copy()
+    def step(self):
+        """Fractional-step (projection) method.
+
+        Algorithm:
+          1. Predict u* with advection + diffusion (no pressure).
+          2. Solve ∇²p = (ρ/dt) ∇·u*
+          3. Correct u = u* - (dt/ρ) ∇p → divergence-free
+        """
+        self._compute_optimal_dt()
+        self.set_boundary_conditions()
+
         ii, jj = slice(1, -1), slice(1, -1)
 
         # Viscous terms
-        lap_u = (self.u[2:, jj] - 2 * self.u[ii, jj] + self.u[:-2, jj]) / self.dy**2 + (
-            self.u[ii, 2:] - 2 * self.u[ii, jj] + self.u[ii, :-2]
-        ) / self.dx**2
-        lap_v = (self.v[2:, jj] - 2 * self.v[ii, jj] + self.v[:-2, jj]) / self.dy**2 + (
-            self.v[ii, 2:] - 2 * self.v[ii, jj] + self.v[ii, :-2]
-        ) / self.dx**2
-
-        # Advection (Upwind)
-        u_pos = np.maximum(self.u[ii, jj], 0)
-        u_neg = np.minimum(self.u[ii, jj], 0)
-        v_pos = np.maximum(self.v[ii, jj], 0)
-        v_neg = np.minimum(self.v[ii, jj], 0)
-
-        u_adv = (
-            u_pos * (self.u[ii, jj] - self.u[ii, :-2]) / self.dx
-            + u_neg * (self.u[ii, 2:] - self.u[ii, jj]) / self.dx
-            + v_pos * (self.u[ii, jj] - self.u[:-2, jj]) / self.dy
-            + v_neg * (self.u[2:, jj] - self.u[ii, jj]) / self.dy
+        lap_u = (
+            (self.u[2:, jj] - 2 * self.u[ii, jj] + self.u[:-2, jj]) / self.dy**2
+            + (self.u[ii, 2:] - 2 * self.u[ii, jj] + self.u[ii, :-2]) / self.dx**2
+        )
+        lap_v = (
+            (self.v[2:, jj] - 2 * self.v[ii, jj] + self.v[:-2, jj]) / self.dy**2
+            + (self.v[ii, 2:] - 2 * self.v[ii, jj] + self.v[ii, :-2]) / self.dx**2
         )
 
-        v_adv = (
-            u_pos * (self.v[ii, jj] - self.v[ii, :-2]) / self.dx
-            + u_neg * (self.v[ii, 2:] - self.v[ii, jj]) / self.dx
-            + v_pos * (self.v[ii, jj] - self.v[:-2, jj]) / self.dy
-            + v_neg * (self.v[2:, jj] - self.v[ii, jj]) / self.dy
-        )
+        # Advection terms
+        u_adv = self._advect(self.u, self.u, self.v)
+        v_adv = self._advect(self.v, self.u, self.v)
 
-        # Pressure Gradient
+        # --- Step 1: Predict u* (advection + diffusion, no pressure) ---
+        u_star = self.u.copy()
+        v_star = self.v.copy()
+        u_star[ii, jj] = np.clip(
+            self.u[ii, jj] + self.dt * (-u_adv + self.nu * lap_u), -2.0, 2.0
+        )
+        v_star[ii, jj] = np.clip(
+            self.v[ii, jj] + self.dt * (-v_adv + self.nu * lap_v), -2.0, 2.0
+        )
+        # Apply BCs to predicted velocity
+        u_star[-1, :] = self.U_lid
+        v_star[-1, :] = 0.0
+        u_star[0, :] = 0.0
+        u_star[:, 0] = 0.0
+        u_star[:, -1] = 0.0
+        v_star[0, :] = 0.0
+        v_star[:, 0] = 0.0
+        v_star[:, -1] = 0.0
+        v_star[-1, :] = 0.0
+
+        # --- Step 2: Solve ∇²p = (ρ/dt) ∇·u* ---
+        self.solve_poisson_pressure(u=u_star, v=v_star)
+
+        # --- Step 3: Correct velocity with pressure gradient ---
         dpdx = (self.p[ii, 2:] - self.p[ii, :-2]) / (2 * self.dx)
         dpdy = (self.p[2:, jj] - self.p[:-2, jj]) / (2 * self.dy)
 
-        # Update with clipping for physical limits
+        u_new = u_star.copy()
+        v_new = v_star.copy()
         u_new[ii, jj] = np.clip(
-            self.u[ii, jj] + self.dt * (-u_adv - dpdx / self.rho + self.nu * lap_u), -2, 2
+            u_star[ii, jj] - self.dt / self.rho * dpdx, -2.0, 2.0
         )
         v_new[ii, jj] = np.clip(
-            self.v[ii, jj] + self.dt * (-v_adv - dpdy / self.rho + self.nu * lap_v), -2, 2
+            v_star[ii, jj] - self.dt / self.rho * dpdy, -2.0, 2.0
         )
 
-        if np.any(np.isnan(u_new)):
-            logger.error("Instability detected.")
+        if np.any(np.isnan(u_new)) or np.any(np.isnan(v_new)):
+            logger.error("Instability detected (NaN). Aborting step.")
             raise RuntimeError("Solver diverged.")
 
         self.u, self.v = u_new, v_new
-
-    def step(self):
         self.set_boundary_conditions()
-        self._compute_optimal_dt()
-        self.update_velocity()
-        self.solve_poisson_pressure()
         self.time += self.dt
         self.iteration += 1
 

@@ -4,7 +4,7 @@ CFD - Computational Fluid Dynamics Library
 A library for calculating Poiseuille flows, Cavity flows, and Cylinder flows.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __author__ = "hardwork9047"
 __license__ = "MIT"
 
