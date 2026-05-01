@@ -7,6 +7,7 @@ This demo showcases the cylinder flow simulation with visualization.
 import matplotlib.pyplot as plt
 
 from cfd import CylinderFlow
+from cfd.result_paths import program_results_dir
 
 
 def demo_cylinder_flow():
@@ -45,9 +46,11 @@ def demo_cylinder_flow():
 
     # Create visualization
     print("\nGenerating visualization...")
+    output_dir = program_results_dir(__file__)
+    output_image = output_dir / "demo_cylinder_flow.png"
     fig = flow.plot_velocity_field(skip=4)
-    plt.savefig("demo_cylinder_flow.png", dpi=150, bbox_inches="tight")
-    print("Plot saved as: demo_cylinder_flow.png")
+    plt.savefig(output_image, dpi=150, bbox_inches="tight")
+    print(f"Plot saved as: {output_image}")
 
     # Show the plot
     plt.show()

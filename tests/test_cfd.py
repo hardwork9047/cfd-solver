@@ -4,7 +4,6 @@ CFD Solver Test Suite
 
 import numpy as np
 import pytest
-
 from cfd import CavityFlow, CircularPoiseuille, CylinderFlow, PlanePoiseuille
 
 

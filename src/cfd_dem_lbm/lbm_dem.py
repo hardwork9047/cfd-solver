@@ -29,6 +29,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+from cfd.result_paths import program_results_dir
 
 # ---------------------------------------------------------------------------
 # D2Q9 lattice constants
@@ -120,6 +121,23 @@ class LBMDEMSolver:
     damping           : float — viscous damping coefficient (DEM, 0–1)
     dem_substeps      : int   — DEM sub-steps per LBM step (for stability)
     seed              : int   — RNG seed for particle initialisation
+    rolling_friction  : bool — enable angular motion, tangential friction, and rolling resistance
+    sliding_friction  : float — Coulomb limit for tangential contact force
+    tangential_damping : float — viscous damping scale for tangential slip
+    rolling_friction_coeff : float — rolling-resistance moment coefficient
+    rolling_damping   : float — viscous damping scale for angular velocity
+    particle_attraction : bool — enable Hamaker-like particle-particle attraction
+    particle_repulsion : bool — enable Hamaker-like particle-particle repulsion
+    attraction_strength : float
+                        Dimensionless Hamaker-like attraction strength in lattice force units.
+    repulsion_strength : float
+                        Dimensionless Hamaker-like repulsion strength in lattice force units.
+    attraction_cutoff : float — surface gap cutoff for attraction [lattice nodes]
+    repulsion_cutoff  : float — surface gap cutoff for repulsion [lattice nodes]
+    attraction_min_gap : float
+                        Lower bound for surface gap to regularise the singularity.
+    repulsion_min_gap : float
+                        Lower bound for surface gap to regularise the singularity.
     cylinder          : tuple[float, float, float] | None
                         Fixed solid cylinder as (cx, cy, radius) in lattice units.
                         ``None`` (default) means no cylinder.
@@ -140,8 +158,24 @@ class LBMDEMSolver:
         damping: float = 0.4,
         dem_substeps: int = 4,
         seed: int = 42,
+        rolling_friction: bool = False,
+        sliding_friction: float = 0.5,
+        tangential_damping: float = 0.4,
+        rolling_friction_coeff: float = 0.05,
+        rolling_damping: float = 0.2,
+        particle_attraction: bool = False,
+        particle_repulsion: bool = False,
+        attraction_strength: float = 1e-3,
+        repulsion_strength: float = 1e-3,
+        attraction_cutoff: float = 3.0,
+        repulsion_cutoff: float = 3.0,
+        attraction_min_gap: float = 0.05,
+        repulsion_min_gap: float = 0.05,
         cylinder: tuple | None = None,
     ):
+        if particle_attraction and particle_repulsion:
+            raise ValueError("particle_attraction and particle_repulsion are mutually exclusive")
+
         self.nx = nx
         self.ny = ny
         self.Re = Re
@@ -156,6 +190,19 @@ class LBMDEMSolver:
         self.dem_substeps = dem_substeps
         self.step_count = 0
         self.cylinder = cylinder  # (cx, cy, cr) or None
+        self.rolling_friction = rolling_friction
+        self.sliding_friction = sliding_friction
+        self.tangential_damping = tangential_damping
+        self.rolling_friction_coeff = rolling_friction_coeff
+        self.rolling_damping = rolling_damping
+        self.particle_attraction = particle_attraction
+        self.particle_repulsion = particle_repulsion
+        self.attraction_strength = attraction_strength
+        self.repulsion_strength = repulsion_strength
+        self.attraction_cutoff = attraction_cutoff
+        self.repulsion_cutoff = repulsion_cutoff
+        self.attraction_min_gap = attraction_min_gap
+        self.repulsion_min_gap = repulsion_min_gap
 
         # --- Fluid parameters ---
         self.nu = u_max * ny / Re
@@ -176,6 +223,7 @@ class LBMDEMSolver:
         # Per-particle masses (2-D disc: area × density_ratio)
         self.masses = density_ratio * np.pi * self.radii**2
         self.mass_p = float(np.mean(self.masses))  # representative scalar (kept for display)
+        self.inertias = 0.5 * self.masses * self.radii**2
 
         print("LBM-DEM Coupled Solver")
         print(f"  Grid         : {nx} × {ny}")
@@ -186,6 +234,27 @@ class LBMDEMSolver:
             f"{radius_variation*100:.0f}%  density_ratio = {density_ratio:.1f}"
         )
         print(f"  Gravity (latt): {gravity:.2e}   DEM substeps = {dem_substeps}")
+        if rolling_friction:
+            print(
+                "  Rolling fric. : enabled  "
+                f"mu_t={sliding_friction:.2f}  mu_r={rolling_friction_coeff:.3f}"
+            )
+        else:
+            print("  Rolling fric. : disabled")
+        if particle_attraction:
+            print(
+                "  Attraction    : enabled  "
+                f"A*={attraction_strength:.2e}  cutoff={attraction_cutoff:.2f}  "
+                f"min_gap={attraction_min_gap:.3f}"
+            )
+        elif particle_repulsion:
+            print(
+                "  Repulsion     : enabled  "
+                f"A*={repulsion_strength:.2e}  cutoff={repulsion_cutoff:.2f}  "
+                f"min_gap={repulsion_min_gap:.3f}"
+            )
+        else:
+            print("  Surface force : disabled")
         if cylinder is not None:
             cx, cy, cr = cylinder[0], cylinder[1], cylinder[2]
             print(f"  Cylinder      : center=({cx:.1f}, {cy:.1f})  r={cr:.1f}")
@@ -214,7 +283,9 @@ class LBMDEMSolver:
         # --- DEM arrays ---
         self.pos = np.empty((n_particles, 2))
         self.vel = np.zeros((n_particles, 2))
+        self.omega_p = np.zeros(n_particles)
         self.forces_p = np.zeros((n_particles, 2))
+        self.torques_p = np.zeros(n_particles)
         self._init_particles(seed)
 
     # ------------------------------------------------------------------
@@ -250,9 +321,12 @@ class LBMDEMSolver:
             self.n_p = placed
             self.pos = self.pos[:placed]
             self.vel = self.vel[:placed]
+            self.omega_p = self.omega_p[:placed]
             self.forces_p = self.forces_p[:placed]
+            self.torques_p = self.torques_p[:placed]
             self.radii = self.radii[:placed]
             self.masses = self.masses[:placed]
+            self.inertias = self.inertias[:placed]
 
     # ------------------------------------------------------------------
     # LBM — macroscopic fields
@@ -352,14 +426,58 @@ class LBMDEMSolver:
     # DEM
     # ------------------------------------------------------------------
 
-    def _dem_forces(self, dt_sub: float) -> np.ndarray:
+    @staticmethod
+    def _tangent_from_normal(nx_: float, ny_: float) -> np.ndarray:
+        """Return a unit tangent for a 2-D contact normal."""
+        return np.array([-ny_, nx_])
+
+    def _normal_contact_magnitude(self, overlap: float, v_n: float, mass: float) -> float:
+        """Hertz normal force with damping, clamped to avoid artificial tension."""
+        f_n = self.k_n * overlap**1.5
+        f_damp = -self.damping * v_n * float(np.sqrt(self.k_n * mass))
+        return max(f_n + f_damp, 0.0)
+
+    def _tangential_force_magnitude(
+        self,
+        v_t: float,
+        normal_force: float,
+        mass: float,
+    ) -> float:
+        """Coulomb-limited tangential force opposing slip at a contact."""
+        if not self.rolling_friction or normal_force <= 0.0:
+            return 0.0
+        f_trial = -self.tangential_damping * float(np.sqrt(self.k_n * mass)) * v_t
+        f_limit = self.sliding_friction * normal_force
+        return float(np.clip(f_trial, -f_limit, f_limit))
+
+    def _rolling_resistance_torque(
+        self,
+        omega: float,
+        normal_force: float,
+        radius: float,
+        mass: float,
+    ) -> float:
+        """Coulomb-limited rolling resistance torque opposing angular velocity."""
+        if not self.rolling_friction or normal_force <= 0.0:
+            return 0.0
+        torque_trial = (
+            -self.rolling_damping
+            * float(np.sqrt(self.k_n * mass))
+            * radius**2
+            * omega
+        )
+        torque_limit = self.rolling_friction_coeff * normal_force * radius
+        return float(np.clip(torque_trial, -torque_limit, torque_limit))
+
+    def _dem_loads(self, dt_sub: float) -> tuple[np.ndarray, np.ndarray]:
         """
-        Compute total force on each particle:
-          gravity + Stokes drag (from fluid) + Hertz contact (particle/wall).
+        Compute total force and torque on each particle:
+          gravity + Stokes drag + contact + optional attraction/friction.
 
         ``dt_sub`` is unused here but kept for future damping models.
         """
         forces = np.zeros((self.n_p, 2))
+        torques = np.zeros(self.n_p)
 
         # 1. Gravity (buoyancy-corrected, per-particle mass)
         buoyancy_factor = 1.0 - 1.0 / self.density_ratio
@@ -380,16 +498,56 @@ class LBMDEMSolver:
                 dp = self.pos[j] - self.pos[i]
                 dist = float(np.linalg.norm(dp))
                 min_dist = self.radii[i] + self.radii[j]
-                if dist < min_dist and dist > 1e-10:
+                if dist <= 1e-10:
+                    continue
+
+                n = dp / dist
+
+                if dist < min_dist:
                     overlap = min_dist - dist
-                    n = dp / dist
-                    f_n = self.k_n * overlap**1.5
                     v_n = float(np.dot(self.vel[j] - self.vel[i], n))
                     avg_m = (self.masses[i] + self.masses[j]) / 2.0
-                    f_damp = -self.damping * v_n * float(np.sqrt(self.k_n * avg_m))
-                    f_total = (f_n + f_damp) * n
+                    f_mag = self._normal_contact_magnitude(overlap, v_n, avg_m)
+                    f_total = f_mag * n
                     forces[i] -= f_total
                     forces[j] += f_total
+
+                    t = self._tangent_from_normal(n[0], n[1])
+                    v_t = float(np.dot(self.vel[j] - self.vel[i], t))
+                    v_t -= self.omega_p[j] * self.radii[j] + self.omega_p[i] * self.radii[i]
+                    f_t = self._tangential_force_magnitude(v_t, f_mag, avg_m)
+                    f_t_vec = f_t * t
+                    forces[i] -= f_t_vec
+                    forces[j] += f_t_vec
+                    torques[i] -= self.radii[i] * f_t
+                    torques[j] -= self.radii[j] * f_t
+                    torques[i] += self._rolling_resistance_torque(
+                        self.omega_p[i], f_mag, self.radii[i], self.masses[i]
+                    )
+                    torques[j] += self._rolling_resistance_torque(
+                        self.omega_p[j], f_mag, self.radii[j], self.masses[j]
+                    )
+
+                # Hamaker-like near-surface force between particle surfaces.
+                # |F| = A* R_eff / (6 h^2), regularised at h_min and truncated by cutoff.
+                if self.particle_attraction and self.attraction_strength > 0.0:
+                    surface_gap = dist - min_dist
+                    if surface_gap <= self.attraction_cutoff:
+                        h_min = max(self.attraction_min_gap, 1e-12)
+                        h = max(surface_gap, h_min)
+                        r_eff = self.radii[i] * self.radii[j] / min_dist
+                        f_attr = self.attraction_strength * r_eff / (6.0 * h**2)
+                        forces[i] += f_attr * n
+                        forces[j] -= f_attr * n
+                elif self.particle_repulsion and self.repulsion_strength > 0.0:
+                    surface_gap = dist - min_dist
+                    if surface_gap <= self.repulsion_cutoff:
+                        h_min = max(self.repulsion_min_gap, 1e-12)
+                        h = max(surface_gap, h_min)
+                        r_eff = self.radii[i] * self.radii[j] / min_dist
+                        f_rep = self.repulsion_strength * r_eff / (6.0 * h**2)
+                        forces[i] -= f_rep * n
+                        forces[j] += f_rep * n
 
         # 4. Wall contacts (Hertz, per-particle radius / mass)
         for i in range(self.n_p):
@@ -397,16 +555,32 @@ class LBMDEMSolver:
             wall_top = self.ny - 1.5 - self.radii[i]
             if self.pos[i, 1] < wall_bot:
                 overlap = wall_bot - self.pos[i, 1]
-                f_n = self.k_n * overlap**1.5
                 v_n = -self.vel[i, 1]
-                f_damp = -self.damping * v_n * float(np.sqrt(self.k_n * self.masses[i]))
-                forces[i, 1] += f_n + f_damp
+                f_mag = self._normal_contact_magnitude(overlap, v_n, self.masses[i])
+                forces[i, 1] += f_mag
+                n = np.array([0.0, 1.0])
+                t = self._tangent_from_normal(n[0], n[1])
+                v_t = float(np.dot(self.vel[i], t)) - self.omega_p[i] * self.radii[i]
+                f_t = self._tangential_force_magnitude(v_t, f_mag, self.masses[i])
+                forces[i] += f_t * t
+                torques[i] -= self.radii[i] * f_t
+                torques[i] += self._rolling_resistance_torque(
+                    self.omega_p[i], f_mag, self.radii[i], self.masses[i]
+                )
             if self.pos[i, 1] > wall_top:
                 overlap = self.pos[i, 1] - wall_top
-                f_n = self.k_n * overlap**1.5
                 v_n = self.vel[i, 1]
-                f_damp = -self.damping * v_n * float(np.sqrt(self.k_n * self.masses[i]))
-                forces[i, 1] -= f_n + f_damp
+                f_mag = self._normal_contact_magnitude(overlap, v_n, self.masses[i])
+                forces[i, 1] -= f_mag
+                n = np.array([0.0, -1.0])
+                t = self._tangent_from_normal(n[0], n[1])
+                v_t = float(np.dot(self.vel[i], t)) - self.omega_p[i] * self.radii[i]
+                f_t = self._tangential_force_magnitude(v_t, f_mag, self.masses[i])
+                forces[i] += f_t * t
+                torques[i] -= self.radii[i] * f_t
+                torques[i] += self._rolling_resistance_torque(
+                    self.omega_p[i], f_mag, self.radii[i], self.masses[i]
+                )
 
         # 5. Cylinder contact (Hertz, per-particle radius / mass)
         if self.cylinder is not None:
@@ -420,30 +594,46 @@ class LBMDEMSolver:
                     overlap = min_dist - dist
                     nx_ = dx / dist
                     ny_ = dy / dist
-                    f_n = self.k_n * overlap**1.5
                     v_n = self.vel[i, 0] * nx_ + self.vel[i, 1] * ny_
-                    f_damp = -self.damping * v_n * float(np.sqrt(self.k_n * self.masses[i]))
-                    f_mag = f_n + f_damp
+                    f_mag = self._normal_contact_magnitude(overlap, v_n, self.masses[i])
                     forces[i, 0] += f_mag * nx_
                     forces[i, 1] += f_mag * ny_
+                    t = self._tangent_from_normal(nx_, ny_)
+                    v_t = float(np.dot(self.vel[i], t)) - self.omega_p[i] * self.radii[i]
+                    f_t = self._tangential_force_magnitude(v_t, f_mag, self.masses[i])
+                    forces[i] += f_t * t
+                    torques[i] -= self.radii[i] * f_t
+                    torques[i] += self._rolling_resistance_torque(
+                        self.omega_p[i], f_mag, self.radii[i], self.masses[i]
+                    )
 
+        return forces, torques
+
+    def _dem_forces(self, dt_sub: float) -> np.ndarray:
+        """Return total DEM forces, preserving the historical test/helper API."""
+        forces, torques = self._dem_loads(dt_sub)
+        self.torques_p = torques
         return forces
 
     def _dem_substep(self, dt: float) -> None:
         """One DEM sub-step via Velocity Verlet with time step ``dt``."""
         # Half-velocity update (per-particle mass)
-        forces = self._dem_forces(dt)
+        forces, torques = self._dem_loads(dt)
         acc = forces / self.masses[:, np.newaxis]
+        alpha = torques / self.inertias
         self.vel += 0.5 * dt * acc
+        self.omega_p += 0.5 * dt * alpha
 
         # Position update + periodic x BC
         self.pos += dt * self.vel
         self.pos[:, 0] %= self.nx
 
         # Second force evaluation
-        forces_new = self._dem_forces(dt)
+        forces_new, torques_new = self._dem_loads(dt)
         acc_new = forces_new / self.masses[:, np.newaxis]
+        alpha_new = torques_new / self.inertias
         self.vel += 0.5 * dt * acc_new
+        self.omega_p += 0.5 * dt * alpha_new
 
         # Clamp positions and apply restitution at walls (per-particle radius)
         for i in range(self.n_p):
@@ -476,6 +666,7 @@ class LBMDEMSolver:
                         self.vel[i, 1] -= v_n * ny_ * (1 + 0.2)
 
         self.forces_p = forces_new
+        self.torques_p = torques_new
 
     # ------------------------------------------------------------------
     # Public advance
@@ -688,6 +879,82 @@ def main() -> None:
         default=2e-5,
         help="Gravitational acceleration in lattice units (default 2e-5)",
     )
+    parser.add_argument(
+        "--rolling-friction",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Enable angular motion, tangential friction, and rolling resistance",
+    )
+    parser.add_argument(
+        "--sliding-friction",
+        type=float,
+        default=0.5,
+        help="Coulomb limit for tangential contact force (default 0.5)",
+    )
+    parser.add_argument(
+        "--tangential-damping",
+        type=float,
+        default=0.4,
+        help="Tangential slip damping scale (default 0.4)",
+    )
+    parser.add_argument(
+        "--rolling-friction-coeff",
+        type=float,
+        default=0.05,
+        help="Rolling-resistance moment coefficient (default 0.05)",
+    )
+    parser.add_argument(
+        "--rolling-damping",
+        type=float,
+        default=0.2,
+        help="Angular velocity damping scale for rolling resistance (default 0.2)",
+    )
+    parser.add_argument(
+        "--particle-attraction",
+        action="store_true",
+        help="Enable Hamaker-like particle-particle attraction (default off)",
+    )
+    parser.add_argument(
+        "--particle-repulsion",
+        action="store_true",
+        help="Enable Hamaker-like particle-particle repulsion (default off)",
+    )
+    parser.add_argument(
+        "--attraction-strength",
+        type=float,
+        default=1e-3,
+        help="Dimensionless Hamaker-like attraction strength (default 1e-3)",
+    )
+    parser.add_argument(
+        "--repulsion-strength",
+        type=float,
+        default=1e-3,
+        help="Dimensionless Hamaker-like repulsion strength (default 1e-3)",
+    )
+    parser.add_argument(
+        "--attraction-cutoff",
+        type=float,
+        default=3.0,
+        help="Surface gap cutoff for attraction in lattice nodes (default 3.0)",
+    )
+    parser.add_argument(
+        "--repulsion-cutoff",
+        type=float,
+        default=3.0,
+        help="Surface gap cutoff for repulsion in lattice nodes (default 3.0)",
+    )
+    parser.add_argument(
+        "--attraction-min-gap",
+        type=float,
+        default=0.05,
+        help="Minimum surface gap used to regularise attraction (default 0.05)",
+    )
+    parser.add_argument(
+        "--repulsion-min-gap",
+        type=float,
+        default=0.05,
+        help="Minimum surface gap used to regularise repulsion (default 0.05)",
+    )
     parser.add_argument("--steps", type=int, default=10000, help="Total LBM steps (default 10000)")
     parser.add_argument(
         "--report-every", type=int, default=1000, help="Report interval (default 1000)"
@@ -698,13 +965,15 @@ def main() -> None:
     parser.add_argument(
         "--out-dir",
         type=str,
-        default="results",
-        help="Output directory for figures (default: results/)",
+        default=None,
+        help="Output directory for figures (default: src/results/lbm_dem/)",
     )
     args = parser.parse_args()
+    if args.particle_attraction and args.particle_repulsion:
+        parser.error("--particle-attraction and --particle-repulsion are mutually exclusive")
 
-    out_dir = Path(args.out_dir)
-    out_dir.mkdir(exist_ok=True)
+    out_dir = Path(args.out_dir) if args.out_dir else program_results_dir(__file__)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     sim = LBMDEMSolver(
         nx=args.nx,
@@ -715,6 +984,19 @@ def main() -> None:
         particle_radius=args.radius,
         density_ratio=args.density_ratio,
         gravity=args.gravity,
+        rolling_friction=args.rolling_friction,
+        sliding_friction=args.sliding_friction,
+        tangential_damping=args.tangential_damping,
+        rolling_friction_coeff=args.rolling_friction_coeff,
+        rolling_damping=args.rolling_damping,
+        particle_attraction=args.particle_attraction,
+        particle_repulsion=args.particle_repulsion,
+        attraction_strength=args.attraction_strength,
+        repulsion_strength=args.repulsion_strength,
+        attraction_cutoff=args.attraction_cutoff,
+        repulsion_cutoff=args.repulsion_cutoff,
+        attraction_min_gap=args.attraction_min_gap,
+        repulsion_min_gap=args.repulsion_min_gap,
     )
 
     print(f"\nRunning {args.steps:,} steps …")
@@ -734,9 +1016,16 @@ def main() -> None:
         )
 
     print("\nFinal plots …")
-    suffix = f"Re{int(args.Re)}_{args.nx}x{args.ny}_np{sim.n_p}"
-    save_fields = out_dir / f"fields_{suffix}.png" if args.no_show else None
-    save_parts = out_dir / f"particles_{suffix}.png" if args.no_show else None
+    if args.particle_attraction:
+        surface_force_mode = "attr"
+    elif args.particle_repulsion:
+        surface_force_mode = "rep"
+    else:
+        surface_force_mode = "noforce"
+    rolling_mode = "rollfric" if args.rolling_friction else "freeroll"
+    suffix = f"Re{int(args.Re)}_{args.nx}x{args.ny}_np{sim.n_p}_{surface_force_mode}_{rolling_mode}"
+    save_fields = out_dir / f"fields_{suffix}.png"
+    save_parts = out_dir / f"particles_{suffix}.png"
 
     plot_fields(sim, save_path=save_fields)
     plot_particles(sim, save_path=save_parts)

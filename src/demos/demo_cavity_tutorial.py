@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 
 from cfd import CavityFlow
+from cfd.result_paths import program_results_dir
 
 
 def demo_cavity():
@@ -15,14 +16,18 @@ def demo_cavity():
     # Run simulation
     cavity.solve_steady_state(max_iterations=200)
 
+    output_dir = program_results_dir(__file__)
+
     # Plot results
     fig1 = cavity.plot_velocity_field()
-    plt.savefig("cavity_velocity.png")
+    velocity_path = output_dir / "cavity_velocity.png"
+    plt.savefig(velocity_path)
 
     fig2 = cavity.plot_streamlines()
-    plt.savefig("cavity_streamlines.png")
+    streamlines_path = output_dir / "cavity_streamlines.png"
+    plt.savefig(streamlines_path)
 
-    print("\nResults saved as 'cavity_velocity.png' and 'cavity_streamlines.png'")
+    print(f"\nResults saved as '{velocity_path}' and '{streamlines_path}'")
 
 
 if __name__ == "__main__":

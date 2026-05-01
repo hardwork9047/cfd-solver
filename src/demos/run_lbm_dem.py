@@ -19,8 +19,9 @@ import matplotlib.animation as animation
 import numpy as np
 
 # パッケージを src/ から読み込む
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from cfd_dem_lbm import LBMDEMSolver
+from cfd.result_paths import program_results_dir
 
 # ---------------------------------------------------------------------------
 # コマンドライン引数
@@ -34,7 +35,36 @@ parser.add_argument("--cyl-y", type=float, default=None,
                     help="Cylinder center y [lattice] (default: NY/2)")
 parser.add_argument("--cyl-r", type=float, default=6.0,
                     help="Cylinder radius [lattice] (default: 6.0)")
+parser.add_argument("--rolling-friction", action=argparse.BooleanOptionalAction,
+                    default=False,
+                    help="Enable angular motion, tangential friction, and rolling resistance")
+parser.add_argument("--sliding-friction", type=float, default=0.5,
+                    help="Coulomb limit for tangential contact force (default: 0.5)")
+parser.add_argument("--tangential-damping", type=float, default=0.4,
+                    help="Tangential slip damping scale (default: 0.4)")
+parser.add_argument("--rolling-friction-coeff", type=float, default=0.05,
+                    help="Rolling-resistance moment coefficient (default: 0.05)")
+parser.add_argument("--rolling-damping", type=float, default=0.2,
+                    help="Angular velocity damping scale for rolling resistance (default: 0.2)")
+parser.add_argument("--particle-attraction", action="store_true",
+                    help="Enable Hamaker-like particle-particle attraction")
+parser.add_argument("--particle-repulsion", action="store_true",
+                    help="Enable Hamaker-like particle-particle repulsion")
+parser.add_argument("--attraction-strength", type=float, default=1e-3,
+                    help="Dimensionless Hamaker-like attraction strength (default: 1e-3)")
+parser.add_argument("--repulsion-strength", type=float, default=1e-3,
+                    help="Dimensionless Hamaker-like repulsion strength (default: 1e-3)")
+parser.add_argument("--attraction-cutoff", type=float, default=3.0,
+                    help="Surface gap cutoff for attraction [lattice] (default: 3.0)")
+parser.add_argument("--repulsion-cutoff", type=float, default=3.0,
+                    help="Surface gap cutoff for repulsion [lattice] (default: 3.0)")
+parser.add_argument("--attraction-min-gap", type=float, default=0.05,
+                    help="Minimum surface gap for attraction regularisation (default: 0.05)")
+parser.add_argument("--repulsion-min-gap", type=float, default=0.05,
+                    help="Minimum surface gap for repulsion regularisation (default: 0.05)")
 args = parser.parse_args()
+if args.particle_attraction and args.particle_repulsion:
+    parser.error("--particle-attraction and --particle-repulsion are mutually exclusive")
 
 # ---------------------------------------------------------------------------
 # キャッシュ付きサブクラス: _macroscopic() を各ステップ1回だけ計算
@@ -83,9 +113,6 @@ GRAVITY         = 3e-5   # 重力加速度 (格子単位)
 TOTAL_STEPS  = 20000  # 総 LBM ステップ数
 SNAPSHOT_EVERY = 40   # 何ステップごとにスナップショット取得
 FPS          = 24     # 動画フレームレート
-OUT_DIR      = Path("/tmp/lbm_dem_results")
-
-OUT_DIR.mkdir(exist_ok=True)
 
 # 円柱設定 (--cylinder が指定された場合のみ有効)
 if args.cylinder:
@@ -95,6 +122,17 @@ if args.cylinder:
     CYLINDER = (CYL_X, CYL_Y, CYL_R)
 else:
     CYLINDER = None
+
+GEOMETRY_MODE = "cylinder" if args.cylinder else "channel"
+if args.particle_attraction:
+    SURFACE_FORCE_MODE = "with_attraction"
+elif args.particle_repulsion:
+    SURFACE_FORCE_MODE = "with_repulsion"
+else:
+    SURFACE_FORCE_MODE = "no_surface_force"
+ROLLING_MODE = "rolling" if args.rolling_friction else "free_roll"
+OUT_DIR = program_results_dir(__file__, f"{GEOMETRY_MODE}_{SURFACE_FORCE_MODE}_{ROLLING_MODE}")
+OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ---------------------------------------------------------------------------
 # 初期化
@@ -114,6 +152,19 @@ sim = FastLBMDEM(
     gravity=GRAVITY,
     dem_substeps=4,
     seed=42,
+    rolling_friction=args.rolling_friction,
+    sliding_friction=args.sliding_friction,
+    tangential_damping=args.tangential_damping,
+    rolling_friction_coeff=args.rolling_friction_coeff,
+    rolling_damping=args.rolling_damping,
+    particle_attraction=args.particle_attraction,
+    particle_repulsion=args.particle_repulsion,
+    attraction_strength=args.attraction_strength,
+    repulsion_strength=args.repulsion_strength,
+    attraction_cutoff=args.attraction_cutoff,
+    repulsion_cutoff=args.repulsion_cutoff,
+    attraction_min_gap=args.attraction_min_gap,
+    repulsion_min_gap=args.repulsion_min_gap,
     cylinder=CYLINDER,
 )
 

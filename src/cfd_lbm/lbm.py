@@ -13,6 +13,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+from cfd.result_paths import program_results_dir
 
 # ---------------------------------------------------------------------------
 # D2Q9 lattice constants
@@ -411,13 +412,11 @@ def main():
     parser.add_argument(
         "--no-show", action="store_true", help="Save figures to files instead of displaying"
     )
-    parser.add_argument(
-        "--out-dir", type=str, default="results", help="Output directory for figures"
-    )
+    parser.add_argument("--out-dir", type=str, default=None, help="Output directory for figures")
     args = parser.parse_args()
 
-    out_dir = Path(args.out_dir)
-    out_dir.mkdir(exist_ok=True)
+    out_dir = Path(args.out_dir) if args.out_dir else program_results_dir(__file__)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     sim = LBM(nx=args.nx, ny=args.ny, Re=args.Re, u_lid=0.1)
 
@@ -442,8 +441,8 @@ def main():
 
     print("\nFinal plots …")
     suffix = f"Re{int(args.Re)}_{args.nx}x{args.ny}"
-    save1 = out_dir / f"fields_{suffix}.png" if args.no_show else None
-    save2 = out_dir / f"centerline_{suffix}.png" if args.no_show else None
+    save1 = out_dir / f"fields_{suffix}.png"
+    save2 = out_dir / f"centerline_{suffix}.png"
 
     plot_results(sim, save_path=save1)
     plot_centerline(sim, save_path=save2)

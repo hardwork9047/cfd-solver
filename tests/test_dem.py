@@ -4,7 +4,6 @@ Unit tests for the dem (Discrete Element Method) package.
 
 import numpy as np
 import pytest
-
 from dem import ParticleSystem
 
 

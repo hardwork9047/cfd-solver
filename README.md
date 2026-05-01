@@ -126,9 +126,14 @@ src/
 ├── cfd/            Navier-Stokes FDM solvers
 ├── cfd_lbm/        Lattice-Boltzmann Method (D2Q9)
 ├── dem/            Discrete Element Method
-└── cfd_dem_lbm/    Coupled LBM-DEM solver
+├── cfd_dem_lbm/    Coupled LBM-DEM solver
+├── demos/          Runnable demonstration scripts
+├── bin/            Maintenance scripts
+└── results/        Generated outputs grouped by program name
+docs/               Project notes, tutorials, and verification reports
 tests/              pytest test suite (44 tests)
-examples/           Runnable demonstration scripts
+tests/verification/ Manual benchmark and historical-comparison programs
+paper/              Manuscript drafts and paper assets
 .github/workflows/  CI (tests on Python 3.11–3.13)
 ```
 

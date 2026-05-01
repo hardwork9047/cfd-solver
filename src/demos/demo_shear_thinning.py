@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from cfd import PowerLawPlanePoiseuille
+from cfd.result_paths import program_results_dir
 
 # Setting up logging to track our success
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -51,7 +52,7 @@ def run_shear_thinning_demo():
     plt.grid(True, alpha=0.3)
     plt.legend()
 
-    output_image = "shear_thinning_comparison.png"
+    output_image = program_results_dir(__file__) / "shear_thinning_comparison.png"
     plt.savefig(output_image)
     logger.info(f"Comparison plot saved to {output_image}")
     plt.show()

@@ -22,6 +22,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
+from cfd.result_paths import program_results_dir
+
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
@@ -231,7 +233,8 @@ def main():
     print(f"  ※ 抗力は D³ に比例 → 粒子径が2倍で抗力は8倍")
 
     # --- アニメーション生成 ---
-    frame_dir = "/tmp/particle_frames"
+    output_dir = program_results_dir(__file__)
+    frame_dir = output_dir / "frames"
     os.makedirs(frame_dir, exist_ok=True)
 
     fps = 15
@@ -291,7 +294,7 @@ def main():
             fontsize=11, fontweight="bold",
         )
         plt.tight_layout(rect=[0, 0, 1, 0.94])
-        fig.savefig(f"{frame_dir}/frame_{idx:04d}.png", dpi=100, bbox_inches="tight")
+        fig.savefig(frame_dir / f"frame_{idx:04d}.png", dpi=100, bbox_inches="tight")
         plt.close(fig)
 
     # フレーム 0: 初期状態
@@ -306,15 +309,15 @@ def main():
             print(f"  frame {fi}/{total_frames}  t={sim.time:.3f}s  mean_drag={drag_m:.4f}fN")
 
     # ffmpeg で MP4 合成
-    out_mp4 = "/tmp/particle_simulation.mp4"
+    out_mp4 = output_dir / "particle_simulation.mp4"
     cmd = [
         "ffmpeg", "-y",
         "-framerate", str(fps),
-        "-i", f"{frame_dir}/frame_%04d.png",
+        "-i", str(frame_dir / "frame_%04d.png"),
         "-vcodec", "libx264", "-crf", "18",
         "-pix_fmt", "yuv420p",
         "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
-        out_mp4,
+        str(out_mp4),
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode == 0:
@@ -336,7 +339,7 @@ def main():
 
     # 最終フレームをプロジェクトに保存
     final_fig = sim.visualize()
-    out_png = "/tmp/particle_simulation_final.png"
+    out_png = output_dir / "particle_simulation_final.png"
     final_fig.savefig(out_png, dpi=150, bbox_inches="tight")
     plt.close(final_fig)
     print(f"\n最終状態画像: {out_png}")

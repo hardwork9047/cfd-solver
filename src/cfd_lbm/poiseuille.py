@@ -30,6 +30,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+from cfd.result_paths import program_results_dir
 
 from .lbm import CS2, OPPOSITE, C, Q, W, equilibrium
 
@@ -300,6 +301,7 @@ def grid_refinement_study(
     Re: float = 10.0,
     u_max: float = 0.02,
     steps: int = 5000,
+    save_path: Path | None = None,
 ) -> None:
     """
     Run Poiseuille flow for several grid resolutions; plot L2 error vs dy.
@@ -338,6 +340,9 @@ def grid_refinement_study(
     ax.legend()
     ax.grid(True, which="both", alpha=0.3)
     plt.tight_layout()
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"  Saved -> {save_path}")
     plt.show()
 
 
@@ -390,14 +395,18 @@ def main() -> None:
         action="store_true",
         help="Save figures instead of displaying",
     )
-    parser.add_argument("--out-dir", type=str, default="results")
+    parser.add_argument("--out-dir", type=str, default=None)
     args = parser.parse_args()
 
-    out_dir = Path(args.out_dir)
-    out_dir.mkdir(exist_ok=True)
+    out_dir = Path(args.out_dir) if args.out_dir else program_results_dir(__file__)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     if args.refinement:
-        grid_refinement_study(Re=args.Re, u_max=args.umax)
+        grid_refinement_study(
+            Re=args.Re,
+            u_max=args.umax,
+            save_path=out_dir / f"poiseuille_refinement_Re{args.Re:.0f}.png",
+        )
         return
 
     sim = PoiseuilleFlow(nx=args.nx, ny=args.ny, Re=args.Re, u_max=args.umax)
@@ -420,8 +429,8 @@ def main() -> None:
     print(f"\nFinal L2 error : {errors[-1]:.4e}")
 
     suffix = f"Re{args.Re:.0f}_ny{args.ny}"
-    sp1 = out_dir / f"poiseuille_profile_{suffix}.png" if args.no_show else None
-    sp2 = out_dir / f"poiseuille_conv_{suffix}.png" if args.no_show else None
+    sp1 = out_dir / f"poiseuille_profile_{suffix}.png"
+    sp2 = out_dir / f"poiseuille_conv_{suffix}.png"
 
     plot_profile(sim, save_path=sp1)
     plot_convergence(sim, errors, step_log, save_path=sp2)

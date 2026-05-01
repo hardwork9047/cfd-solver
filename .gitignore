@@ -51,6 +51,9 @@ Thumbs.db
 # Project specific - output directories
 results/
 frames/
+!src/results/
+src/results/*
+!src/results/.gitkeep
 *.png
 *.mp4
 *.gif

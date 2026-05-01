@@ -10,6 +10,7 @@ import numpy as np
 import os
 import shutil
 
+from cfd.result_paths import program_results_dir
 from dem import ParticleSystem
 
 
@@ -60,7 +61,7 @@ def demo_particle_settling():
             print(f"  Particles {i}-{j}: distance={dist:.4f}m, overlap={overlap:.4f}m [{status}]")
     
     # Create output directories
-    results_dir = "results"
+    results_dir = str(program_results_dir(__file__))
     frames_dir = os.path.join(results_dir, "frames")
     images_dir = os.path.join(results_dir, "images")
     video_dir = os.path.join(results_dir, "video")

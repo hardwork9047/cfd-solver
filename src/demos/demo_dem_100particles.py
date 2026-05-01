@@ -1,7 +1,9 @@
 """
-Demo: Large-scale Particle Settling Simulation with 50 particles
+Demo: Large-scale Particle Settling Simulation with 100 particles
 
-This demo shows 50 particles falling and settling under gravity in a larger domain.
+This demo shows 100 particles falling and settling under gravity in a larger domain
+with 5x longer simulation time.
+粒子径を乱数で±15%変化させています。
 """
 
 import csv
@@ -10,20 +12,22 @@ import numpy as np
 import os
 import shutil
 
+from cfd.result_paths import program_results_dir
 from dem import ParticleSystem
 
 
 def demo_large_particle_settling():
-    """Demonstrate particle settling with 50 particles in a larger domain."""
-    print("🌊 DEM Solver - Large-scale Particle Settling Demo (50 particles)")
+    """Demonstrate particle settling with 100 particles in a larger domain."""
+    print("🌊 DEM Solver - Large-scale Particle Settling Demo (100 particles)")
     print("=" * 60)
-    print("Simulating 50 particles falling and settling under gravity...")
+    print("Simulating 100 particles falling and settling under gravity...")
+    print("粒子径：基本値 ±15% の範囲で乱数変化")
     print()
 
-    # Create particle system with 50 particles in a larger domain
+    # Create particle system with 100 particles in a larger domain
     system = ParticleSystem(
-        n_particles=50,
-        domain_size=(2.0, 3.0),
+        n_particles=100,
+        domain_size=(2.5, 4.0),
         particle_radius=0.08,
         particle_density=2500,
         gravity=9.81,
@@ -31,62 +35,114 @@ def demo_large_particle_settling():
         damping=0.8,
         dt=1e-5,
     )
+    
+    # 粒子径を乱数で変化させる（±15%）
+    base_radius = 0.08
+    diameter_variation = 0.15
+    min_radius = base_radius * (1 - diameter_variation)
+    max_radius = base_radius * (1 + diameter_variation)
+    
+    np.random.seed(42)  # For reproducibility
+    radii = np.random.uniform(min_radius, max_radius, system.n_particles)
+    system.radii = radii
+    
+    # 粒子径に応じて質量を更新
+    system.masses = system.density * np.pi * radii**2
+    
+    print(f"粒子径統計:")
+    print(f"  基本粒子径: {base_radius:.4f} m")
+    print(f"  粒子径範囲: {min_radius:.4f} - {max_radius:.4f} m")
+    print(f"  平均粒子径: {np.mean(radii):.4f} m")
+    print(f"  標準偏差: {np.std(radii):.4f} m")
+    print(f"  最小粒子径: {np.min(radii):.4f} m")
+    print(f"  最大粒子径: {np.max(radii):.4f} m")
+    print()
+    
+    # 設定確認
+    print("設定確認:")
+    print(f"  system.radii の長さ: {len(system.radii)}")
+    print(f"  system.radii の最初の5個: {system.radii[:5]}")
+    print(f"  system.masses の最初の5個: {system.masses[:5]}")
+    print()
 
     print(f"Number of particles: {system.n_particles}")
     print(f"Domain size: {system.width}m × {system.height}m")
-    print(f"Particle radius: {system.radius}m")
-    print(f"Particle mass: {system.mass:.3e}kg")
     print()
 
     # Set initial positions without overlap - random placement in upper half
-    np.random.seed(42)  # For reproducibility
-    min_distance = 2.2 * system.radius  # Minimum distance between particle centers
+    print("初期位置を設定中（重なり判定あり）...")
+    placed = 0
+    max_total_attempts = 100000
+    global_attempt = 0
     
     for i in range(system.n_particles):
-        max_attempts = 1000
+        placed_i = False
+        max_attempts = 10000
+        
         for attempt in range(max_attempts):
-            # Generate random position in upper half
-            x = np.random.uniform(system.radius, system.width - system.radius)
-            y = np.random.uniform(system.height * 0.5, system.height - system.radius)
+            global_attempt += 1
+            if global_attempt > max_total_attempts:
+                print(f"警告: 最大試行回数に達しました。{placed}/{system.n_particles} 個の粒子を配置しました。")
+                break
             
-            # Check distance to all existing particles
+            # Generate random position in upper half with margin for radius
+            x = np.random.uniform(radii[i], system.width - radii[i])
+            y = np.random.uniform(system.height * 0.5, system.height - radii[i])
+            
+            # Check distance to all existing particles (using variable radii)
             valid = True
             for j in range(i):
                 dx = x - system.positions[j, 0]
                 dy = y - system.positions[j, 1]
                 dist = np.sqrt(dx**2 + dy**2)
+                min_distance = radii[i] + radii[j] + 1e-6  # 重なりなし + 余裕
                 if dist < min_distance:
                     valid = False
                     break
             
             if valid:
                 system.positions[i] = [x, y]
+                placed_i = True
+                placed += 1
                 break
-        else:
-            # If no valid position found, place it anyway (fallback)
-            system.positions[i] = [x, y]
-            print(f"Warning: Could not find non-overlapping position for particle {i}")
+        
+        if not placed_i:
+            print(f"警告: 粒子 {i} の配置に失敗しました（{max_attempts}回の試行後）")
+        
+        if (i + 1) % 20 == 0:
+            print(f"  {i + 1}/{system.n_particles} 個の粒子を配置完了")
+    
+    print(f"✓ {placed}/{system.n_particles} 個の粒子を配置完了\n")
     
     # Verify no initial overlaps
-    print("\nChecking initial overlaps...")
+    print("重なり判定を実行中...")
     overlap_count = 0
+    max_overlap = 0.0
+    
     for i in range(system.n_particles):
         for j in range(i+1, system.n_particles):
-            dist = np.linalg.norm(system.positions[j] - system.positions[i])
-            overlap = 2*system.radius - dist
-            if overlap > 0:
+            dx = system.positions[j, 0] - system.positions[i, 0]
+            dy = system.positions[j, 1] - system.positions[i, 1]
+            dist = np.sqrt(dx**2 + dy**2)
+            min_allowed_dist = radii[i] + radii[j]
+            overlap = min_allowed_dist - dist
+            
+            if overlap > 1e-6:  # 誤差範囲以上の重なり
                 overlap_count += 1
-                print(f"  WARNING: Particles {i}-{j}: distance={dist:.4f}m, overlap={overlap:.4f}m")
+                max_overlap = max(max_overlap, overlap)
+                if overlap_count <= 10:  # 最初の10個だけ表示
+                    print(f"  警告: 粒子 {i}-{j}: 距離={dist:.6f}m, 重なり={overlap:.6f}m")
     
     if overlap_count == 0:
-        print("✓ All particles initialized without overlap")
+        print("✓ すべての粒子が重なりなく初期化されました")
     else:
-        print(f"⚠️  Found {overlap_count} overlapping pairs")
+        print(f"⚠️  {overlap_count} 個の重なるペアが検出されました")
+        print(f"   最大重なり量: {max_overlap:.6f}m")
     print()
     
     # Create output directories
-    results_dir = "results"
-    frames_dir = os.path.join(results_dir, "frames_50p")
+    results_dir = str(program_results_dir(__file__))
+    frames_dir = os.path.join(results_dir, "frames_100p")
     images_dir = os.path.join(results_dir, "images")
     video_dir = os.path.join(results_dir, "video")
     
@@ -105,7 +161,7 @@ def demo_large_particle_settling():
     plt.close(fig_init)
 
     # Open CSV file for logging particle data (limited to save disk space)
-    csv_path = os.path.join(results_dir, "particle_data_50p.csv")
+    csv_path = os.path.join(results_dir, "particle_data_100p.csv")
     csv_file = open(csv_path, 'w', newline='')
     csv_writer = csv.writer(csv_file)
     
@@ -124,14 +180,17 @@ def demo_large_particle_settling():
         ])
     csv_writer.writerow(row)
 
-    # Run simulation with frame capture
+    # Run simulation with frame capture (5x longer simulation time)
     print("\nRunning simulation and generating frames...")
-    t_end = 1.0
-    frame_interval = 400  # Save frame every 400 iterations
-    csv_interval = 100  # Write CSV every 100 iterations
+    t_end = 5.0  # 5x longer than 50-particle demo
+    frame_interval = 2000  # Save frame every 2000 iterations
+    csv_interval = 500  # Write CSV every 500 iterations
     frame_count = 0
     
     n_steps = int(t_end / system.dt)
+    
+    print(f"Total timesteps: {n_steps}")
+    print()
     
     for step in range(n_steps):
         system.step()
@@ -152,7 +211,7 @@ def demo_large_particle_settling():
             fig = system.plot(save_path=os.path.join(frames_dir, f"dem_frame_{frame_count:04d}.png"))
             plt.close(fig)
             
-        if step % 10000 == 0:
+        if step % 20000 == 0:
             ke = system.compute_kinetic_energy()
             print(f"  Step {step}/{n_steps}, Time {system.time:.3f}s, KE={ke:.2e}J")
     
@@ -167,22 +226,22 @@ def demo_large_particle_settling():
 
     print(f"\n✅ Generated {frame_count + 1} frames in '{frames_dir}/' directory")
     
-    video_path = os.path.join(video_dir, "dem_settling_50p.mp4")
+    video_path = os.path.join(video_dir, "dem_settling_100p.mp4")
     print("\nTo create video, run:")
     print(f"  ffmpeg -framerate 10 -i {frames_dir}/dem_frame_%04d.png -c:v libx264 -pix_fmt yuv420p -vf \"scale=trunc(iw/2)*2:trunc(ih/2)*2\" {video_path} -y")
     
     # Plot particle distribution
-    bin_centers, hist = system.get_particle_distribution(n_bins=15)
+    bin_centers, hist = system.get_particle_distribution(n_bins=20)
 
     fig_dist, ax = plt.subplots(figsize=(8, 6))
     ax.barh(bin_centers, hist, height=bin_centers[1] - bin_centers[0], alpha=0.7, color='steelblue')
     ax.set_xlabel("Number of particles")
     ax.set_ylabel("Height [m]")
-    ax.set_title(f"Vertical Distribution at t={system.time:.2f}s (50 particles)")
+    ax.set_title(f"Vertical Distribution at t={system.time:.2f}s (100 particles)")
     ax.grid(True, alpha=0.3)
     plt.tight_layout()
     
-    dist_path = os.path.join(images_dir, "dem_distribution_50p.png")
+    dist_path = os.path.join(images_dir, "dem_distribution_100p.png")
     plt.savefig(dist_path, dpi=150, bbox_inches="tight")
     print(f"\nDistribution plot saved as: {dist_path}")
 
@@ -193,8 +252,12 @@ def demo_large_particle_settling():
     print(f"  - Frames: {frames_dir}/")
     print(f"  - Images: {images_dir}/")
     print(f"  - Video: {video_dir}/")
+    print("\nSimulation parameters:")
+    print(f"  - Particles: {system.n_particles}")
+    print(f"  - Total time: {t_end}s (5x longer)")
+    print(f"  - Total steps: {n_steps:,}")
     print("\nWhat to observe in the video:")
-    print("- 50 particles initially distributed without overlap in upper half")
+    print("- 100 particles initially distributed without overlap in upper half")
     print("- Particles fall under gravity")
     print("- Particles collide with each other and walls")
     print("- Color indicates force magnitude (blue=low, red=high)")

@@ -4,7 +4,6 @@ Unit tests for the cfd_lbm (D2Q9 Lattice-Boltzmann) package.
 
 import numpy as np
 import pytest
-
 from cfd_lbm import LBM, equilibrium
 
 

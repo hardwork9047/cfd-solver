@@ -5,11 +5,11 @@ This document outlines the core principles and boundaries for the CFD Solver Tut
 ## 🛡️ Security Practices
 - **No Secrets:** Never hardcode API keys, credentials, or personal information. For GitHub operations (like `git push`), use environment variables to store your Personal Access Token (PAT). For example, set the `GITHUB_HARDWORK9047` environment variable with your PAT. You can then configure Git to use this variable for authentication, for instance, by setting a global Git configuration like `git config --global http.https://github.com/.extraheader 'AUTHORIZATION: token $GITHUB_HARDWORK9047'`.
 - **Dependency Safety:** Only use verified packages from PyPI. Always check `uv.lock` for reproducible and safe environments.
-- **Data Integrity:** Protect numerical results. Ensure simulation data is stored in designated directories and not committed unless necessary.
+- **Data Integrity:** Protect numerical results. Store generated outputs under `src/results/<program-name>/` and do not commit them unless necessary.
 - **Git commands:** Use environment variables for authentication (e.g., `GITHUB_TOKEN`). Never hardcode credentials in any file.
 
 ## 💎 Code & Development Integrity
-- **Verification:** All code must pass `pytest` and maintain numerical stability (no NaNs or Infs). Refer to `CONTEXT.md` for testing infrastructure.
+- **Verification:** All code must pass `pytest` and maintain numerical stability (no NaNs or Infs). Refer to `docs/CONTEXT.md` for testing infrastructure.
 - **Style:** Adhere strictly to PEP 8 and the established CFD nomenclature (`u`, `v`, `rho`, `mu`). For detailed implementation standards, consult `GEMINI.md`.
 - **Transparency:** Document all numerical shortcuts and assumptions.
 

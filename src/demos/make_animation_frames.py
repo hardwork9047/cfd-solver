@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from cfd import CavityFlow
+from cfd.result_paths import program_results_dir
 
 # Let's keep track of our progress
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -13,10 +14,8 @@ logger = logging.getLogger(__name__)
 
 def generate_frames():
     # Create a directory for our frames
-    output_dir = "frames"
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-        logger.info(f"Created directory: {output_dir}")
+    output_dir = program_results_dir(__file__, "frames")
+    logger.info(f"Using frame directory: {output_dir}")
 
     # Use parameters that are proven to work
     L = 1.0
@@ -64,7 +63,7 @@ def generate_frames():
             plt.colorbar(contour, ax=ax, label="Velocity Magnitude [m/s]")
 
             # Use the naming convention from our tutorial!
-            filename = os.path.join(output_dir, f"frame_{frame_count:04d}.png")
+            filename = output_dir / f"frame_{frame_count:04d}.png"
             plt.savefig(filename, dpi=100)
             plt.close(fig)
 

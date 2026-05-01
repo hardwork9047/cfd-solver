@@ -7,13 +7,16 @@ This project is a Python-based Computational Fluid Dynamics (CFD) library design
 - **`src/cfd/`**: Core logic for different flow regimes.
   - `poiseuille.py`: 1D steady-state solvers for channel and pipe flows. Uses SOR.
   - `cavity.py`: 2D unsteady-state solver for lid-driven cavity flow. Solves incompressible Navier-Stokes equations.
-- **`examples/`**: Demonstration and verification scripts.
+- **`src/demos/`**: Demonstration scripts.
+- **`src/results/<program-name>/`**: Generated plots, frames, videos, and CSV output.
 - **`tests/`**: Automated unit tests using `pytest`.
+- **`tests/verification/`**: Manual verification scripts and benchmark comparisons.
+- **`paper/`**: Manuscript drafts and paper assets.
 
 ## 🧪 Current Status
 - **Poiseuille Solvers**: Fully implemented and verified.
 - **Cavity Solver**: Implemented with basic stability improvements; needs refined tutorial examples.
-- **Tutorial**: Organized in `TUTORIAL.md`.
+- **Tutorial**: Organized in `docs/TUTORIAL.md`.
 
 ## 🎯 Target Audience
 Students and researchers learning numerical fluid dynamics.

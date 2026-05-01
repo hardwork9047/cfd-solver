@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from cfd import CavityFlow
+from cfd.result_paths import program_results_dir
 
 
 def demo_low_re_cavity():
@@ -43,18 +44,22 @@ def demo_low_re_cavity():
 
     # 可視化
     print("\n可視化生成中...")
+    output_dir = program_results_dir(__file__)
 
     fig1 = cavity.plot_velocity_field()
-    fig1.savefig("/tmp/cavity_low_re_velocity.png", dpi=100, bbox_inches="tight")
-    print("保存: /tmp/cavity_low_re_velocity.png")
+    velocity_path = output_dir / "cavity_low_re_velocity.png"
+    fig1.savefig(velocity_path, dpi=100, bbox_inches="tight")
+    print(f"保存: {velocity_path}")
 
     fig2 = cavity.plot_streamlines()
-    fig2.savefig("/tmp/cavity_low_re_streamlines.png", dpi=100, bbox_inches="tight")
-    print("保存: /tmp/cavity_low_re_streamlines.png")
+    streamlines_path = output_dir / "cavity_low_re_streamlines.png"
+    fig2.savefig(streamlines_path, dpi=100, bbox_inches="tight")
+    print(f"保存: {streamlines_path}")
 
     fig3 = cavity.plot_pressure_field()
-    fig3.savefig("/tmp/cavity_low_re_pressure.png", dpi=100, bbox_inches="tight")
-    print("保存: /tmp/cavity_low_re_pressure.png")
+    pressure_path = output_dir / "cavity_low_re_pressure.png"
+    fig3.savefig(pressure_path, dpi=100, bbox_inches="tight")
+    print(f"保存: {pressure_path}")
 
     return cavity
 
@@ -90,14 +95,17 @@ def demo_mid_re_cavity():
 
     # 可視化
     print("\n可視化生成中...")
+    output_dir = program_results_dir(__file__)
 
     fig1 = cavity.plot_velocity_field()
-    fig1.savefig("/tmp/cavity_mid_re_velocity.png", dpi=100, bbox_inches="tight")
-    print("保存: /tmp/cavity_mid_re_velocity.png")
+    velocity_path = output_dir / "cavity_mid_re_velocity.png"
+    fig1.savefig(velocity_path, dpi=100, bbox_inches="tight")
+    print(f"保存: {velocity_path}")
 
     fig2 = cavity.plot_streamlines()
-    fig2.savefig("/tmp/cavity_mid_re_streamlines.png", dpi=100, bbox_inches="tight")
-    print("保存: /tmp/cavity_mid_re_streamlines.png")
+    streamlines_path = output_dir / "cavity_mid_re_streamlines.png"
+    fig2.savefig(streamlines_path, dpi=100, bbox_inches="tight")
+    print(f"保存: {streamlines_path}")
 
     return cavity
 
@@ -149,8 +157,9 @@ def plot_comparison(cavity_low, cavity_mid):
     axes[1, 1].set_aspect("equal")
 
     plt.tight_layout()
-    plt.savefig("/tmp/cavity_comparison.png", dpi=100, bbox_inches="tight")
-    print("\n保存: /tmp/cavity_comparison.png")
+    comparison_path = program_results_dir(__file__) / "cavity_comparison.png"
+    plt.savefig(comparison_path, dpi=100, bbox_inches="tight")
+    print(f"\n保存: {comparison_path}")
 
 
 def main():

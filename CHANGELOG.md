@@ -52,7 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CylinderFlow SOR sign bug**: Poisson solver was updating pressure in the
   wrong direction.
 - **CylinderFlow Poisson RHS sign**: RHS was −ρ/dt·∇·u (wrong), now +ρ/dt·∇·u*.
-- **VIBES.md**: Removed accidentally committed credential; replaced with
+- **docs/VIBES.md**: Removed accidentally committed credential; replaced with
   environment-variable guidance.
 
 ---
@@ -73,7 +73,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **SOR Upgrade**: Upgraded Poiseuille solvers from Gauss-Seidel to SOR
   (Successive Over-Relaxation) for faster convergence.
-- **Documentation**: Updated `README.md`, `TUTORIAL.md` to reflect new
+- **Documentation**: Updated `README.md`, `docs/TUTORIAL.md` to reflect new
   capabilities.
 
 ---

@@ -11,6 +11,7 @@ import numpy as np
 import os
 import shutil
 
+from cfd.result_paths import program_results_dir
 from dem import ParticleSystem
 
 
@@ -130,7 +131,7 @@ def demo_large_particle_settling_short():
     print()
     
     # Create output directories
-    results_dir = "results"
+    results_dir = str(program_results_dir(__file__))
     frames_dir = os.path.join(results_dir, "frames_100p_short")
     images_dir = os.path.join(results_dir, "images")
     

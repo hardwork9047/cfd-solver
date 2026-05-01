@@ -83,13 +83,19 @@ src/
 └── cfd_dem_lbm/             # Coupled LBM-DEM solver
     ├── __init__.py
     └── lbm_dem.py
+├── demos/                   # Runnable demonstration scripts
+├── bin/                     # Maintenance scripts
+└── results/                 # Generated outputs grouped by program name
+
+docs/                        # Project notes, tutorials, and verification reports
 
 tests/
 ├── test_cfd.py              # Tests for cfd package
 ├── test_lbm.py              # Tests for cfd_lbm package
-└── test_dem.py              # Tests for dem package
+├── test_dem.py              # Tests for dem package
+└── verification/            # Manual benchmark and historical-comparison programs
 
-examples/                    # Runnable example scripts
+paper/                       # Manuscript drafts and paper assets
 .github/
 ├── workflows/ci.yml         # GitHub Actions CI (tests + lint)
 └── ISSUE_TEMPLATE/          # Bug and feature request templates

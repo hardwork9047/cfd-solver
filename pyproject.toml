@@ -67,9 +67,18 @@ ruff = ">=0.3.0"
 [tool.black]
 line-length = 100
 target-version = ["py311", "py312", "py313"]
+extend-exclude = '''
+(
+  ^src/demos/
+  | ^tests/verification/
+)
+'''
 
 [tool.ruff]
 line-length = 100
 target-version = "py311"
 lint.select = ["E", "F", "W", "I"]
-
+extend-exclude = [
+    "src/demos",
+    "tests/verification",
+]
