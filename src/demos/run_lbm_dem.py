@@ -52,6 +52,8 @@ parser.add_argument("--warmup-steps", type=int, default=1000,
                     help="Warmup steps before recording (default: 1000)")
 parser.add_argument("--no-video", action="store_true",
                     help="Skip MP4 generation")
+parser.add_argument("--result-tag", default=None,
+                    help="Extra result directory tag to avoid overwriting parameter sweeps")
 parser.add_argument("--rolling-friction", action=argparse.BooleanOptionalAction,
                     default=False,
                     help="Enable angular motion, tangential friction, and rolling resistance")
@@ -92,6 +94,8 @@ if args.snapshot_every <= 0:
     parser.error("--snapshot-every must be positive")
 if args.warmup_steps < 0:
     parser.error("--warmup-steps must be non-negative")
+if args.result_tag is not None and any(ch in args.result_tag for ch in "/\\"):
+    parser.error("--result-tag must be a single directory name")
 
 # ---------------------------------------------------------------------------
 # キャッシュ付きサブクラス: _macroscopic() を各ステップ1回だけ計算
@@ -169,15 +173,39 @@ def _water_area(nx: int, ny: int, cylinder: tuple[float, float, float] | None) -
     return max(area, 1.0)
 
 
+def _poiseuille_flow_rate(ny: int, u_max: float) -> float:
+    """Approximate left-boundary flow rate for the developed channel profile."""
+    y_nodes = np.arange(1, ny - 1)
+    channel_height = max(ny - 2.0, 1.0)
+    eta = np.clip((y_nodes - 0.5) / channel_height, 0.0, 1.0)
+    return float(np.sum(4.0 * u_max * eta * (1.0 - eta)))
+
+
 PARTICLE_VOLUME_FRACTION = _normalise_fraction(args.particle_volume_fraction)
+expected_particle_area = np.pi * RADIUS**2 * (1.0 + RADIUS_VARIATION**2 / 3.0)
 if PARTICLE_VOLUME_FRACTION is None:
     N_PARTICLES = args.n_particles if args.n_particles is not None else DEFAULT_N_PARTICLES
+    if args.particle_source == "left-inlet":
+        expected_flow_area = _poiseuille_flow_rate(NY, U_MAX) * (args.warmup_steps + TOTAL_STEPS)
+        SOURCE_VOLUME_FRACTION = min(
+            0.95,
+            N_PARTICLES * expected_particle_area / max(expected_flow_area, 1.0),
+        )
+    else:
+        SOURCE_VOLUME_FRACTION = None
 else:
-    expected_particle_area = np.pi * RADIUS**2 * (1.0 + RADIUS_VARIATION**2 / 3.0)
-    N_PARTICLES = max(
-        1,
-        int(round(PARTICLE_VOLUME_FRACTION * _water_area(NX, NY, CYLINDER) / expected_particle_area)),
-    )
+    SOURCE_VOLUME_FRACTION = PARTICLE_VOLUME_FRACTION
+    if args.particle_source == "left-inlet":
+        expected_flow_area = _poiseuille_flow_rate(NY, U_MAX) * (args.warmup_steps + TOTAL_STEPS)
+        N_PARTICLES = max(
+            1,
+            int(np.ceil(1.25 * PARTICLE_VOLUME_FRACTION * expected_flow_area / expected_particle_area)),
+        )
+    else:
+        N_PARTICLES = max(
+            1,
+            int(round(PARTICLE_VOLUME_FRACTION * _water_area(NX, NY, CYLINDER) / expected_particle_area)),
+        )
 
 GEOMETRY_MODE = "cylinder" if args.cylinder else "channel"
 if args.particle_attraction:
@@ -189,6 +217,8 @@ else:
 ROLLING_MODE = "rolling" if args.rolling_friction else "free_roll"
 SOURCE_MODE = "left_inlet" if args.particle_source == "left-inlet" else "initial"
 out_parts = [f"{GEOMETRY_MODE}_{SURFACE_FORCE_MODE}_{ROLLING_MODE}_{SOURCE_MODE}"]
+if args.result_tag:
+    out_parts.append(args.result_tag)
 if PARTICLE_VOLUME_FRACTION is not None:
     pct = int(round(PARTICLE_VOLUME_FRACTION * 100))
     out_parts.append(f"phi_{pct:02d}pct")
@@ -203,9 +233,20 @@ print("=" * 60)
 print("  LBM-DEM 連成シミュレーション")
 print("=" * 60)
 if PARTICLE_VOLUME_FRACTION is not None:
+    if args.particle_source == "left-inlet":
+        print(
+            f"Source particle area fraction: {PARTICLE_VOLUME_FRACTION:.1%} "
+            f"-> up to {N_PARTICLES} queued particles"
+        )
+    else:
+        print(
+            f"Target particle area fraction: {PARTICLE_VOLUME_FRACTION:.1%} "
+            f"-> {N_PARTICLES} particles"
+        )
+elif args.particle_source == "left-inlet":
     print(
-        f"Target particle area fraction: {PARTICLE_VOLUME_FRACTION:.1%} "
-        f"-> {N_PARTICLES} particles"
+        f"Derived source particle area fraction: {SOURCE_VOLUME_FRACTION:.3%} "
+        f"for {N_PARTICLES} queued particles"
     )
 print(f"Particle source: {args.particle_source}")
 
@@ -234,6 +275,7 @@ sim = FastLBMDEM(
     repulsion_min_gap=args.repulsion_min_gap,
     cylinder=CYLINDER,
     particle_source=args.particle_source.replace("-", "_"),
+    source_volume_fraction=SOURCE_VOLUME_FRACTION,
 )
 
 # ---------------------------------------------------------------------------
@@ -313,7 +355,14 @@ if len(p_vel_mag):
     print(f"  粒子Y重心       : {last['pos'][:,1].mean():.2f} / {NY} (格子単位)")
     print(f"  粒子Y重心 (正規): {last['pos'][:,1].mean()/NY:.3f}")
 else:
-    print("  粒子統計        : 全粒子が右出口から流出済み")
+    if len(sim._pending_radii):
+        print("  粒子統計        : 現時点では有効粒子なし (入口投入待ちあり)")
+    else:
+        print("  粒子統計        : 全粒子が右出口から流出済み")
+if args.particle_source == "left-inlet":
+    print(f"  最終入口流量    : {sim.last_inlet_flow_rate:.4e} (格子面積/step)")
+    print(f"  投入済み粒子面積: {sim.injected_particle_area:.4e}")
+    print(f"  未投入面積予算  : {sim.inlet_particle_area_budget:.4e}")
 
 # 静止画を保存
 fig_stat, axes = plt.subplots(1, 3, figsize=(16, 5))

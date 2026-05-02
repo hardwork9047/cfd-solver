@@ -129,8 +129,14 @@ class LBMDEMSolver:
     particle_attraction : bool — enable Hamaker-like particle-particle attraction
     particle_repulsion : bool — enable Hamaker-like particle-particle repulsion
     particle_source    : str — ``"initial"`` or ``"left_inlet"``.
-                        ``"left_inlet"`` places particles uniformly near the
-                        left inlet and deletes particles after right outflow.
+                        ``"left_inlet"`` injects particles gradually from the
+                        left boundary according to the inlet flow rate and
+                        deletes particles after right outflow.
+    source_volume_fraction : float | None
+                        Particle area fraction in the inlet feed.  In
+                        ``"left_inlet"`` mode, each step adds
+                        ``source_volume_fraction * sum(u_x at left boundary)``
+                        to the particle-area injection budget.
     attraction_strength : float
                         Dimensionless Hamaker-like attraction strength in lattice force units.
     repulsion_strength : float
@@ -176,11 +182,14 @@ class LBMDEMSolver:
         repulsion_min_gap: float = 0.05,
         cylinder: tuple | None = None,
         particle_source: str = "initial",
+        source_volume_fraction: float | None = None,
     ):
         if particle_attraction and particle_repulsion:
             raise ValueError("particle_attraction and particle_repulsion are mutually exclusive")
         if particle_source not in {"initial", "left_inlet"}:
             raise ValueError("particle_source must be 'initial' or 'left_inlet'")
+        if source_volume_fraction is not None and source_volume_fraction < 0.0:
+            raise ValueError("source_volume_fraction must be non-negative")
 
         self.nx = nx
         self.ny = ny
@@ -210,7 +219,11 @@ class LBMDEMSolver:
         self.attraction_min_gap = attraction_min_gap
         self.repulsion_min_gap = repulsion_min_gap
         self.particle_source = particle_source
+        self.source_volume_fraction = source_volume_fraction
         self.removed_particles = 0
+        self.injected_particle_area = 0.0
+        self.inlet_particle_area_budget = 0.0
+        self.last_inlet_flow_rate = 0.0
 
         # --- Fluid parameters ---
         self.nu = u_max * ny / Re
@@ -302,6 +315,7 @@ class LBMDEMSolver:
         self._pending_masses = np.empty(0)
         self._pending_inertias = np.empty(0)
         self._inlet_cursor = 0
+        self._rng_inlet = np.random.default_rng(seed + 2027)
         self._init_particles(seed)
         if self.particle_source != "left_inlet":
             self.generated_particles = self.n_p
@@ -309,12 +323,15 @@ class LBMDEMSolver:
             np.sum(np.pi * self.radii**2) + np.sum(np.pi * self._pending_radii**2)
         )
         active_particle_area = float(np.sum(np.pi * self.radii**2))
+        area_label = "Queued p.area:" if self.particle_source == "left_inlet" else "Particle frac.:"
         print(
-            "  Target p.frac.: "
+            f"  {area_label} "
             f"{self.particle_area / self.fluid_area:.3f} "
             f"({self.particle_area:.1f}/{self.fluid_area:.1f} lattice area)"
         )
         if self.particle_source == "left_inlet":
+            if self.source_volume_fraction is not None:
+                print(f"  Source phi    : {self.source_volume_fraction:.3f}")
             print(
                 "  Active p.frac.: "
                 f"{active_particle_area / self.fluid_area:.3f} "
@@ -392,60 +409,27 @@ class LBMDEMSolver:
 
     def _init_particles_from_left_inlet(self) -> None:
         """
-        Place particles in a left inlet buffer with a near-uniform vertical feed.
+        Queue all particles for gradual left-inlet injection.
 
         This mode is intended for filtration-style calculations: particles are
-        supplied from the upstream boundary instead of being distributed across
-        the whole channel.  The x positions are spread only within a shallow
-        inlet band so dense conditions remain non-overlapping.
+        supplied from the upstream boundary according to the inlet flow rate,
+        rather than being pre-packed in the channel at time zero.
         """
-        placed = 0
-        max_r = float(np.max(self.radii)) if self.n_p else self.r_p
-        y_min = max_r + 0.5
-        y_max = self.ny - 1.5 - max_r
-        if y_max <= y_min:
-            self.n_p = 0
-            self.pos = self.pos[:0]
-            self.vel = self.vel[:0]
-            self.omega_p = self.omega_p[:0]
-            self.forces_p = self.forces_p[:0]
-            self.torques_p = self.torques_p[:0]
-            self.radii = self.radii[:0]
-            self.masses = self.masses[:0]
-            self.inertias = self.inertias[:0]
-            return
-
-        candidates = self._left_inlet_candidate_positions(max_r)
-
-        # Sweep y first so each inlet column samples the height as uniformly as possible.
-        for x, y in candidates:
-            if placed >= self.n_p:
-                break
-            r_new = self.radii[placed]
-            if not self._can_place_inlet_particle(x, y, r_new, placed):
-                continue
-            self.pos[placed] = [x, y]
-            self.vel[placed] = self._inlet_velocity_at_y(y)
-            placed += 1
-
-        if placed < self.n_p:
-            print(
-                f"  Inlet queue   : initially placed {placed}/{self.n_p}; "
-                f"{self.n_p - placed} particles will be fed from the left inlet"
-            )
-            self._pending_radii = self.radii[placed:].copy()
-            self._pending_masses = self.masses[placed:].copy()
-            self._pending_inertias = self.inertias[placed:].copy()
-            self.n_p = placed
-            self.pos = self.pos[:placed]
-            self.vel = self.vel[:placed]
-            self.omega_p = self.omega_p[:placed]
-            self.forces_p = self.forces_p[:placed]
-            self.torques_p = self.torques_p[:placed]
-            self.radii = self.radii[:placed]
-            self.masses = self.masses[:placed]
-            self.inertias = self.inertias[:placed]
-        self.generated_particles = placed
+        queued = self.n_p
+        self._pending_radii = self.radii.copy()
+        self._pending_masses = self.masses.copy()
+        self._pending_inertias = self.inertias.copy()
+        self.n_p = 0
+        self.pos = self.pos[:0]
+        self.vel = self.vel[:0]
+        self.omega_p = self.omega_p[:0]
+        self.forces_p = self.forces_p[:0]
+        self.torques_p = self.torques_p[:0]
+        self.radii = self.radii[:0]
+        self.masses = self.masses[:0]
+        self.inertias = self.inertias[:0]
+        self.generated_particles = 0
+        print(f"  Inlet queue   : 0 active at t=0; {queued} particles queued")
 
     def _inlet_velocity_at_y(self, y: float) -> np.ndarray:
         """Poiseuille-like inlet particle velocity at vertical coordinate ``y``."""
@@ -453,31 +437,46 @@ class LBMDEMSolver:
         eta = float(np.clip((y - 0.5) / channel_height, 0.0, 1.0))
         return np.array([4.0 * self.u_max * eta * (1.0 - eta), 0.0])
 
-    def _left_inlet_candidate_positions(self, max_r: float) -> list[tuple[float, float]]:
-        """Deterministic near-uniform candidate points in the left inlet band."""
-        y_min = max_r + 0.5
-        y_max = self.ny - 1.5 - max_r
-        x_min = max_r + 1.0
-        if self.cylinder is not None:
-            cx, _, cr = self.cylinder
-            x_limit = cx - cr - max_r - 1.0
+    def _left_boundary_flow_rate(self, radius: float | None = None) -> float:
+        """Return the positive volumetric flow rate through the left boundary."""
+        _, ux, _ = self._macroscopic()
+        if radius is None:
+            y_min = 1
+            y_max = self.ny - 2
         else:
-            x_limit = 0.35 * self.nx
-        x_max = max(x_min, min(0.30 * self.nx, x_limit))
-        dx = 2.10 * max_r
-        dy = 2.10 * max_r
-        xs = np.arange(x_min, x_max + 0.5 * dx, dx)
-        ys = np.arange(y_min, y_max + 0.5 * dy, dy)
-        if len(xs) == 0:
-            xs = np.array([x_min])
-        if len(ys) == 0:
-            ys = np.array([(y_min + y_max) / 2.0])
+            y_min = int(np.ceil(radius + 0.5))
+            y_max = int(np.floor(self.ny - 1.5 - radius))
+        if y_max < y_min:
+            return 0.0
+        inlet_speed = np.maximum(ux[0, y_min : y_max + 1], 0.0)
+        return float(np.sum(inlet_speed))
 
-        candidates: list[tuple[float, float]] = []
-        for col, x in enumerate(xs):
-            y_values = ys if col % 2 == 0 else ys[::-1]
-            candidates.extend((float(x), float(y)) for y in y_values)
-        return candidates
+    def _sample_inlet_y(self, radius: float) -> float | None:
+        """
+        Sample an inlet y-coordinate from the local flow flux.
+
+        A uniform particle concentration in the incoming fluid gives a
+        particle-feed probability proportional to the local positive ux.
+        If the flow has not developed yet, fall back to a deterministic uniform
+        sweep so the source remains well behaved at startup.
+        """
+        y_min = int(np.ceil(radius + 0.5))
+        y_max = int(np.floor(self.ny - 1.5 - radius))
+        if y_max < y_min:
+            return None
+
+        _, ux, _ = self._macroscopic()
+        y_nodes = np.arange(y_min, y_max + 1)
+        weights = np.maximum(ux[0, y_nodes], 0.0)
+        weight_sum = float(np.sum(weights))
+        if weight_sum > 1e-12:
+            idx = int(self._rng_inlet.choice(len(y_nodes), p=weights / weight_sum))
+            y = float(y_nodes[idx]) + self._rng_inlet.uniform(-0.45, 0.45)
+        else:
+            idx = self._inlet_cursor % len(y_nodes)
+            self._inlet_cursor += 1
+            y = float(y_nodes[idx])
+        return float(np.clip(y, radius + 0.5, self.ny - 1.5 - radius))
 
     def _can_place_inlet_particle(
         self,
@@ -500,26 +499,31 @@ class LBMDEMSolver:
                 return False
         return True
 
-    def _try_feed_left_inlet_particles(self, max_new: int = 4) -> None:
-        """Append queued particles at the left inlet when non-overlapping slots exist."""
+    def _try_feed_left_inlet_particles(self, max_new: int = 8) -> None:
+        """Inject queued particles according to the inlet-flow concentration budget."""
         if self.particle_source != "left_inlet" or len(self._pending_radii) == 0:
             return
-        if self.n_p:
-            max_r = float(max(np.max(self.radii), np.max(self._pending_radii)))
-        else:
-            max_r = float(np.max(self._pending_radii))
-        candidates = self._left_inlet_candidate_positions(max_r)
-        if not candidates:
+        phi = 0.0 if self.source_volume_fraction is None else self.source_volume_fraction
+        if phi <= 0.0:
             return
+
+        self.last_inlet_flow_rate = self._left_boundary_flow_rate()
+        self.inlet_particle_area_budget += phi * self.last_inlet_flow_rate
 
         added = 0
         attempts = 0
-        max_attempts = len(candidates)
+        max_attempts = max(12, 4 * max_new)
         while len(self._pending_radii) and added < max_new and attempts < max_attempts:
-            x, y = candidates[self._inlet_cursor % len(candidates)]
-            self._inlet_cursor += 1
-            attempts += 1
             radius = float(self._pending_radii[0])
+            particle_area = float(np.pi * radius**2)
+            if self.inlet_particle_area_budget < particle_area:
+                break
+
+            y = self._sample_inlet_y(radius)
+            if y is None:
+                break
+            x = radius + 0.75
+            attempts += 1
             if not self._can_place_inlet_particle(x, y, radius):
                 continue
             self.pos = np.vstack([self.pos, np.array([[x, y]])])
@@ -535,6 +539,8 @@ class LBMDEMSolver:
             self._pending_inertias = self._pending_inertias[1:]
             self.n_p += 1
             self.generated_particles += 1
+            self.injected_particle_area += particle_area
+            self.inlet_particle_area_budget -= particle_area
             added += 1
 
     def _delete_particles(self, mask: np.ndarray) -> None:
