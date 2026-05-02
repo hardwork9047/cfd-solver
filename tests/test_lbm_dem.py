@@ -101,3 +101,30 @@ def test_rolling_friction_resists_wall_slip_and_spins_particle():
 
     assert forces[0, 0] < 0.0
     assert torques[0] < 0.0
+
+
+def test_left_inlet_mode_places_particles_upstream_and_deletes_right_outflow():
+    """Left-inlet mode feeds particles upstream and removes right-outflow particles."""
+    sim = LBMDEMSolver(
+        nx=60,
+        ny=30,
+        Re=100.0,
+        u_max=0.05,
+        n_particles=6,
+        particle_radius=2.0,
+        density_ratio=2.0,
+        gravity=0.0,
+        cylinder=(25.0, 15.0, 4.0),
+        particle_source="left_inlet",
+        seed=3,
+    )
+
+    assert sim.n_p == 6
+    assert np.all(sim.pos[:, 0] < 25.0 - 4.0)
+    assert np.ptp(sim.pos[:, 1]) > 0.0
+
+    sim.pos[0, 0] = sim.nx + sim.radii[0] + 0.1
+    sim._delete_right_outflow_particles()
+
+    assert sim.n_p == 5
+    assert sim.removed_particles == 1

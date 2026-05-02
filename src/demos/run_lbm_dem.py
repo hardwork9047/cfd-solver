@@ -35,6 +35,23 @@ parser.add_argument("--cyl-y", type=float, default=None,
                     help="Cylinder center y [lattice] (default: NY/2)")
 parser.add_argument("--cyl-r", type=float, default=6.0,
                     help="Cylinder radius [lattice] (default: 6.0)")
+parser.add_argument("--n-particles", type=int, default=None,
+                    help="Particle count. Ignored when --particle-volume-fraction is set")
+parser.add_argument("--particle-volume-fraction", "--particle-area-fraction",
+                    type=float, default=None,
+                    help="Target 2-D particle area fraction relative to water area. "
+                         "Use 0.05 or 5 for 5%%")
+parser.add_argument("--particle-source", choices=["initial", "left-inlet"],
+                    default="initial",
+                    help="Particle supply mode: initial distribution or uniform left inlet")
+parser.add_argument("--total-steps", type=int, default=20000,
+                    help="Main simulation steps (default: 20000)")
+parser.add_argument("--snapshot-every", type=int, default=40,
+                    help="Steps between snapshots (default: 40)")
+parser.add_argument("--warmup-steps", type=int, default=1000,
+                    help="Warmup steps before recording (default: 1000)")
+parser.add_argument("--no-video", action="store_true",
+                    help="Skip MP4 generation")
 parser.add_argument("--rolling-friction", action=argparse.BooleanOptionalAction,
                     default=False,
                     help="Enable angular motion, tangential friction, and rolling resistance")
@@ -65,6 +82,16 @@ parser.add_argument("--repulsion-min-gap", type=float, default=0.05,
 args = parser.parse_args()
 if args.particle_attraction and args.particle_repulsion:
     parser.error("--particle-attraction and --particle-repulsion are mutually exclusive")
+if args.n_particles is not None and args.n_particles <= 0:
+    parser.error("--n-particles must be positive")
+if args.particle_volume_fraction is not None and args.particle_volume_fraction <= 0.0:
+    parser.error("--particle-volume-fraction must be positive")
+if args.total_steps <= 0:
+    parser.error("--total-steps must be positive")
+if args.snapshot_every <= 0:
+    parser.error("--snapshot-every must be positive")
+if args.warmup_steps < 0:
+    parser.error("--warmup-steps must be non-negative")
 
 # ---------------------------------------------------------------------------
 # キャッシュ付きサブクラス: _macroscopic() を各ステップ1回だけ計算
@@ -105,13 +132,13 @@ NX              = 180    # 格子幅
 NY              = 70     # 格子高さ
 RE              = 100.0  # Reynolds 数
 U_MAX           = 0.05   # 最大流速 (格子単位)
-N_PARTICLES     = 40     # 粒子数
+DEFAULT_N_PARTICLES = 40 # 粒子数 (分率未指定時)
 RADIUS          = 3.0    # 粒子平均半径 (格子単位)
 RADIUS_VARIATION = 0.15  # 粒子径バリエーション ±15%
 DENSITY_RATIO   = 2.0    # ρ_p / ρ_f
 GRAVITY         = 3e-5   # 重力加速度 (格子単位)
-TOTAL_STEPS  = 20000  # 総 LBM ステップ数
-SNAPSHOT_EVERY = 40   # 何ステップごとにスナップショット取得
+TOTAL_STEPS  = args.total_steps  # 総 LBM ステップ数
+SNAPSHOT_EVERY = args.snapshot_every   # 何ステップごとにスナップショット取得
 FPS          = 24     # 動画フレームレート
 
 # 円柱設定 (--cylinder が指定された場合のみ有効)
@@ -123,6 +150,35 @@ if args.cylinder:
 else:
     CYLINDER = None
 
+def _normalise_fraction(value: float | None) -> float | None:
+    """Accept 0.05 or 5 as a 5% area fraction."""
+    if value is None:
+        return None
+    if value > 1.0:
+        value /= 100.0
+    if value <= 0.0 or value >= 1.0:
+        parser.error("--particle-volume-fraction must be between 0 and 1, or 0 and 100%")
+    return value
+
+
+def _water_area(nx: int, ny: int, cylinder: tuple[float, float, float] | None) -> float:
+    """Approximate available water area in 2-D lattice units."""
+    area = float(nx * (ny - 2))
+    if cylinder is not None:
+        area -= float(np.pi * cylinder[2] ** 2)
+    return max(area, 1.0)
+
+
+PARTICLE_VOLUME_FRACTION = _normalise_fraction(args.particle_volume_fraction)
+if PARTICLE_VOLUME_FRACTION is None:
+    N_PARTICLES = args.n_particles if args.n_particles is not None else DEFAULT_N_PARTICLES
+else:
+    expected_particle_area = np.pi * RADIUS**2 * (1.0 + RADIUS_VARIATION**2 / 3.0)
+    N_PARTICLES = max(
+        1,
+        int(round(PARTICLE_VOLUME_FRACTION * _water_area(NX, NY, CYLINDER) / expected_particle_area)),
+    )
+
 GEOMETRY_MODE = "cylinder" if args.cylinder else "channel"
 if args.particle_attraction:
     SURFACE_FORCE_MODE = "with_attraction"
@@ -131,7 +187,12 @@ elif args.particle_repulsion:
 else:
     SURFACE_FORCE_MODE = "no_surface_force"
 ROLLING_MODE = "rolling" if args.rolling_friction else "free_roll"
-OUT_DIR = program_results_dir(__file__, f"{GEOMETRY_MODE}_{SURFACE_FORCE_MODE}_{ROLLING_MODE}")
+SOURCE_MODE = "left_inlet" if args.particle_source == "left-inlet" else "initial"
+out_parts = [f"{GEOMETRY_MODE}_{SURFACE_FORCE_MODE}_{ROLLING_MODE}_{SOURCE_MODE}"]
+if PARTICLE_VOLUME_FRACTION is not None:
+    pct = int(round(PARTICLE_VOLUME_FRACTION * 100))
+    out_parts.append(f"phi_{pct:02d}pct")
+OUT_DIR = program_results_dir(__file__, *out_parts)
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ---------------------------------------------------------------------------
@@ -141,6 +202,12 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 print("=" * 60)
 print("  LBM-DEM 連成シミュレーション")
 print("=" * 60)
+if PARTICLE_VOLUME_FRACTION is not None:
+    print(
+        f"Target particle area fraction: {PARTICLE_VOLUME_FRACTION:.1%} "
+        f"-> {N_PARTICLES} particles"
+    )
+print(f"Particle source: {args.particle_source}")
 
 sim = FastLBMDEM(
     nx=NX, ny=NY,
@@ -166,13 +233,14 @@ sim = FastLBMDEM(
     attraction_min_gap=args.attraction_min_gap,
     repulsion_min_gap=args.repulsion_min_gap,
     cylinder=CYLINDER,
+    particle_source=args.particle_source.replace("-", "_"),
 )
 
 # ---------------------------------------------------------------------------
 # ウォームアップ (流れを発達させる)
 # ---------------------------------------------------------------------------
 
-WARMUP = 1000
+WARMUP = args.warmup_steps
 print(f"\n[1/3] ウォームアップ {WARMUP} ステップ ...")
 t0 = time.perf_counter()
 sim.advance(WARMUP)
@@ -183,6 +251,9 @@ print(f"      完了 ({time.perf_counter()-t0:.1f} s)")
 # ---------------------------------------------------------------------------
 
 n_frames = TOTAL_STEPS // SNAPSHOT_EVERY
+if n_frames == 0:
+    n_frames = 1
+    SNAPSHOT_EVERY = TOTAL_STEPS
 print(f"\n[2/3] メインシミュレーション {TOTAL_STEPS} ステップ "
       f"(スナップショット {n_frames} 枚) ...")
 
@@ -204,15 +275,18 @@ for frame_idx in range(n_frames):
         "speed": np.sqrt(ux**2 + uy**2).copy(),
         "pos":  sim.pos.copy(),
         "vel":  sim.vel.copy(),
+        "radii": sim.radii.copy(),
+        "masses": sim.masses.copy(),
         "total_force": total_force_mags.copy(),
+        "removed_particles": sim.removed_particles,
     })
 
     elapsed = time.perf_counter() - t1
     frac = (frame_idx + 1) / n_frames
     eta = elapsed / frac - elapsed if frac > 0 else 0
     speed_max = float(np.sqrt(ux**2 + uy**2).max())
-    p_ke = 0.5 * sim.mass_p * float(np.sum(sim.vel**2))
-    f_mean = total_force_mags.mean()
+    p_ke = 0.5 * float(np.sum(sim.masses * np.sum(sim.vel**2, axis=1)))
+    f_mean = float(total_force_mags.mean()) if len(total_force_mags) else 0.0
     print(f"  frame {frame_idx+1:>3}/{n_frames}  step={sim.step_count:>6,}"
           f"  |u|_max={speed_max:.5f}  KE_p={p_ke:.3e}  |F|_mean={f_mean:.3e}  ETA {eta:.0f}s")
 
@@ -227,12 +301,19 @@ print("\n--- 最終統計 ---")
 last = snapshots[-1]
 p_vel_mag = np.linalg.norm(last["vel"], axis=1)
 print(f"  粒子数          : {sim.n_p}")
+print(f"  左入口投入済み  : {sim.generated_particles}/{sim.total_particles_requested}")
+print(f"  左入口待機粒子数: {len(sim._pending_radii)}")
+print(f"  右出口削除粒子数: {sim.removed_particles}")
 print(f"  流体最大速度    : {last['speed'].max():.5f} (格子単位)")
-print(f"  粒子平均速度    : {p_vel_mag.mean():.4e} (格子単位)")
-print(f"  粒子最大速度    : {p_vel_mag.max():.4e} (格子単位)")
-print(f"  粒子KE          : {0.5*sim.mass_p*np.sum(last['vel']**2):.4e}")
-print(f"  粒子Y重心       : {last['pos'][:,1].mean():.2f} / {NY} (格子単位)")
-print(f"  粒子Y重心 (正規): {last['pos'][:,1].mean()/NY:.3f}")
+if len(p_vel_mag):
+    print(f"  粒子平均速度    : {p_vel_mag.mean():.4e} (格子単位)")
+    print(f"  粒子最大速度    : {p_vel_mag.max():.4e} (格子単位)")
+    print(f"  粒子KE          : {0.5*np.sum(last['masses']*np.sum(last['vel']**2, axis=1)):.4e}")
+    print(f"  粒子面積分率    : {np.sum(np.pi*last['radii']**2)/sim.fluid_area:.3f}")
+    print(f"  粒子Y重心       : {last['pos'][:,1].mean():.2f} / {NY} (格子単位)")
+    print(f"  粒子Y重心 (正規): {last['pos'][:,1].mean()/NY:.3f}")
+else:
+    print("  粒子統計        : 全粒子が右出口から流出済み")
 
 # 静止画を保存
 fig_stat, axes = plt.subplots(1, 3, figsize=(16, 5))
@@ -255,8 +336,8 @@ def _add_cylinder_patch(ax, color="cyan", alpha=0.6, zorder=4):
 ax = axes[0]
 im = ax.imshow(snap["speed"].T, origin="lower", cmap="inferno",
                extent=[0, NX, 0, NY], aspect="auto")
-for i in range(sim.n_p):
-    c = plt.Circle((snap["pos"][i,0], snap["pos"][i,1]), RADIUS,
+for i in range(len(snap["pos"])):
+    c = plt.Circle((snap["pos"][i,0], snap["pos"][i,1]), snap["radii"][i],
                    color="white", lw=0.8, fill=False)
     ax.add_patch(c)
 _add_cylinder_patch(ax)
@@ -269,8 +350,8 @@ lw_arr = 1.5 * snap["speed"].T / (snap["speed"].T.max() + 1e-12)
 ax.streamplot(x, y, snap["ux"].T, snap["uy"].T,
               color=snap["speed"].T, cmap="cool",
               linewidth=lw_arr, density=1.2, arrowsize=0.8)
-for i in range(sim.n_p):
-    c = plt.Circle((snap["pos"][i,0], snap["pos"][i,1]), RADIUS,
+for i in range(len(snap["pos"])):
+    c = plt.Circle((snap["pos"][i,0], snap["pos"][i,1]), snap["radii"][i],
                    color="white", lw=0.8, fill=False)
     ax.add_patch(c)
 _add_cylinder_patch(ax)
@@ -278,9 +359,12 @@ ax.set_xlim(0, NX); ax.set_ylim(0, NY)
 ax.set_title("流線"); ax.set_xlabel("x [格子]")
 
 ax = axes[2]
-sc = ax.scatter(snap["pos"][:,0], snap["pos"][:,1],
-                c=snap["total_force"], cmap="plasma", s=(RADIUS*4)**2,
-                edgecolors="k", lw=0.5, zorder=5)
+if len(snap["pos"]):
+    sc = ax.scatter(snap["pos"][:,0], snap["pos"][:,1],
+                    c=snap["total_force"], cmap="plasma", s=(snap["radii"]*4)**2,
+                    edgecolors="k", lw=0.5, zorder=5)
+else:
+    sc = ax.scatter([], [], c=[], cmap="plasma", edgecolors="k", lw=0.5, zorder=5)
 ax.imshow(snap["speed"].T, origin="lower", cmap="Blues",
           extent=[0, NX, 0, NY], aspect="auto", alpha=0.5)
 _add_cylinder_patch(ax)
@@ -298,6 +382,13 @@ plt.close(fig_stat)
 # 動画作成
 # ---------------------------------------------------------------------------
 
+if args.no_video:
+    print("\n[3/3] 動画作成をスキップ (--no-video)")
+    print(f"\n出力ファイル:")
+    print(f"  静止画: {static_path}")
+    print(f"\n完了!")
+    sys.exit(0)
+
 print(f"\n[3/3] 動画作成 ({n_frames} フレーム, {FPS} fps) ...")
 
 fig_anim, ax_anim = plt.subplots(figsize=(10, 4))
@@ -308,8 +399,13 @@ snap0 = snapshots[0]
 speed_global_max = max(s["speed"].max() for s in snapshots)
 
 # 合力の全フレームにわたるグローバルmin/max（カラースケール固定）
-force_global_min = min(s["total_force"].min() for s in snapshots)
-force_global_max = max(s["total_force"].max() for s in snapshots)
+all_force_values = [s["total_force"] for s in snapshots if len(s["total_force"])]
+if all_force_values:
+    force_global_min = min(s.min() for s in all_force_values)
+    force_global_max = max(s.max() for s in all_force_values)
+else:
+    force_global_min = 0.0
+    force_global_max = 1.0
 force_cmap = plt.cm.plasma
 force_norm = plt.Normalize(vmin=force_global_min, vmax=force_global_max)
 
@@ -342,15 +438,19 @@ if CYLINDER is not None:
 
 # 粒子の円パッチ (合力に応じた初期色、per-particle半径でサイズ)
 particle_circles = []
-for i in range(sim.n_p):
-    rgba = force_cmap(force_norm(snap0["total_force"][i]))
+max_particles_in_frames = max(len(s["pos"]) for s in snapshots)
+for i in range(max_particles_in_frames):
+    visible = i < len(snap0["pos"])
+    center = (snap0["pos"][i, 0], snap0["pos"][i, 1]) if visible else (-100.0, -100.0)
+    radius = snap0["radii"][i] if visible else RADIUS
+    force_value = snap0["total_force"][i] if visible else force_global_min
     c = mpatches.Circle(
-        (snap0["pos"][i, 0], snap0["pos"][i, 1]),
-        sim.radii[i],
+        center,
+        radius,
         linewidth=1.2,
         edgecolor="white",
-        facecolor=rgba,
-        alpha=0.85,
+        facecolor=force_cmap(force_norm(force_value)),
+        alpha=0.85 if visible else 0.0,
         animated=True,
     )
     ax_anim.add_patch(c)
@@ -372,12 +472,18 @@ def update(frame_idx: int):
     snap = snapshots[frame_idx]
     im_fluid.set_data(snap["speed"].T)
     for i, c in enumerate(particle_circles):
-        c.center = (snap["pos"][i, 0], snap["pos"][i, 1])
-        # 合力の大きさに応じて色を更新
-        rgba = force_cmap(force_norm(snap["total_force"][i]))
-        c.set_facecolor(rgba)
-    p_ke = 0.5 * sim.mass_p * float(np.sum(snap["vel"] ** 2))
-    force_mean = snap["total_force"].mean()
+        if i < len(snap["pos"]):
+            c.center = (snap["pos"][i, 0], snap["pos"][i, 1])
+            c.radius = snap["radii"][i]
+            # 合力の大きさに応じて色を更新
+            rgba = force_cmap(force_norm(snap["total_force"][i]))
+            c.set_facecolor(rgba)
+            c.set_alpha(0.85)
+        else:
+            c.center = (-100.0, -100.0)
+            c.set_alpha(0.0)
+    p_ke = 0.5 * float(np.sum(snap["masses"] * np.sum(snap["vel"] ** 2, axis=1)))
+    force_mean = float(snap["total_force"].mean()) if len(snap["total_force"]) else 0.0
     title_txt.set_text(
         f"LBM-DEM  Re={RE:.0f}  step={snap['step']:,}"
         f"  KE_p={p_ke:.3e}  |F_total|_mean={force_mean:.3e}"

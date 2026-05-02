@@ -128,6 +128,9 @@ class LBMDEMSolver:
     rolling_damping   : float — viscous damping scale for angular velocity
     particle_attraction : bool — enable Hamaker-like particle-particle attraction
     particle_repulsion : bool — enable Hamaker-like particle-particle repulsion
+    particle_source    : str — ``"initial"`` or ``"left_inlet"``.
+                        ``"left_inlet"`` places particles uniformly near the
+                        left inlet and deletes particles after right outflow.
     attraction_strength : float
                         Dimensionless Hamaker-like attraction strength in lattice force units.
     repulsion_strength : float
@@ -172,9 +175,12 @@ class LBMDEMSolver:
         attraction_min_gap: float = 0.05,
         repulsion_min_gap: float = 0.05,
         cylinder: tuple | None = None,
+        particle_source: str = "initial",
     ):
         if particle_attraction and particle_repulsion:
             raise ValueError("particle_attraction and particle_repulsion are mutually exclusive")
+        if particle_source not in {"initial", "left_inlet"}:
+            raise ValueError("particle_source must be 'initial' or 'left_inlet'")
 
         self.nx = nx
         self.ny = ny
@@ -203,6 +209,8 @@ class LBMDEMSolver:
         self.repulsion_cutoff = repulsion_cutoff
         self.attraction_min_gap = attraction_min_gap
         self.repulsion_min_gap = repulsion_min_gap
+        self.particle_source = particle_source
+        self.removed_particles = 0
 
         # --- Fluid parameters ---
         self.nu = u_max * ny / Re
@@ -258,6 +266,7 @@ class LBMDEMSolver:
         if cylinder is not None:
             cx, cy, cr = cylinder[0], cylinder[1], cylinder[2]
             print(f"  Cylinder      : center=({cx:.1f}, {cy:.1f})  r={cr:.1f}")
+        print(f"  Particle src. : {particle_source}")
 
         # --- LBM distribution functions f[q, x, y] ---
         rho0 = np.ones((nx, ny))
@@ -279,6 +288,7 @@ class LBMDEMSolver:
         # Fluid body-force arrays (reset each step; includes driving + particle feedback)
         self.Fx = np.full((nx, ny), self.F_drive)
         self.Fy = np.zeros((nx, ny))
+        self.fluid_area = float(np.count_nonzero(~self.solid))
 
         # --- DEM arrays ---
         self.pos = np.empty((n_particles, 2))
@@ -286,35 +296,87 @@ class LBMDEMSolver:
         self.omega_p = np.zeros(n_particles)
         self.forces_p = np.zeros((n_particles, 2))
         self.torques_p = np.zeros(n_particles)
+        self.total_particles_requested = n_particles
+        self.generated_particles = 0
+        self._pending_radii = np.empty(0)
+        self._pending_masses = np.empty(0)
+        self._pending_inertias = np.empty(0)
+        self._inlet_cursor = 0
         self._init_particles(seed)
+        if self.particle_source != "left_inlet":
+            self.generated_particles = self.n_p
+        self.particle_area = float(
+            np.sum(np.pi * self.radii**2) + np.sum(np.pi * self._pending_radii**2)
+        )
+        active_particle_area = float(np.sum(np.pi * self.radii**2))
+        print(
+            "  Target p.frac.: "
+            f"{self.particle_area / self.fluid_area:.3f} "
+            f"({self.particle_area:.1f}/{self.fluid_area:.1f} lattice area)"
+        )
+        if self.particle_source == "left_inlet":
+            print(
+                "  Active p.frac.: "
+                f"{active_particle_area / self.fluid_area:.3f} "
+                f"({self.n_p} active, {len(self._pending_radii)} queued)"
+            )
 
     # ------------------------------------------------------------------
     # Particle initialisation
     # ------------------------------------------------------------------
 
     def _init_particles(self, seed: int) -> None:
-        """Place particles randomly in the top 60 % of the channel (no overlap)."""
+        """Place particles without overlap, with a grid fallback for dense cases."""
+        if self.particle_source == "left_inlet":
+            self._init_particles_from_left_inlet()
+            return
+
         rng = np.random.default_rng(seed)
         placed = 0
-        for _ in range(200_000):
+
+        def can_place(idx: int, x: float, y: float, clearance: float) -> bool:
+            r_new = self.radii[idx]
+            if y < r_new + 0.5 or y > self.ny - 1.5 - r_new:
+                return False
+            if placed > 0:
+                dists = np.hypot(x - self.pos[:placed, 0], y - self.pos[:placed, 1])
+                min_clearance = clearance * (self.radii[:placed] + r_new)
+                if (dists < min_clearance).any():
+                    return False
+            if self.cylinder is not None:
+                cx, cy, cr = self.cylinder
+                if np.hypot(x - cx, y - cy) < cr + r_new * clearance:
+                    return False
+            return True
+
+        max_random_attempts = 200_000 if self.n_p <= 60 else 0
+        for _ in range(max_random_attempts):
             if placed == self.n_p:
                 break
             r_new = self.radii[placed]
             x = rng.uniform(r_new + 1, self.nx - r_new - 1)
             y = rng.uniform(self.ny * 0.4 + r_new, self.ny - r_new - 2)
-            # Reject if overlapping an already-placed particle (sum-of-radii + 10%)
-            if placed > 0:
-                dists = np.hypot(x - self.pos[:placed, 0], y - self.pos[:placed, 1])
-                min_clearance = 1.1 * (self.radii[:placed] + r_new)
-                if (dists < min_clearance).any():
-                    continue
-            # Reject if overlapping the cylinder
-            if self.cylinder is not None:
-                cx, cy, cr = self.cylinder
-                if np.hypot(x - cx, y - cy) < cr + r_new * 1.1:
-                    continue
+            if not can_place(placed, x, y, clearance=1.1):
+                continue
             self.pos[placed] = [x, y]
             placed += 1
+
+        if placed < self.n_p:
+            max_r = float(np.max(self.radii)) if self.n_p else self.r_p
+            dx = 2.05 * max_r
+            dy = np.sqrt(3.0) * max_r
+            row = 0
+            y = self.ny - 1.5 - max_r
+            while placed < self.n_p and y >= max_r + 0.5:
+                offset = (row % 2) * 0.5 * dx
+                x = max_r + 0.5 + offset
+                while placed < self.n_p and x <= self.nx - max_r - 0.5:
+                    if can_place(placed, x, y, clearance=1.02):
+                        self.pos[placed] = [x, y]
+                        placed += 1
+                    x += dx
+                row += 1
+                y -= dy
 
         if placed < self.n_p:
             print(f"  Warning: only placed {placed}/{self.n_p} particles")
@@ -327,6 +389,176 @@ class LBMDEMSolver:
             self.radii = self.radii[:placed]
             self.masses = self.masses[:placed]
             self.inertias = self.inertias[:placed]
+
+    def _init_particles_from_left_inlet(self) -> None:
+        """
+        Place particles in a left inlet buffer with a near-uniform vertical feed.
+
+        This mode is intended for filtration-style calculations: particles are
+        supplied from the upstream boundary instead of being distributed across
+        the whole channel.  The x positions are spread only within a shallow
+        inlet band so dense conditions remain non-overlapping.
+        """
+        placed = 0
+        max_r = float(np.max(self.radii)) if self.n_p else self.r_p
+        y_min = max_r + 0.5
+        y_max = self.ny - 1.5 - max_r
+        if y_max <= y_min:
+            self.n_p = 0
+            self.pos = self.pos[:0]
+            self.vel = self.vel[:0]
+            self.omega_p = self.omega_p[:0]
+            self.forces_p = self.forces_p[:0]
+            self.torques_p = self.torques_p[:0]
+            self.radii = self.radii[:0]
+            self.masses = self.masses[:0]
+            self.inertias = self.inertias[:0]
+            return
+
+        candidates = self._left_inlet_candidate_positions(max_r)
+
+        # Sweep y first so each inlet column samples the height as uniformly as possible.
+        for x, y in candidates:
+            if placed >= self.n_p:
+                break
+            r_new = self.radii[placed]
+            if not self._can_place_inlet_particle(x, y, r_new, placed):
+                continue
+            self.pos[placed] = [x, y]
+            self.vel[placed] = self._inlet_velocity_at_y(y)
+            placed += 1
+
+        if placed < self.n_p:
+            print(
+                f"  Inlet queue   : initially placed {placed}/{self.n_p}; "
+                f"{self.n_p - placed} particles will be fed from the left inlet"
+            )
+            self._pending_radii = self.radii[placed:].copy()
+            self._pending_masses = self.masses[placed:].copy()
+            self._pending_inertias = self.inertias[placed:].copy()
+            self.n_p = placed
+            self.pos = self.pos[:placed]
+            self.vel = self.vel[:placed]
+            self.omega_p = self.omega_p[:placed]
+            self.forces_p = self.forces_p[:placed]
+            self.torques_p = self.torques_p[:placed]
+            self.radii = self.radii[:placed]
+            self.masses = self.masses[:placed]
+            self.inertias = self.inertias[:placed]
+        self.generated_particles = placed
+
+    def _inlet_velocity_at_y(self, y: float) -> np.ndarray:
+        """Poiseuille-like inlet particle velocity at vertical coordinate ``y``."""
+        channel_height = max(self.ny - 2.0, 1.0)
+        eta = float(np.clip((y - 0.5) / channel_height, 0.0, 1.0))
+        return np.array([4.0 * self.u_max * eta * (1.0 - eta), 0.0])
+
+    def _left_inlet_candidate_positions(self, max_r: float) -> list[tuple[float, float]]:
+        """Deterministic near-uniform candidate points in the left inlet band."""
+        y_min = max_r + 0.5
+        y_max = self.ny - 1.5 - max_r
+        x_min = max_r + 1.0
+        if self.cylinder is not None:
+            cx, _, cr = self.cylinder
+            x_limit = cx - cr - max_r - 1.0
+        else:
+            x_limit = 0.35 * self.nx
+        x_max = max(x_min, min(0.30 * self.nx, x_limit))
+        dx = 2.10 * max_r
+        dy = 2.10 * max_r
+        xs = np.arange(x_min, x_max + 0.5 * dx, dx)
+        ys = np.arange(y_min, y_max + 0.5 * dy, dy)
+        if len(xs) == 0:
+            xs = np.array([x_min])
+        if len(ys) == 0:
+            ys = np.array([(y_min + y_max) / 2.0])
+
+        candidates: list[tuple[float, float]] = []
+        for col, x in enumerate(xs):
+            y_values = ys if col % 2 == 0 else ys[::-1]
+            candidates.extend((float(x), float(y)) for y in y_values)
+        return candidates
+
+    def _can_place_inlet_particle(
+        self,
+        x: float,
+        y: float,
+        radius: float,
+        n_existing: int | None = None,
+    ) -> bool:
+        """Return whether an inlet particle can be placed without overlap."""
+        if y < radius + 0.5 or y > self.ny - 1.5 - radius:
+            return False
+        if self.cylinder is not None:
+            cx, cy, cr = self.cylinder
+            if np.hypot(x - cx, y - cy) < cr + radius * 1.05:
+                return False
+        n_check = self.n_p if n_existing is None else n_existing
+        if n_check > 0:
+            dists = np.hypot(x - self.pos[:n_check, 0], y - self.pos[:n_check, 1])
+            if (dists < 1.02 * (self.radii[:n_check] + radius)).any():
+                return False
+        return True
+
+    def _try_feed_left_inlet_particles(self, max_new: int = 4) -> None:
+        """Append queued particles at the left inlet when non-overlapping slots exist."""
+        if self.particle_source != "left_inlet" or len(self._pending_radii) == 0:
+            return
+        if self.n_p:
+            max_r = float(max(np.max(self.radii), np.max(self._pending_radii)))
+        else:
+            max_r = float(np.max(self._pending_radii))
+        candidates = self._left_inlet_candidate_positions(max_r)
+        if not candidates:
+            return
+
+        added = 0
+        attempts = 0
+        max_attempts = len(candidates)
+        while len(self._pending_radii) and added < max_new and attempts < max_attempts:
+            x, y = candidates[self._inlet_cursor % len(candidates)]
+            self._inlet_cursor += 1
+            attempts += 1
+            radius = float(self._pending_radii[0])
+            if not self._can_place_inlet_particle(x, y, radius):
+                continue
+            self.pos = np.vstack([self.pos, np.array([[x, y]])])
+            self.vel = np.vstack([self.vel, self._inlet_velocity_at_y(y)[np.newaxis, :]])
+            self.omega_p = np.append(self.omega_p, 0.0)
+            self.forces_p = np.vstack([self.forces_p, np.zeros((1, 2))])
+            self.torques_p = np.append(self.torques_p, 0.0)
+            self.radii = np.append(self.radii, self._pending_radii[0])
+            self.masses = np.append(self.masses, self._pending_masses[0])
+            self.inertias = np.append(self.inertias, self._pending_inertias[0])
+            self._pending_radii = self._pending_radii[1:]
+            self._pending_masses = self._pending_masses[1:]
+            self._pending_inertias = self._pending_inertias[1:]
+            self.n_p += 1
+            self.generated_particles += 1
+            added += 1
+
+    def _delete_particles(self, mask: np.ndarray) -> None:
+        """Delete particles selected by ``mask`` from all DEM arrays."""
+        if mask.size == 0 or not bool(np.any(mask)):
+            return
+        keep = ~mask
+        removed = int(np.count_nonzero(mask))
+        self.pos = self.pos[keep]
+        self.vel = self.vel[keep]
+        self.omega_p = self.omega_p[keep]
+        self.forces_p = self.forces_p[keep]
+        self.torques_p = self.torques_p[keep]
+        self.radii = self.radii[keep]
+        self.masses = self.masses[keep]
+        self.inertias = self.inertias[keep]
+        self.n_p = int(self.pos.shape[0])
+        self.removed_particles += removed
+
+    def _delete_right_outflow_particles(self) -> None:
+        """Remove particles whose full disc has left the right outlet."""
+        if self.particle_source != "left_inlet" or self.n_p == 0:
+            return
+        self._delete_particles(self.pos[:, 0] - self.radii > self.nx)
 
     # ------------------------------------------------------------------
     # LBM — macroscopic fields
@@ -469,6 +701,39 @@ class LBMDEMSolver:
         torque_limit = self.rolling_friction_coeff * normal_force * radius
         return float(np.clip(torque_trial, -torque_limit, torque_limit))
 
+    def _particle_pair_candidates(self) -> list[tuple[int, int]]:
+        """Return nearby particle pairs using a simple cell list."""
+        if self.n_p < 2:
+            return []
+        interaction_cutoff = 0.0
+        if self.particle_attraction:
+            interaction_cutoff = max(interaction_cutoff, self.attraction_cutoff)
+        if self.particle_repulsion:
+            interaction_cutoff = max(interaction_cutoff, self.repulsion_cutoff)
+        cell_size = max(2.0 * float(np.max(self.radii)) + interaction_cutoff + 1.0, 1.0)
+        cells: dict[tuple[int, int], list[int]] = {}
+        for i in range(self.n_p):
+            key = (int(self.pos[i, 0] // cell_size), int(self.pos[i, 1] // cell_size))
+            cells.setdefault(key, []).append(i)
+
+        pairs: list[tuple[int, int]] = []
+        seen: set[tuple[int, int]] = set()
+        for (cx, cy), ids in cells.items():
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    other = cells.get((cx + dx, cy + dy))
+                    if other is None:
+                        continue
+                    for i in ids:
+                        for j in other:
+                            if i >= j:
+                                continue
+                            pair = (i, j)
+                            if pair not in seen:
+                                seen.add(pair)
+                                pairs.append(pair)
+        return pairs
+
     def _dem_loads(self, dt_sub: float) -> tuple[np.ndarray, np.ndarray]:
         """
         Compute total force and torque on each particle:
@@ -493,8 +758,7 @@ class LBMDEMSolver:
             forces[i, 1] += fd_y
 
         # 3. Particle–particle Hertz contact (per-particle radii / masses)
-        for i in range(self.n_p):
-            for j in range(i + 1, self.n_p):
+        for i, j in self._particle_pair_candidates():
                 dp = self.pos[j] - self.pos[i]
                 dist = float(np.linalg.norm(dp))
                 min_dist = self.radii[i] + self.radii[j]
@@ -624,9 +888,17 @@ class LBMDEMSolver:
         self.vel += 0.5 * dt * acc
         self.omega_p += 0.5 * dt * alpha
 
-        # Position update + periodic x BC
+        # Position update.  The historical mode uses x-periodicity; inlet mode
+        # lets particles leave the right outlet and deletes them from the DEM set.
         self.pos += dt * self.vel
-        self.pos[:, 0] %= self.nx
+        if self.particle_source == "left_inlet":
+            self._delete_right_outflow_particles()
+            if self.n_p == 0:
+                self.forces_p = np.zeros((0, 2))
+                self.torques_p = np.zeros(0)
+                return
+        else:
+            self.pos[:, 0] %= self.nx
 
         # Second force evaluation
         forces_new, torques_new = self._dem_loads(dt)
@@ -685,6 +957,8 @@ class LBMDEMSolver:
         dt_sub = 1.0 / self.dem_substeps
 
         for _ in range(n_steps):
+            self._try_feed_left_inlet_particles()
+
             # --- Reset body force to driving force only ---
             self.Fx[:] = self.F_drive
             self.Fy[:] = 0.0
