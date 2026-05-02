@@ -7,7 +7,11 @@ export PYTHONPATH="${PWD}/src${PYTHONPATH:+:${PYTHONPATH}}"
 export MPLCONFIGDIR="${MPLCONFIGDIR:-/tmp/matplotlib}"
 mkdir -p "$MPLCONFIGDIR"
 
-LOG_DIR="src/results/run_lbm_dem/sweep_56_conditions"
+TOTAL_STEPS=60000
+SNAPSHOT_EVERY=120
+SWEEP_PREFIX="t3x"
+
+LOG_DIR="src/results/run_lbm_dem/sweep_56_conditions_3x"
 mkdir -p "$LOG_DIR"
 STATUS_FILE="$LOG_DIR/status.tsv"
 SUMMARY_FILE="$LOG_DIR/skipped_conditions.txt"
@@ -28,6 +32,8 @@ run_condition() {
     --cylinder
     --particle-source left-inlet
     --particle-volume-fraction "$phi"
+    --total-steps "$TOTAL_STEPS"
+    --snapshot-every "$SNAPSHOT_EVERY"
     --result-tag "$tag"
   )
 
@@ -80,13 +86,13 @@ for phi in 0.05 0.10 0.20 0.40; do
     0.40) phi_tag="40pct" ;;
   esac
   for rolling in rolling free_roll; do
-    run_condition "$phi" none 0 "$rolling" "surface_none_${rolling}_${phi_tag}" none 0.0
-    run_condition "$phi" attraction 1.0 "$rolling" "attraction_1x_${rolling}_${phi_tag}" attraction 0.001
-    run_condition "$phi" attraction 2.0 "$rolling" "attraction_2x_${rolling}_${phi_tag}" attraction 0.002
-    run_condition "$phi" attraction 0.5 "$rolling" "attraction_0p5x_${rolling}_${phi_tag}" attraction 0.0005
-    run_condition "$phi" repulsion 1.0 "$rolling" "repulsion_1x_${rolling}_${phi_tag}" repulsion 0.001
-    run_condition "$phi" repulsion 2.0 "$rolling" "repulsion_2x_${rolling}_${phi_tag}" repulsion 0.002
-    run_condition "$phi" repulsion 0.5 "$rolling" "repulsion_0p5x_${rolling}_${phi_tag}" repulsion 0.0005
+    run_condition "$phi" none 0 "$rolling" "${SWEEP_PREFIX}_surface_none_${rolling}_${phi_tag}" none 0.0
+    run_condition "$phi" attraction 1.0 "$rolling" "${SWEEP_PREFIX}_attraction_1x_${rolling}_${phi_tag}" attraction 0.001
+    run_condition "$phi" attraction 2.0 "$rolling" "${SWEEP_PREFIX}_attraction_2x_${rolling}_${phi_tag}" attraction 0.002
+    run_condition "$phi" attraction 0.5 "$rolling" "${SWEEP_PREFIX}_attraction_0p5x_${rolling}_${phi_tag}" attraction 0.0005
+    run_condition "$phi" repulsion 1.0 "$rolling" "${SWEEP_PREFIX}_repulsion_1x_${rolling}_${phi_tag}" repulsion 0.001
+    run_condition "$phi" repulsion 2.0 "$rolling" "${SWEEP_PREFIX}_repulsion_2x_${rolling}_${phi_tag}" repulsion 0.002
+    run_condition "$phi" repulsion 0.5 "$rolling" "${SWEEP_PREFIX}_repulsion_0p5x_${rolling}_${phi_tag}" repulsion 0.0005
   done
 done
 
