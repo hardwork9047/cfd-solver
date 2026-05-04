@@ -28,6 +28,10 @@ from cfd.result_paths import program_results_dir
 # ---------------------------------------------------------------------------
 
 parser = argparse.ArgumentParser(description="LBM-DEM coupled simulation runner")
+parser.add_argument("--nx", type=int, default=180,
+                    help="Grid width in lattice nodes (default: 180)")
+parser.add_argument("--ny", type=int, default=70,
+                    help="Grid height in lattice nodes (default: 70)")
 parser.add_argument("--cylinder", action="store_true", help="Add a fixed solid cylinder")
 parser.add_argument("--cyl-x", type=float, default=None,
                     help="Cylinder center x [lattice] (default: NX/4)")
@@ -41,6 +45,10 @@ parser.add_argument("--cylinder-spec", type=float, nargs=3, action="append",
                          "to define membrane-pore geometry")
 parser.add_argument("--n-particles", type=int, default=None,
                     help="Particle count. Ignored when --particle-volume-fraction is set")
+parser.add_argument("--particle-radius", type=float, default=3.0,
+                    help="Mean particle radius in lattice nodes (default: 3.0)")
+parser.add_argument("--radius-variation", type=float, default=0.15,
+                    help="Uniform particle radius variation fraction (default: 0.15)")
 parser.add_argument("--particle-volume-fraction", "--particle-area-fraction",
                     type=float, default=None,
                     help="Target 2-D particle area fraction relative to water area. "
@@ -96,6 +104,14 @@ if args.particle_attraction and args.particle_repulsion:
     parser.error("--particle-attraction and --particle-repulsion are mutually exclusive")
 if args.n_particles is not None and args.n_particles <= 0:
     parser.error("--n-particles must be positive")
+if args.nx <= 2:
+    parser.error("--nx must be greater than 2")
+if args.ny <= 2:
+    parser.error("--ny must be greater than 2")
+if args.particle_radius <= 0.0:
+    parser.error("--particle-radius must be positive")
+if args.radius_variation < 0.0:
+    parser.error("--radius-variation must be non-negative")
 if args.particle_volume_fraction is not None and args.particle_volume_fraction <= 0.0:
     parser.error("--particle-volume-fraction must be positive")
 if args.total_steps <= 0:
@@ -150,13 +166,13 @@ class FastLBMDEM(LBMDEMSolver):
 # シミュレーション設定
 # ---------------------------------------------------------------------------
 
-NX              = 180    # 格子幅
-NY              = 70     # 格子高さ
+NX              = args.nx    # 格子幅
+NY              = args.ny     # 格子高さ
 RE              = 100.0  # Reynolds 数
 U_MAX           = 0.05   # 最大流速 (格子単位)
 DEFAULT_N_PARTICLES = 40 # 粒子数 (分率未指定時)
-RADIUS          = 3.0    # 粒子平均半径 (格子単位)
-RADIUS_VARIATION = 0.15  # 粒子径バリエーション ±15%
+RADIUS          = args.particle_radius    # 粒子平均半径 (格子単位)
+RADIUS_VARIATION = args.radius_variation  # 粒子径バリエーション
 DENSITY_RATIO   = 2.0    # ρ_p / ρ_f
 GRAVITY         = 3e-5   # 重力加速度 (格子単位)
 TOTAL_STEPS  = args.total_steps  # 総 LBM ステップ数
