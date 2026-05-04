@@ -148,9 +148,34 @@ class LBMDEMSolver:
     repulsion_min_gap : float
                         Lower bound for surface gap to regularise the singularity.
     cylinder          : tuple[float, float, float] | None
-                        Fixed solid cylinder as (cx, cy, radius) in lattice units.
-                        ``None`` (default) means no cylinder.
+                        Backward-compatible single fixed cylinder as
+                        (cx, cy, radius) in lattice units.
+    cylinders         : list[tuple[float, float, float]] | None
+                        Fixed solid cylinders as (cx, cy, radius).  Use this
+                        to represent multiple pore-scale membrane obstacles.
     """
+
+    @staticmethod
+    def _normalise_cylinders(
+        cylinder: tuple | None,
+        cylinders: list[tuple[float, float, float]] | tuple[tuple[float, float, float], ...] | None,
+    ) -> list[tuple[float, float, float]]:
+        """Return validated fixed-cylinder definitions."""
+        items: list[tuple[float, float, float]] = []
+        if cylinder is not None:
+            items.append(cylinder)
+        if cylinders is not None:
+            items.extend(cylinders)
+
+        normalised: list[tuple[float, float, float]] = []
+        for item in items:
+            if len(item) != 3:
+                raise ValueError("each cylinder must be (x, y, radius)")
+            cx, cy, cr = (float(item[0]), float(item[1]), float(item[2]))
+            if cr <= 0.0:
+                raise ValueError("cylinder radius must be positive")
+            normalised.append((cx, cy, cr))
+        return normalised
 
     def __init__(
         self,
@@ -181,6 +206,7 @@ class LBMDEMSolver:
         attraction_min_gap: float = 0.05,
         repulsion_min_gap: float = 0.05,
         cylinder: tuple | None = None,
+        cylinders: list[tuple[float, float, float]] | tuple[tuple[float, float, float], ...] | None = None,
         particle_source: str = "initial",
         source_volume_fraction: float | None = None,
     ):
@@ -204,7 +230,8 @@ class LBMDEMSolver:
         self.damping = damping
         self.dem_substeps = dem_substeps
         self.step_count = 0
-        self.cylinder = cylinder  # (cx, cy, cr) or None
+        self.cylinders = self._normalise_cylinders(cylinder, cylinders)
+        self.cylinder = self.cylinders[0] if self.cylinders else None
         self.rolling_friction = rolling_friction
         self.sliding_friction = sliding_friction
         self.tangential_damping = tangential_damping
@@ -276,9 +303,10 @@ class LBMDEMSolver:
             )
         else:
             print("  Surface force : disabled")
-        if cylinder is not None:
-            cx, cy, cr = cylinder[0], cylinder[1], cylinder[2]
-            print(f"  Cylinder      : center=({cx:.1f}, {cy:.1f})  r={cr:.1f}")
+        if self.cylinders:
+            print(f"  Cylinders     : {len(self.cylinders)} fixed solids")
+            for idx, (cx, cy, cr) in enumerate(self.cylinders, start=1):
+                print(f"    #{idx:<2d} center=({cx:.1f}, {cy:.1f})  r={cr:.1f}")
         print(f"  Particle src. : {particle_source}")
 
         # --- LBM distribution functions f[q, x, y] ---
@@ -290,13 +318,13 @@ class LBMDEMSolver:
         self.solid[:, 0] = True
         self.solid[:, -1] = True
 
-        # Solid nodes: fixed cylinder
-        if cylinder is not None:
-            cx, cy, cr = cylinder
+        # Solid nodes: fixed cylinders
+        if self.cylinders:
             ix = np.arange(nx)
             iy = np.arange(ny)
             XX, YY = np.meshgrid(ix, iy, indexing="ij")
-            self.solid |= (XX - cx) ** 2 + (YY - cy) ** 2 <= cr**2
+            for cx, cy, cr in self.cylinders:
+                self.solid |= (XX - cx) ** 2 + (YY - cy) ** 2 <= cr**2
 
         # Fluid body-force arrays (reset each step; includes driving + particle feedback)
         self.Fx = np.full((nx, ny), self.F_drive)
@@ -342,6 +370,13 @@ class LBMDEMSolver:
     # Particle initialisation
     # ------------------------------------------------------------------
 
+    def _overlaps_cylinder(self, x: float, y: float, radius: float, clearance: float) -> bool:
+        """Return whether a particle disc overlaps any fixed cylinder."""
+        for cx, cy, cr in self.cylinders:
+            if np.hypot(x - cx, y - cy) < cr + radius * clearance:
+                return True
+        return False
+
     def _init_particles(self, seed: int) -> None:
         """Place particles without overlap, with a grid fallback for dense cases."""
         if self.particle_source == "left_inlet":
@@ -360,10 +395,8 @@ class LBMDEMSolver:
                 min_clearance = clearance * (self.radii[:placed] + r_new)
                 if (dists < min_clearance).any():
                     return False
-            if self.cylinder is not None:
-                cx, cy, cr = self.cylinder
-                if np.hypot(x - cx, y - cy) < cr + r_new * clearance:
-                    return False
+            if self._overlaps_cylinder(x, y, r_new, clearance):
+                return False
             return True
 
         max_random_attempts = 200_000 if self.n_p <= 60 else 0
@@ -488,10 +521,8 @@ class LBMDEMSolver:
         """Return whether an inlet particle can be placed without overlap."""
         if y < radius + 0.5 or y > self.ny - 1.5 - radius:
             return False
-        if self.cylinder is not None:
-            cx, cy, cr = self.cylinder
-            if np.hypot(x - cx, y - cy) < cr + radius * 1.05:
-                return False
+        if self._overlaps_cylinder(x, y, radius, 1.05):
+            return False
         n_check = self.n_p if n_existing is None else n_existing
         if n_check > 0:
             dists = np.hypot(x - self.pos[:n_check, 0], y - self.pos[:n_check, 1])
@@ -874,30 +905,30 @@ class LBMDEMSolver:
                     self.omega_p[i], f_mag, self.radii[i], self.masses[i]
                 )
 
-        # 5. Cylinder contact (Hertz, per-particle radius / mass)
-        if self.cylinder is not None:
-            cx, cy, cr = self.cylinder
-            for i in range(self.n_p):
-                dx = self.pos[i, 0] - cx
-                dy = self.pos[i, 1] - cy
-                dist = float(np.hypot(dx, dy))
-                min_dist = cr + self.radii[i]
-                if dist < min_dist and dist > 1e-10:
-                    overlap = min_dist - dist
-                    nx_ = dx / dist
-                    ny_ = dy / dist
-                    v_n = self.vel[i, 0] * nx_ + self.vel[i, 1] * ny_
-                    f_mag = self._normal_contact_magnitude(overlap, v_n, self.masses[i])
-                    forces[i, 0] += f_mag * nx_
-                    forces[i, 1] += f_mag * ny_
-                    t = self._tangent_from_normal(nx_, ny_)
-                    v_t = float(np.dot(self.vel[i], t)) - self.omega_p[i] * self.radii[i]
-                    f_t = self._tangential_force_magnitude(v_t, f_mag, self.masses[i])
-                    forces[i] += f_t * t
-                    torques[i] -= self.radii[i] * f_t
-                    torques[i] += self._rolling_resistance_torque(
-                        self.omega_p[i], f_mag, self.radii[i], self.masses[i]
-                    )
+        # 5. Cylinder contacts (Hertz, per-particle radius / mass)
+        if self.cylinders:
+            for cx, cy, cr in self.cylinders:
+                for i in range(self.n_p):
+                    dx = self.pos[i, 0] - cx
+                    dy = self.pos[i, 1] - cy
+                    dist = float(np.hypot(dx, dy))
+                    min_dist = cr + self.radii[i]
+                    if dist < min_dist and dist > 1e-10:
+                        overlap = min_dist - dist
+                        nx_ = dx / dist
+                        ny_ = dy / dist
+                        v_n = self.vel[i, 0] * nx_ + self.vel[i, 1] * ny_
+                        f_mag = self._normal_contact_magnitude(overlap, v_n, self.masses[i])
+                        forces[i, 0] += f_mag * nx_
+                        forces[i, 1] += f_mag * ny_
+                        t = self._tangent_from_normal(nx_, ny_)
+                        v_t = float(np.dot(self.vel[i], t)) - self.omega_p[i] * self.radii[i]
+                        f_t = self._tangential_force_magnitude(v_t, f_mag, self.masses[i])
+                        forces[i] += f_t * t
+                        torques[i] -= self.radii[i] * f_t
+                        torques[i] += self._rolling_resistance_torque(
+                            self.omega_p[i], f_mag, self.radii[i], self.masses[i]
+                        )
 
         return forces, torques
 
@@ -947,9 +978,8 @@ class LBMDEMSolver:
                 self.pos[i, 1] = wall_top
                 if self.vel[i, 1] > 0:
                     self.vel[i, 1] *= -0.2
-            # Clamp position outside cylinder surface
-            if self.cylinder is not None:
-                cx, cy, cr = self.cylinder
+            # Clamp position outside fixed cylinder surfaces
+            for cx, cy, cr in self.cylinders:
                 dx = self.pos[i, 0] - cx
                 dy = self.pos[i, 1] - cy
                 dist = float(np.hypot(dx, dy))
@@ -1054,6 +1084,7 @@ def plot_fields(sim: LBMDEMSolver, save_path: Path | None = None) -> None:
         extent=[0, sim.nx, 0, sim.ny],
         aspect="auto",
     )
+    _draw_cylinders(ax, sim)
     _draw_particles(ax, sim)
     ax.set_title("Velocity Magnitude |u|")
     ax.set_xlabel("x [lattice]")
@@ -1066,6 +1097,7 @@ def plot_fields(sim: LBMDEMSolver, save_path: Path | None = None) -> None:
     ax.streamplot(
         x, y, ux_T, uy_T, color=spd_T, cmap="cool", linewidth=lw, density=1.2, arrowsize=0.8
     )
+    _draw_cylinders(ax, sim)
     _draw_particles(ax, sim)
     ax.set_xlim(0, sim.nx)
     ax.set_ylim(0, sim.ny)
@@ -1085,6 +1117,7 @@ def plot_fields(sim: LBMDEMSolver, save_path: Path | None = None) -> None:
         extent=[0, sim.nx, 0, sim.ny],
         aspect="auto",
     )
+    _draw_cylinders(ax, sim)
     _draw_particles(ax, sim)
     ax.set_title("Vorticity  ∂v/∂x − ∂u/∂y")
     ax.set_xlabel("x [lattice]")
@@ -1111,6 +1144,7 @@ def plot_particles(sim: LBMDEMSolver, save_path: Path | None = None) -> None:
         aspect="auto",
         alpha=0.7,
     )
+    _draw_cylinders(ax, sim)
 
     p_speeds = np.linalg.norm(sim.vel, axis=1)
     sc = ax.scatter(
@@ -1146,6 +1180,20 @@ def _draw_particles(ax: plt.Axes, sim: LBMDEMSolver) -> None:
             linewidth=0.8,
             fill=False,
             zorder=3,
+        )
+        ax.add_patch(circle)
+
+
+def _draw_cylinders(ax: plt.Axes, sim: LBMDEMSolver) -> None:
+    """Overlay fixed solid cylinders on an existing axes."""
+    for cx, cy, cr in sim.cylinders:
+        circle = plt.Circle(
+            (cx, cy),
+            cr,
+            color="cyan",
+            alpha=0.55,
+            linewidth=1.0,
+            zorder=4,
         )
         ax.add_patch(circle)
 
@@ -1257,6 +1305,15 @@ def main() -> None:
         default=0.05,
         help="Minimum surface gap used to regularise repulsion (default 0.05)",
     )
+    parser.add_argument(
+        "--cylinder",
+        type=float,
+        nargs=3,
+        action="append",
+        metavar=("X", "Y", "R"),
+        default=None,
+        help="Add a fixed cylinder. Can be repeated: --cylinder X Y R",
+    )
     parser.add_argument("--steps", type=int, default=10000, help="Total LBM steps (default 10000)")
     parser.add_argument(
         "--report-every", type=int, default=1000, help="Report interval (default 1000)"
@@ -1299,6 +1356,7 @@ def main() -> None:
         repulsion_cutoff=args.repulsion_cutoff,
         attraction_min_gap=args.attraction_min_gap,
         repulsion_min_gap=args.repulsion_min_gap,
+        cylinders=args.cylinder,
     )
 
     print(f"\nRunning {args.steps:,} steps …")

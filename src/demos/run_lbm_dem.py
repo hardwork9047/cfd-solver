@@ -35,6 +35,10 @@ parser.add_argument("--cyl-y", type=float, default=None,
                     help="Cylinder center y [lattice] (default: NY/2)")
 parser.add_argument("--cyl-r", type=float, default=6.0,
                     help="Cylinder radius [lattice] (default: 6.0)")
+parser.add_argument("--cylinder-spec", type=float, nargs=3, action="append",
+                    metavar=("X", "Y", "R"), default=None,
+                    help="Add a fixed cylinder as x y radius. Can be repeated "
+                         "to define membrane-pore geometry")
 parser.add_argument("--n-particles", type=int, default=None,
                     help="Particle count. Ignored when --particle-volume-fraction is set")
 parser.add_argument("--particle-volume-fraction", "--particle-area-fraction",
@@ -96,6 +100,12 @@ if args.warmup_steps < 0:
     parser.error("--warmup-steps must be non-negative")
 if args.result_tag is not None and any(ch in args.result_tag for ch in "/\\"):
     parser.error("--result-tag must be a single directory name")
+if args.cylinder_spec is not None:
+    for spec in args.cylinder_spec:
+        if spec[2] <= 0.0:
+            parser.error("--cylinder-spec radius must be positive")
+if args.cyl_r <= 0.0:
+    parser.error("--cyl-r must be positive")
 
 # ---------------------------------------------------------------------------
 # キャッシュ付きサブクラス: _macroscopic() を各ステップ1回だけ計算
@@ -145,14 +155,18 @@ TOTAL_STEPS  = args.total_steps  # 総 LBM ステップ数
 SNAPSHOT_EVERY = args.snapshot_every   # 何ステップごとにスナップショット取得
 FPS          = 24     # 動画フレームレート
 
-# 円柱設定 (--cylinder が指定された場合のみ有効)
+# 円柱設定:
+#   --cylinder は従来互換の単円柱
+#   --cylinder-spec X Y R は複数円柱を明示配置
+CYLINDERS = []
 if args.cylinder:
     CYL_X = args.cyl_x if args.cyl_x is not None else NX / 4
     CYL_Y = args.cyl_y if args.cyl_y is not None else NY / 2
     CYL_R = args.cyl_r
-    CYLINDER = (CYL_X, CYL_Y, CYL_R)
-else:
-    CYLINDER = None
+    CYLINDERS.append((CYL_X, CYL_Y, CYL_R))
+if args.cylinder_spec is not None:
+    CYLINDERS.extend((float(x), float(y), float(r)) for x, y, r in args.cylinder_spec)
+CYLINDER = CYLINDERS[0] if CYLINDERS else None
 
 def _normalise_fraction(value: float | None) -> float | None:
     """Accept 0.05 or 5 as a 5% area fraction."""
@@ -165,11 +179,11 @@ def _normalise_fraction(value: float | None) -> float | None:
     return value
 
 
-def _water_area(nx: int, ny: int, cylinder: tuple[float, float, float] | None) -> float:
+def _water_area(nx: int, ny: int, cylinders: list[tuple[float, float, float]]) -> float:
     """Approximate available water area in 2-D lattice units."""
     area = float(nx * (ny - 2))
-    if cylinder is not None:
-        area -= float(np.pi * cylinder[2] ** 2)
+    for _, _, radius in cylinders:
+        area -= float(np.pi * radius ** 2)
     return max(area, 1.0)
 
 
@@ -204,10 +218,15 @@ else:
     else:
         N_PARTICLES = max(
             1,
-            int(round(PARTICLE_VOLUME_FRACTION * _water_area(NX, NY, CYLINDER) / expected_particle_area)),
+            int(round(PARTICLE_VOLUME_FRACTION * _water_area(NX, NY, CYLINDERS) / expected_particle_area)),
         )
 
-GEOMETRY_MODE = "cylinder" if args.cylinder else "channel"
+if len(CYLINDERS) > 1:
+    GEOMETRY_MODE = "multi_cylinder"
+elif len(CYLINDERS) == 1:
+    GEOMETRY_MODE = "cylinder"
+else:
+    GEOMETRY_MODE = "channel"
 if args.particle_attraction:
     SURFACE_FORCE_MODE = "with_attraction"
 elif args.particle_repulsion:
@@ -249,6 +268,10 @@ elif args.particle_source == "left-inlet":
         f"for {N_PARTICLES} queued particles"
     )
 print(f"Particle source: {args.particle_source}")
+if CYLINDERS:
+    print("Fixed cylinders:")
+    for idx, (cx, cy, cr) in enumerate(CYLINDERS, start=1):
+        print(f"  #{idx}: x={cx:.1f}, y={cy:.1f}, r={cr:.1f}")
 
 sim = FastLBMDEM(
     nx=NX, ny=NY,
@@ -273,7 +296,7 @@ sim = FastLBMDEM(
     repulsion_cutoff=args.repulsion_cutoff,
     attraction_min_gap=args.attraction_min_gap,
     repulsion_min_gap=args.repulsion_min_gap,
-    cylinder=CYLINDER,
+    cylinders=CYLINDERS,
     particle_source=args.particle_source.replace("-", "_"),
     source_volume_fraction=SOURCE_VOLUME_FRACTION,
 )
@@ -376,9 +399,9 @@ y = np.arange(NY)
 
 def _add_cylinder_patch(ax, color="cyan", alpha=0.6, zorder=4):
     """静止画用: 円柱パッチを追加する。"""
-    if CYLINDER is not None:
+    for cx, cy, cr in CYLINDERS:
         ax.add_patch(plt.Circle(
-            (CYLINDER[0], CYLINDER[1]), CYLINDER[2],
+            (cx, cy), cr,
             color=color, alpha=alpha, zorder=zorder,
         ))
 
@@ -479,9 +502,9 @@ cbar_force.ax.yaxis.set_tick_params(color="white")
 plt.setp(cbar_force.ax.yaxis.get_ticklabels(), color="white")
 
 # 固定円柱パッチ (アニメーション中は動かないので animated=False)
-if CYLINDER is not None:
+for cx, cy, cr in CYLINDERS:
     ax_anim.add_patch(mpatches.Circle(
-        (CYLINDER[0], CYLINDER[1]), CYLINDER[2],
+        (cx, cy), cr,
         linewidth=1.5, edgecolor="cyan", facecolor="cyan", alpha=0.55, zorder=4,
     ))
 

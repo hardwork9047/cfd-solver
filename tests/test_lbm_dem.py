@@ -113,6 +113,31 @@ def test_rolling_friction_resists_wall_slip_and_spins_particle():
     assert torques[0] < 0.0
 
 
+def test_multiple_cylinders_define_solid_nodes_and_particle_contacts():
+    """Multiple fixed cylinders can represent pore-scale membrane geometry."""
+    sim = LBMDEMSolver(
+        nx=60,
+        ny=30,
+        Re=100.0,
+        u_max=0.0,
+        n_particles=1,
+        particle_radius=2.0,
+        density_ratio=2.0,
+        gravity=0.0,
+        cylinders=[(20.0, 15.0, 4.0), (35.0, 15.0, 3.0)],
+        seed=4,
+    )
+    sim.pos[:] = np.array([[23.0, 15.0]])
+    sim.vel[:] = 0.0
+
+    forces = sim._dem_forces(dt_sub=1.0)
+
+    assert sim.solid[20, 15]
+    assert sim.solid[35, 15]
+    assert forces[0, 0] > 0.0
+    assert len(sim.cylinders) == 2
+
+
 def test_left_inlet_mode_generates_particles_from_flux_budget_and_deletes_outflow():
     """Left-inlet mode starts empty, injects from budget, and removes right outflow."""
     sim = LBMDEMSolver(
