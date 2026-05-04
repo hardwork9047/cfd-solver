@@ -301,6 +301,16 @@ def _write_fluid_vtk(path: Path, snap: dict, solid: np.ndarray) -> None:
         for y_idx in range(ny):
             for x_idx in range(nx):
                 handle.write(f"{_vtk_float(snap['speed'][x_idx, y_idx])}\n")
+        handle.write("SCALARS pressure float 1\n")
+        handle.write("LOOKUP_TABLE default\n")
+        for y_idx in range(ny):
+            for x_idx in range(nx):
+                handle.write(f"{_vtk_float(snap['pressure'][x_idx, y_idx])}\n")
+        handle.write("SCALARS pressure_gauge float 1\n")
+        handle.write("LOOKUP_TABLE default\n")
+        for y_idx in range(ny):
+            for x_idx in range(nx):
+                handle.write(f"{_vtk_float(snap['pressure_gauge'][x_idx, y_idx])}\n")
         handle.write("SCALARS solid int 1\n")
         handle.write("LOOKUP_TABLE default\n")
         for y_idx in range(ny):
@@ -439,6 +449,8 @@ def _write_snapshot_npz(path: Path, snap: dict) -> None:
         ux=snap["ux"],
         uy=snap["uy"],
         speed=snap["speed"],
+        pressure=snap["pressure"],
+        pressure_gauge=snap["pressure_gauge"],
         pos=snap["pos"],
         vel=snap["vel"],
         radii=snap["radii"],
@@ -456,6 +468,8 @@ def _load_snapshot_npz(path: Path) -> dict:
             "ux": data["ux"],
             "uy": data["uy"],
             "speed": data["speed"],
+            "pressure": data["pressure"],
+            "pressure_gauge": data["pressure_gauge"],
             "pos": data["pos"],
             "vel": data["vel"],
             "radii": data["radii"],
@@ -571,12 +585,16 @@ for frame_idx in range(n_frames):
 
     # 各粒子に加わる合力の大きさ (重力 + 抗力 + 接触力)
     total_force_mags = np.linalg.norm(sim.forces_p, axis=1)
+    pressure = rho / 3.0
+    pressure_gauge = pressure - float(np.mean(pressure[~sim.solid]))
 
     snap = {
         "step": sim.step_count,
         "ux":   ux.copy(),
         "uy":   uy.copy(),
         "speed": np.sqrt(ux**2 + uy**2).copy(),
+        "pressure": pressure.copy(),
+        "pressure_gauge": pressure_gauge.copy(),
         "pos":  sim.pos.copy(),
         "vel":  sim.vel.copy(),
         "radii": sim.radii.copy(),
