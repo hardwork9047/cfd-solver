@@ -9,6 +9,7 @@ LBM-DEM 連成シミュレーション 実行スクリプト
 from __future__ import annotations
 
 import argparse
+import csv
 import sys
 import time
 from pathlib import Path
@@ -478,6 +479,72 @@ def _load_snapshot_npz(path: Path) -> dict:
             "removed_particles": int(data["removed_particles"]),
         }
 
+
+def _boundary_flux(ux: np.ndarray, solid: np.ndarray, x_idx: int) -> float:
+    """Positive x-direction volumetric flux through one vertical boundary."""
+    fluid = ~solid[x_idx, :]
+    return float(np.sum(np.maximum(ux[x_idx, fluid], 0.0)))
+
+
+def _boundary_mean(field: np.ndarray, solid: np.ndarray, x_idx: int) -> float:
+    """Mean scalar value on fluid nodes of one vertical boundary."""
+    fluid = ~solid[x_idx, :]
+    if not bool(np.any(fluid)):
+        return float("nan")
+    return float(np.mean(field[x_idx, fluid]))
+
+
+def _contact_counts(sim: FastLBMDEM) -> dict[str, int]:
+    """Count active DEM contact points for post-run analysis."""
+    particle_particle = 0
+    for i, j in sim._particle_pair_candidates():
+        dist = float(np.hypot(sim.pos[j, 0] - sim.pos[i, 0], sim.pos[j, 1] - sim.pos[i, 1]))
+        if dist < sim.radii[i] + sim.radii[j]:
+            particle_particle += 1
+
+    wall = 0
+    if sim.n_p:
+        wall_bot = sim.radii + 0.5
+        wall_top = sim.ny - 1.5 - sim.radii
+        wall = int(np.count_nonzero(sim.pos[:, 1] < wall_bot))
+        wall += int(np.count_nonzero(sim.pos[:, 1] > wall_top))
+
+    cylinder = 0
+    for cx, cy, cr in sim.cylinders:
+        if sim.n_p == 0:
+            break
+        dist = np.hypot(sim.pos[:, 0] - cx, sim.pos[:, 1] - cy)
+        cylinder += int(np.count_nonzero(dist < cr + sim.radii))
+
+    return {
+        "particle_particle_contacts": particle_particle,
+        "wall_contacts": wall,
+        "cylinder_contacts": cylinder,
+        "total_contacts": particle_particle + wall + cylinder,
+    }
+
+
+def _write_analysis_outputs(out_dir: Path, rows: list[dict[str, float | int]]) -> tuple[Path, Path]:
+    """Write scalar time-series data as CSV and NPZ for later analysis."""
+    analysis_dir = out_dir / "analysis"
+    analysis_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = analysis_dir / "time_series.csv"
+    npz_path = analysis_dir / "time_series.npz"
+    if not rows:
+        csv_path.write_text("", encoding="utf-8")
+        np.savez(npz_path)
+        return csv_path, npz_path
+
+    fieldnames = list(rows[0].keys())
+    with csv_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+    arrays = {name: np.array([row[name] for row in rows]) for name in fieldnames}
+    np.savez(npz_path, **arrays)
+    return csv_path, npz_path
+
 # ---------------------------------------------------------------------------
 # 初期化
 # ---------------------------------------------------------------------------
@@ -576,6 +643,7 @@ speed_global_max = 0.0
 force_global_min = np.inf
 force_global_max = -np.inf
 max_particles_in_frames = 0
+analysis_rows: list[dict[str, float | int]] = []
 
 t1 = time.perf_counter()
 for frame_idx in range(n_frames):
@@ -587,12 +655,19 @@ for frame_idx in range(n_frames):
     total_force_mags = np.linalg.norm(sim.forces_p, axis=1)
     pressure = rho / 3.0
     pressure_gauge = pressure - float(np.mean(pressure[~sim.solid]))
+    speed = np.sqrt(ux**2 + uy**2)
+    fluid_mask = ~sim.solid
+    inlet_flux = _boundary_flux(ux, sim.solid, 0)
+    outlet_flux = _boundary_flux(ux, sim.solid, NX - 1)
+    inlet_pressure = _boundary_mean(pressure, sim.solid, 0)
+    outlet_pressure = _boundary_mean(pressure, sim.solid, NX - 1)
+    contacts = _contact_counts(sim)
 
     snap = {
         "step": sim.step_count,
         "ux":   ux.copy(),
         "uy":   uy.copy(),
-        "speed": np.sqrt(ux**2 + uy**2).copy(),
+        "speed": speed.copy(),
         "pressure": pressure.copy(),
         "pressure_gauge": pressure_gauge.copy(),
         "pos":  sim.pos.copy(),
@@ -602,6 +677,29 @@ for frame_idx in range(n_frames):
         "total_force": total_force_mags.copy(),
         "removed_particles": sim.removed_particles,
     }
+    analysis_rows.append({
+        "frame": frame_idx + 1,
+        "step": sim.step_count,
+        "time_lattice": float(sim.step_count),
+        "active_particles": sim.n_p,
+        "generated_particles": sim.generated_particles,
+        "pending_particles": int(len(sim._pending_radii)),
+        "passed_particles": sim.removed_particles,
+        "inlet_flux": inlet_flux,
+        "outlet_flux": outlet_flux,
+        "permeate_flux": outlet_flux,
+        "mean_ux": float(np.mean(ux[fluid_mask])),
+        "max_speed": float(speed[fluid_mask].max()),
+        "mean_pressure": float(np.mean(pressure[fluid_mask])),
+        "inlet_pressure": inlet_pressure,
+        "outlet_pressure": outlet_pressure,
+        "pressure_drop": inlet_pressure - outlet_pressure,
+        "mean_pressure_gauge": float(np.mean(pressure_gauge[fluid_mask])),
+        "particle_area_fraction": float(np.sum(np.pi * sim.radii**2) / sim.fluid_area),
+        "particle_ke": 0.5 * float(np.sum(sim.masses * np.sum(sim.vel**2, axis=1))),
+        "mean_force": float(total_force_mags.mean()) if len(total_force_mags) else 0.0,
+        **contacts,
+    })
     last = snap
     speed_global_max = max(speed_global_max, float(snap["speed"].max()))
     if len(total_force_mags):
@@ -636,6 +734,10 @@ for frame_idx in range(n_frames):
 
 total_time = time.perf_counter() - t1
 print(f"      完了 ({total_time:.1f} s, {TOTAL_STEPS/total_time:.0f} steps/s)")
+
+analysis_csv, analysis_npz = _write_analysis_outputs(OUT_DIR, analysis_rows)
+print(f"\n後解析データ保存: {analysis_csv}")
+print(f"後解析NPZ保存  : {analysis_npz}")
 
 if last is None:
     raise RuntimeError("No snapshots were recorded")
@@ -766,6 +868,8 @@ if args.no_video:
     print("\n[3/3] 動画作成をスキップ (--no-video)")
     print(f"\n出力ファイル:")
     print(f"  静止画: {static_path}")
+    print(f"  時系列CSV: {analysis_csv}")
+    print(f"  時系列NPZ: {analysis_npz}")
     if paraview_dir is not None:
         print(f"  ParaView: {paraview_dir}")
         print(f"    流体時系列: {paraview_dir / 'fluid_series.pvd'}")
@@ -891,6 +995,8 @@ print(f"動画保存: {video_path}")
 print(f"\n出力ファイル:")
 print(f"  静止画: {static_path}")
 print(f"  動  画: {video_path}")
+print(f"  時系列CSV: {analysis_csv}")
+print(f"  時系列NPZ: {analysis_npz}")
 if paraview_dir is not None:
     print(f"  ParaView: {paraview_dir}")
     print(f"    流体時系列: {paraview_dir / 'fluid_series.pvd'}")
