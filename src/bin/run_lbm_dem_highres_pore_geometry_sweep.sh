@@ -27,10 +27,12 @@ printf "condition\tnx\tny\tparticle_radius\tphi\tattraction_strength\trolling_fr
 : > "$SUMMARY_FILE"
 
 wait_for_previous_run() {
-  while pgrep -f "run_lbm_dem.py .*--result-tag ${PREVIOUS_TAG}" >/dev/null; do
+  while [[ ! -f "$PREVIOUS_LOG" ]] || ! grep -q "=== OK ${PREVIOUS_TAG} ===" "$PREVIOUS_LOG"; do
     echo "Waiting for previous run (${PREVIOUS_TAG}) to finish..."
     if [[ -f "$PREVIOUS_LOG" ]]; then
       tail -n 5 "$PREVIOUS_LOG" || true
+    else
+      echo "Previous log does not exist yet: $PREVIOUS_LOG"
     fi
     sleep 60
   done
