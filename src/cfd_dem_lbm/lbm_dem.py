@@ -31,6 +31,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 from cfd.result_paths import program_results_dir
 
+try:  # Optional acceleration. The solver keeps a pure-NumPy/Python fallback.
+    from numba import njit
+except ImportError:  # pragma: no cover - depends on the local environment
+    njit = None
+
 # ---------------------------------------------------------------------------
 # D2Q9 lattice constants
 # ---------------------------------------------------------------------------
@@ -55,6 +60,124 @@ W = np.array([4 / 9, 1 / 9, 1 / 9, 1 / 9, 1 / 9, 1 / 36, 1 / 36, 1 / 36, 1 / 36]
 OPPOSITE = [0, 3, 4, 1, 2, 7, 8, 5, 6]
 Q = 9
 CS2 = 1.0 / 3.0  # lattice speed of sound squared
+
+
+if njit is not None:  # pragma: no cover - exercised only when numba is installed
+
+    @njit(cache=True)
+    def _dem_pair_loads_numba(
+        pair_i,
+        pair_j,
+        pos,
+        vel,
+        radii,
+        masses,
+        omega_p,
+        k_n,
+        damping,
+        rolling_friction,
+        sliding_friction,
+        tangential_damping,
+        rolling_friction_coeff,
+        rolling_damping,
+        particle_attraction,
+        particle_repulsion,
+        attraction_strength,
+        repulsion_strength,
+        attraction_cutoff,
+        repulsion_cutoff,
+        attraction_min_gap,
+        repulsion_min_gap,
+        forces,
+        torques,
+    ):
+        """Apply particle-pair DEM loads in compiled code."""
+        for pair_idx in range(pair_i.shape[0]):
+            i = pair_i[pair_idx]
+            j = pair_j[pair_idx]
+            dx = pos[j, 0] - pos[i, 0]
+            dy = pos[j, 1] - pos[i, 1]
+            dist = (dx * dx + dy * dy) ** 0.5
+            min_dist = radii[i] + radii[j]
+            if dist <= 1e-10:
+                continue
+
+            nx_ = dx / dist
+            ny_ = dy / dist
+
+            if dist < min_dist:
+                overlap = min_dist - dist
+                rvx = vel[j, 0] - vel[i, 0]
+                rvy = vel[j, 1] - vel[i, 1]
+                v_n = rvx * nx_ + rvy * ny_
+                avg_m = 0.5 * (masses[i] + masses[j])
+                f_n = k_n * overlap**1.5
+                f_damp = -damping * v_n * (k_n * avg_m) ** 0.5
+                f_mag = f_n + f_damp
+                if f_mag < 0.0:
+                    f_mag = 0.0
+
+                fx = f_mag * nx_
+                fy = f_mag * ny_
+                forces[i, 0] -= fx
+                forces[i, 1] -= fy
+                forces[j, 0] += fx
+                forces[j, 1] += fy
+
+                if rolling_friction and f_mag > 0.0:
+                    tx = -ny_
+                    ty = nx_
+                    v_t = rvx * tx + rvy * ty
+                    v_t -= omega_p[j] * radii[j] + omega_p[i] * radii[i]
+                    f_trial = -tangential_damping * (k_n * avg_m) ** 0.5 * v_t
+                    f_limit = sliding_friction * f_mag
+                    f_t = min(max(f_trial, -f_limit), f_limit)
+                    ft_x = f_t * tx
+                    ft_y = f_t * ty
+                    forces[i, 0] -= ft_x
+                    forces[i, 1] -= ft_y
+                    forces[j, 0] += ft_x
+                    forces[j, 1] += ft_y
+                    torques[i] -= radii[i] * f_t
+                    torques[j] -= radii[j] * f_t
+
+                    trial_i = -rolling_damping * (k_n * masses[i]) ** 0.5 * radii[i] ** 2 * omega_p[i]
+                    limit_i = rolling_friction_coeff * f_mag * radii[i]
+                    torques[i] += min(max(trial_i, -limit_i), limit_i)
+                    trial_j = -rolling_damping * (k_n * masses[j]) ** 0.5 * radii[j] ** 2 * omega_p[j]
+                    limit_j = rolling_friction_coeff * f_mag * radii[j]
+                    torques[j] += min(max(trial_j, -limit_j), limit_j)
+
+            surface_gap = dist - min_dist
+            if particle_attraction and attraction_strength > 0.0:
+                if surface_gap <= attraction_cutoff:
+                    h = surface_gap
+                    if h < attraction_min_gap:
+                        h = attraction_min_gap
+                    if h < 1e-12:
+                        h = 1e-12
+                    r_eff = radii[i] * radii[j] / min_dist
+                    f_attr = attraction_strength * r_eff / (6.0 * h**2)
+                    forces[i, 0] += f_attr * nx_
+                    forces[i, 1] += f_attr * ny_
+                    forces[j, 0] -= f_attr * nx_
+                    forces[j, 1] -= f_attr * ny_
+            elif particle_repulsion and repulsion_strength > 0.0:
+                if surface_gap <= repulsion_cutoff:
+                    h = surface_gap
+                    if h < repulsion_min_gap:
+                        h = repulsion_min_gap
+                    if h < 1e-12:
+                        h = 1e-12
+                    r_eff = radii[i] * radii[j] / min_dist
+                    f_rep = repulsion_strength * r_eff / (6.0 * h**2)
+                    forces[i, 0] -= f_rep * nx_
+                    forces[i, 1] -= f_rep * ny_
+                    forces[j, 0] += f_rep * nx_
+                    forces[j, 1] += f_rep * ny_
+
+else:
+    _dem_pair_loads_numba = None
 
 
 # ---------------------------------------------------------------------------
@@ -637,18 +760,38 @@ class LBMDEMSolver:
     def _interp_velocity(self, x: float, y: float) -> tuple[float, float]:
         """Bilinear interpolation of (ux, uy) at position (x, y) [lattice]."""
         _, ux, uy = self._macroscopic()
-        xi = int(np.floor(x)) % self.nx
-        yi = int(np.clip(np.floor(y), 0, self.ny - 2))
+        uf_x, uf_y = self._interp_velocity_many(np.array([x]), np.array([y]), ux=ux, uy=uy)
+        return float(uf_x[0]), float(uf_y[0])
+
+    def _interp_velocity_many(
+        self,
+        x: np.ndarray,
+        y: np.ndarray,
+        ux: np.ndarray | None = None,
+        uy: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Vectorised bilinear interpolation of (ux, uy) for many particles."""
+        if ux is None or uy is None:
+            _, ux, uy = self._macroscopic()
+        if len(x) == 0:
+            return np.empty(0), np.empty(0)
+
+        x_floor = np.floor(x)
+        y_floor = np.floor(y)
+        xi = x_floor.astype(int) % self.nx
+        yi = np.clip(y_floor.astype(int), 0, self.ny - 2)
         xi1 = (xi + 1) % self.nx
-        yi1 = min(yi + 1, self.ny - 1)
-        tx = x - np.floor(x)
-        ty = y - np.floor(y)
-        w = np.array([(1 - tx) * (1 - ty), tx * (1 - ty), (1 - tx) * ty, tx * ty])
-        pts_x = [xi, xi1, xi, xi1]
-        pts_y = [yi, yi, yi1, yi1]
-        uf_x = sum(w[k] * ux[pts_x[k], pts_y[k]] for k in range(4))
-        uf_y = sum(w[k] * uy[pts_x[k], pts_y[k]] for k in range(4))
-        return float(uf_x), float(uf_y)
+        yi1 = np.minimum(yi + 1, self.ny - 1)
+        tx = x - x_floor
+        ty = y - y_floor
+
+        w00 = (1.0 - tx) * (1.0 - ty)
+        w10 = tx * (1.0 - ty)
+        w01 = (1.0 - tx) * ty
+        w11 = tx * ty
+        uf_x = w00 * ux[xi, yi] + w10 * ux[xi1, yi] + w01 * ux[xi, yi1] + w11 * ux[xi1, yi1]
+        uf_y = w00 * uy[xi, yi] + w10 * uy[xi1, yi] + w01 * uy[xi, yi1] + w11 * uy[xi1, yi1]
+        return uf_x, uf_y
 
     def _stokes_drag(
         self,
@@ -667,6 +810,29 @@ class LBMDEMSolver:
         r = radius if radius is not None else self.r_p
         coeff = 3.0 * np.pi * self.nu * 2.0 * r
         return coeff * (uf_x - vp_x), coeff * (uf_y - vp_y)
+
+    def _stokes_drag_many(
+        self,
+        uf_x: np.ndarray,
+        uf_y: np.ndarray,
+        vel: np.ndarray,
+        radii: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Vectorised Stokes drag for all active particles."""
+        coeff = 3.0 * np.pi * self.nu * 2.0 * radii
+        return coeff * (uf_x - vel[:, 0]), coeff * (uf_y - vel[:, 1])
+
+    def _particle_drag_forces(
+        self,
+        ux: np.ndarray | None = None,
+        uy: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """Return Stokes drag forces for all active particles."""
+        if self.n_p == 0:
+            return np.zeros((0, 2))
+        uf_x, uf_y = self._interp_velocity_many(self.pos[:, 0], self.pos[:, 1], ux=ux, uy=uy)
+        fd_x, fd_y = self._stokes_drag_many(uf_x, uf_y, self.vel, self.radii)
+        return np.column_stack((fd_x, fd_y))
 
     def _distribute_force(
         self, x: float, y: float, fx: float, fy: float, radius: float | None = None
@@ -690,6 +856,42 @@ class LBMDEMSolver:
             if not self.solid[ix, iy]:
                 self.Fx[ix, iy] += wk * fx / area
                 self.Fy[ix, iy] += wk * fy / area
+
+    def _distribute_forces_many(
+        self,
+        x: np.ndarray,
+        y: np.ndarray,
+        fx: np.ndarray,
+        fy: np.ndarray,
+        radii: np.ndarray,
+    ) -> None:
+        """Vectorised four-node force distribution for particle back-reaction."""
+        if len(x) == 0:
+            return
+
+        x_floor = np.floor(x)
+        y_floor = np.floor(y)
+        xi = x_floor.astype(int) % self.nx
+        yi = np.clip(y_floor.astype(int), 0, self.ny - 2)
+        xi1 = (xi + 1) % self.nx
+        yi1 = np.minimum(yi + 1, self.ny - 1)
+        tx = x - x_floor
+        ty = y - y_floor
+        weights = (
+            (1.0 - tx) * (1.0 - ty),
+            tx * (1.0 - ty),
+            (1.0 - tx) * ty,
+            tx * ty,
+        )
+        node_x = (xi, xi1, xi, xi1)
+        node_y = (yi, yi, yi1, yi1)
+        area = np.pi * radii**2
+        scaled_fx = fx / area
+        scaled_fy = fy / area
+        for wk, ix, iy in zip(weights, node_x, node_y):
+            active = ~self.solid[ix, iy]
+            np.add.at(self.Fx, (ix[active], iy[active]), wk[active] * scaled_fx[active])
+            np.add.at(self.Fy, (ix[active], iy[active]), wk[active] * scaled_fy[active])
 
     # ------------------------------------------------------------------
     # DEM
@@ -793,6 +995,14 @@ class LBMDEMSolver:
                         for j in other:
                             yield i, j
 
+    def _particle_pair_arrays(self) -> tuple[np.ndarray, np.ndarray]:
+        """Return nearby particle-pair indices as integer arrays."""
+        pairs = list(self._particle_pair_candidates())
+        if not pairs:
+            return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int64)
+        pair_array = np.asarray(pairs, dtype=np.int64)
+        return pair_array[:, 0], pair_array[:, 1]
+
     def _dem_loads(self, dt_sub: float) -> tuple[np.ndarray, np.ndarray]:
         """
         Compute total force and torque on each particle:
@@ -808,16 +1018,44 @@ class LBMDEMSolver:
         forces[:, 1] -= self.masses * self.g * buoyancy_factor
 
         # 2. Stokes drag from interpolated fluid velocity (per-particle radius)
-        for i in range(self.n_p):
-            uf_x, uf_y = self._interp_velocity(self.pos[i, 0], self.pos[i, 1])
-            fd_x, fd_y = self._stokes_drag(
-                uf_x, uf_y, self.vel[i, 0], self.vel[i, 1], radius=self.radii[i]
-            )
-            forces[i, 0] += fd_x
-            forces[i, 1] += fd_y
+        drag = self._particle_drag_forces()
+        forces += drag
 
         # 3. Particle–particle Hertz contact (per-particle radii / masses)
-        for i, j in self._particle_pair_candidates():
+        pair_i: np.ndarray | None = None
+        pair_j: np.ndarray | None = None
+        if _dem_pair_loads_numba is not None and self.n_p >= 2:
+            pair_i, pair_j = self._particle_pair_arrays()
+            _dem_pair_loads_numba(
+                pair_i,
+                pair_j,
+                self.pos,
+                self.vel,
+                self.radii,
+                self.masses,
+                self.omega_p,
+                self.k_n,
+                self.damping,
+                self.rolling_friction,
+                self.sliding_friction,
+                self.tangential_damping,
+                self.rolling_friction_coeff,
+                self.rolling_damping,
+                self.particle_attraction,
+                self.particle_repulsion,
+                self.attraction_strength,
+                self.repulsion_strength,
+                self.attraction_cutoff,
+                self.repulsion_cutoff,
+                self.attraction_min_gap,
+                self.repulsion_min_gap,
+                forces,
+                torques,
+            )
+
+        pair_iter = zip(pair_i, pair_j) if pair_i is not None else self._particle_pair_candidates()
+        if _dem_pair_loads_numba is None:
+            for i, j in pair_iter:
                 dp = self.pos[j] - self.pos[i]
                 dist = float(np.linalg.norm(dp))
                 min_dist = self.radii[i] + self.radii[j]
@@ -1022,14 +1260,16 @@ class LBMDEMSolver:
             self.Fy[:] = 0.0
 
             # --- Particle → fluid back-reaction (per-particle radius) ---
-            for i in range(self.n_p):
-                uf_x, uf_y = self._interp_velocity(self.pos[i, 0], self.pos[i, 1])
-                fd_x, fd_y = self._stokes_drag(
-                    uf_x, uf_y, self.vel[i, 0], self.vel[i, 1], radius=self.radii[i]
-                )
+            if self.n_p:
+                _, ux_drag, uy_drag = self._macroscopic()
+                drag = self._particle_drag_forces(ux=ux_drag, uy=uy_drag)
                 # Newton 3rd law: -drag acts on the fluid
-                self._distribute_force(
-                    self.pos[i, 0], self.pos[i, 1], -fd_x, -fd_y, radius=self.radii[i]
+                self._distribute_forces_many(
+                    self.pos[:, 0],
+                    self.pos[:, 1],
+                    -drag[:, 0],
+                    -drag[:, 1],
+                    self.radii,
                 )
 
             # --- LBM step ---

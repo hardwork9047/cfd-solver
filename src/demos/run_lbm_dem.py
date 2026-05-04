@@ -70,6 +70,8 @@ parser.add_argument("--paraview-output", action=argparse.BooleanOptionalAction,
 parser.add_argument("--paraview-every", type=int, default=0,
                     help="Export every Nth recorded snapshot to ParaView VTK. "
                          "0 exports only the final snapshot (default: 0)")
+parser.add_argument("--snapshot-storage", choices=["disk", "memory"], default="disk",
+                    help="Store recorded snapshots on disk or in memory (default: disk)")
 parser.add_argument("--result-tag", default=None,
                     help="Extra result directory tag to avoid overwriting parameter sweeps")
 parser.add_argument("--rolling-friction", action=argparse.BooleanOptionalAction,
@@ -428,6 +430,40 @@ def _export_paraview_data(
     _write_pvd(paraview_dir / "particles_series.pvd", particle_entries)
     return paraview_dir
 
+
+def _write_snapshot_npz(path: Path, snap: dict) -> None:
+    """Persist one snapshot so long runs do not keep every field in RAM."""
+    np.savez(
+        path,
+        step=np.array(snap["step"], dtype=np.int64),
+        ux=snap["ux"],
+        uy=snap["uy"],
+        speed=snap["speed"],
+        pos=snap["pos"],
+        vel=snap["vel"],
+        radii=snap["radii"],
+        masses=snap["masses"],
+        total_force=snap["total_force"],
+        removed_particles=np.array(snap["removed_particles"], dtype=np.int64),
+    )
+
+
+def _load_snapshot_npz(path: Path) -> dict:
+    """Load a snapshot written by ``_write_snapshot_npz``."""
+    with np.load(path) as data:
+        return {
+            "step": int(data["step"]),
+            "ux": data["ux"],
+            "uy": data["uy"],
+            "speed": data["speed"],
+            "pos": data["pos"],
+            "vel": data["vel"],
+            "radii": data["radii"],
+            "masses": data["masses"],
+            "total_force": data["total_force"],
+            "removed_particles": int(data["removed_particles"]),
+        }
+
 # ---------------------------------------------------------------------------
 # 初期化
 # ---------------------------------------------------------------------------
@@ -506,7 +542,26 @@ if n_frames == 0:
 print(f"\n[2/3] メインシミュレーション {TOTAL_STEPS} ステップ "
       f"(スナップショット {n_frames} 枚) ...")
 
-snapshots = []   # list of (rho, ux, uy, pos_copy, vel_copy, step)
+snapshots = [] if args.snapshot_storage == "memory" else None
+snapshot_paths: list[Path] = []
+snapshot_dir = OUT_DIR / "snapshots"
+if args.snapshot_storage == "disk":
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    print(f"      snapshots: {snapshot_dir} に逐次保存")
+
+paraview_dir = None
+fluid_entries: list[tuple[int, Path]] = []
+particle_entries: list[tuple[int, Path]] = []
+if args.paraview_output:
+    paraview_dir = OUT_DIR / "paraview"
+    paraview_dir.mkdir(parents=True, exist_ok=True)
+    _write_cylinders_vtk(paraview_dir / "cylinders.vtk", CYLINDERS)
+
+last = None
+speed_global_max = 0.0
+force_global_min = np.inf
+force_global_max = -np.inf
+max_particles_in_frames = 0
 
 t1 = time.perf_counter()
 for frame_idx in range(n_frames):
@@ -517,7 +572,7 @@ for frame_idx in range(n_frames):
     # 各粒子に加わる合力の大きさ (重力 + 抗力 + 接触力)
     total_force_mags = np.linalg.norm(sim.forces_p, axis=1)
 
-    snapshots.append({
+    snap = {
         "step": sim.step_count,
         "ux":   ux.copy(),
         "uy":   uy.copy(),
@@ -528,7 +583,29 @@ for frame_idx in range(n_frames):
         "masses": sim.masses.copy(),
         "total_force": total_force_mags.copy(),
         "removed_particles": sim.removed_particles,
-    })
+    }
+    last = snap
+    speed_global_max = max(speed_global_max, float(snap["speed"].max()))
+    if len(total_force_mags):
+        force_global_min = min(force_global_min, float(total_force_mags.min()))
+        force_global_max = max(force_global_max, float(total_force_mags.max()))
+    max_particles_in_frames = max(max_particles_in_frames, len(snap["pos"]))
+
+    if snapshots is not None:
+        snapshots.append(snap)
+    else:
+        snapshot_path = snapshot_dir / f"snapshot_{frame_idx:04d}_step_{sim.step_count:07d}.npz"
+        _write_snapshot_npz(snapshot_path, snap)
+        snapshot_paths.append(snapshot_path)
+
+    if paraview_dir is not None and args.paraview_every > 0 and frame_idx % args.paraview_every == 0:
+        step = int(snap["step"])
+        fluid_name = f"fluid_{frame_idx:04d}_step_{step:07d}.vtk"
+        particle_name = f"particles_{frame_idx:04d}_step_{step:07d}.vtk"
+        _write_fluid_vtk(paraview_dir / fluid_name, snap, sim.solid)
+        _write_particles_vtk(paraview_dir / particle_name, snap)
+        fluid_entries.append((step, Path(fluid_name)))
+        particle_entries.append((step, Path(particle_name)))
 
     elapsed = time.perf_counter() - t1
     frac = (frame_idx + 1) / n_frames
@@ -542,12 +619,41 @@ for frame_idx in range(n_frames):
 total_time = time.perf_counter() - t1
 print(f"      完了 ({total_time:.1f} s, {TOTAL_STEPS/total_time:.0f} steps/s)")
 
+if last is None:
+    raise RuntimeError("No snapshots were recorded")
+if not np.isfinite(force_global_min):
+    force_global_min = 0.0
+    force_global_max = 1.0
+if force_global_max <= force_global_min:
+    force_global_max = force_global_min + 1e-12
+
+if paraview_dir is not None:
+    should_export_final = (
+        args.paraview_every == 0
+        or not fluid_entries
+        or fluid_entries[-1][0] != int(last["step"])
+    )
+    if should_export_final:
+        frame_idx = n_frames - 1
+        step = int(last["step"])
+        fluid_name = f"fluid_{frame_idx:04d}_step_{step:07d}.vtk"
+        particle_name = f"particles_{frame_idx:04d}_step_{step:07d}.vtk"
+        _write_fluid_vtk(paraview_dir / fluid_name, last, sim.solid)
+        _write_particles_vtk(paraview_dir / particle_name, last)
+        fluid_entries.append((step, Path(fluid_name)))
+        particle_entries.append((step, Path(particle_name)))
+    _write_pvd(paraview_dir / "fluid_series.pvd", fluid_entries)
+    _write_pvd(paraview_dir / "particles_series.pvd", particle_entries)
+    if args.paraview_every == 0:
+        print(f"\nParaViewデータ保存: {paraview_dir} (final snapshot only)")
+    else:
+        print(f"\nParaViewデータ保存: {paraview_dir} (every {args.paraview_every} snapshots)")
+
 # ---------------------------------------------------------------------------
 # 統計出力
 # ---------------------------------------------------------------------------
 
 print("\n--- 最終統計 ---")
-last = snapshots[-1]
 p_vel_mag = np.linalg.norm(last["vel"], axis=1)
 print(f"  粒子数          : {sim.n_p}")
 print(f"  左入口投入済み  : {sim.generated_particles}/{sim.total_particles_requested}")
@@ -571,28 +677,13 @@ if args.particle_source == "left-inlet":
     print(f"  投入済み粒子面積: {sim.injected_particle_area:.4e}")
     print(f"  未投入面積予算  : {sim.inlet_particle_area_budget:.4e}")
 
-# ParaView 用データを保存
-paraview_dir = None
-if args.paraview_output:
-    paraview_dir = _export_paraview_data(
-        OUT_DIR,
-        snapshots,
-        sim.solid,
-        CYLINDERS,
-        args.paraview_every,
-    )
-    if args.paraview_every == 0:
-        print(f"\nParaViewデータ保存: {paraview_dir} (final snapshot only)")
-    else:
-        print(f"\nParaViewデータ保存: {paraview_dir} (every {args.paraview_every} snapshots)")
-
 # 静止画を保存
 fig_stat, axes = plt.subplots(1, 3, figsize=(16, 5))
 fig_stat.suptitle(
     f"LBM-DEM  Re={RE:.0f}  step={sim.step_count:,}  {sim.n_p} particles  ({NX}×{NY})",
     fontsize=12,
 )
-snap = snapshots[-1]
+snap = last
 x = np.arange(NX)
 y = np.arange(NY)
 
@@ -671,17 +762,15 @@ fig_anim, ax_anim = plt.subplots(figsize=(10, 4))
 fig_anim.patch.set_facecolor("#0a0a0a")
 ax_anim.set_facecolor("#0a0a0a")
 
-snap0 = snapshots[0]
-speed_global_max = max(s["speed"].max() for s in snapshots)
+def _snapshot_at(frame_idx: int) -> dict:
+    if snapshots is not None:
+        return snapshots[frame_idx]
+    return _load_snapshot_npz(snapshot_paths[frame_idx])
+
+
+snap0 = _snapshot_at(0)
 
 # 合力の全フレームにわたるグローバルmin/max（カラースケール固定）
-all_force_values = [s["total_force"] for s in snapshots if len(s["total_force"])]
-if all_force_values:
-    force_global_min = min(s.min() for s in all_force_values)
-    force_global_max = max(s.max() for s in all_force_values)
-else:
-    force_global_min = 0.0
-    force_global_max = 1.0
 force_cmap = plt.cm.plasma
 force_norm = plt.Normalize(vmin=force_global_min, vmax=force_global_max)
 
@@ -714,7 +803,6 @@ for cx, cy, cr in CYLINDERS:
 
 # 粒子の円パッチ (合力に応じた初期色、per-particle半径でサイズ)
 particle_circles = []
-max_particles_in_frames = max(len(s["pos"]) for s in snapshots)
 for i in range(max_particles_in_frames):
     visible = i < len(snap0["pos"])
     center = (snap0["pos"][i, 0], snap0["pos"][i, 1]) if visible else (-100.0, -100.0)
@@ -745,7 +833,7 @@ plt.tight_layout()
 
 
 def update(frame_idx: int):
-    snap = snapshots[frame_idx]
+    snap = _snapshot_at(frame_idx)
     im_fluid.set_data(snap["speed"].T)
     for i, c in enumerate(particle_circles):
         if i < len(snap["pos"]):
