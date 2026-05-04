@@ -87,17 +87,40 @@ run_case() {
 
 wait_for_previous_run
 
+run_case highres_2cyl_r18_attr2x_phi40_muR3x \
+  --cylinder-spec 270 75 18 \
+  --cylinder-spec 270 135 18
+
+run_case highres_3cyl_r18_attr2x_phi40_muR3x \
+  --cylinder-spec 210 105 18 \
+  --cylinder-spec 270 105 18 \
+  --cylinder-spec 330 105 18
+
 run_case highres_4cyl_r18_attr2x_phi40_muR3x \
   --cylinder-spec 225 75 18 \
   --cylinder-spec 225 135 18 \
   --cylinder-spec 315 75 18 \
   --cylinder-spec 315 135 18
 
+run_case highres_4cyl_r21_attr2x_phi40_muR3x \
+  --cylinder-spec 225 75 21 \
+  --cylinder-spec 225 135 21 \
+  --cylinder-spec 315 75 21 \
+  --cylinder-spec 315 135 21
+
 run_case highres_4cyl_r15_attr2x_phi40_muR3x \
   --cylinder-spec 225 75 15 \
   --cylinder-spec 225 135 15 \
   --cylinder-spec 315 75 15 \
   --cylinder-spec 315 135 15
+
+run_case highres_6cyl_r18_attr2x_phi40_muR3x \
+  --cylinder-spec 180 75 18 \
+  --cylinder-spec 180 135 18 \
+  --cylinder-spec 270 75 18 \
+  --cylinder-spec 270 135 18 \
+  --cylinder-spec 360 75 18 \
+  --cylinder-spec 360 135 18
 
 run_case highres_6cyl_r15_attr2x_phi40_muR3x \
   --cylinder-spec 180 75 15 \
@@ -116,6 +139,17 @@ run_case highres_8cyl_r12_attr2x_phi40_muR3x \
   --cylinder-spec 310 135 12 \
   --cylinder-spec 390 75 12 \
   --cylinder-spec 390 135 12
+
+run_case highres_9cyl_r12_attr2x_phi40_muR3x \
+  --cylinder-spec 180 60 12 \
+  --cylinder-spec 180 105 12 \
+  --cylinder-spec 180 150 12 \
+  --cylinder-spec 270 60 12 \
+  --cylinder-spec 270 105 12 \
+  --cylinder-spec 270 150 12 \
+  --cylinder-spec 360 60 12 \
+  --cylinder-spec 360 105 12 \
+  --cylinder-spec 360 150 12
 
 if [[ ! -s "$SUMMARY_FILE" ]]; then
   echo "No skipped or failed conditions." > "$SUMMARY_FILE"
