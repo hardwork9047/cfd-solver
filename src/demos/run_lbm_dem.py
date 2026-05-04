@@ -56,6 +56,12 @@ parser.add_argument("--warmup-steps", type=int, default=1000,
                     help="Warmup steps before recording (default: 1000)")
 parser.add_argument("--no-video", action="store_true",
                     help="Skip MP4 generation")
+parser.add_argument("--paraview-output", action=argparse.BooleanOptionalAction,
+                    default=True,
+                    help="Export ParaView-readable VTK files (default: enabled)")
+parser.add_argument("--paraview-every", type=int, default=0,
+                    help="Export every Nth recorded snapshot to ParaView VTK. "
+                         "0 exports only the final snapshot (default: 0)")
 parser.add_argument("--result-tag", default=None,
                     help="Extra result directory tag to avoid overwriting parameter sweeps")
 parser.add_argument("--rolling-friction", action=argparse.BooleanOptionalAction,
@@ -98,6 +104,8 @@ if args.snapshot_every <= 0:
     parser.error("--snapshot-every must be positive")
 if args.warmup_steps < 0:
     parser.error("--warmup-steps must be non-negative")
+if args.paraview_every < 0:
+    parser.error("--paraview-every must be non-negative")
 if args.result_tag is not None and any(ch in args.result_tag for ch in "/\\"):
     parser.error("--result-tag must be a single directory name")
 if args.cylinder_spec is not None:
@@ -244,6 +252,166 @@ if PARTICLE_VOLUME_FRACTION is not None:
 OUT_DIR = program_results_dir(__file__, *out_parts)
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
+
+def _vtk_float(value: float) -> str:
+    """Format a float compactly for ASCII VTK."""
+    return f"{float(value):.9g}"
+
+
+def _write_fluid_vtk(path: Path, snap: dict, solid: np.ndarray) -> None:
+    """Write 2-D fluid fields as a legacy VTK structured-points file."""
+    nx, ny = snap["speed"].shape
+    n_points = nx * ny
+    with path.open("w", encoding="utf-8") as handle:
+        handle.write("# vtk DataFile Version 3.0\n")
+        handle.write(f"LBM-DEM fluid field step {snap['step']}\n")
+        handle.write("ASCII\n")
+        handle.write("DATASET STRUCTURED_POINTS\n")
+        handle.write(f"DIMENSIONS {nx} {ny} 1\n")
+        handle.write("ORIGIN 0 0 0\n")
+        handle.write("SPACING 1 1 1\n")
+        handle.write(f"POINT_DATA {n_points}\n")
+        handle.write("VECTORS velocity float\n")
+        for y_idx in range(ny):
+            for x_idx in range(nx):
+                handle.write(
+                    f"{_vtk_float(snap['ux'][x_idx, y_idx])} "
+                    f"{_vtk_float(snap['uy'][x_idx, y_idx])} 0\n"
+                )
+        handle.write("SCALARS speed float 1\n")
+        handle.write("LOOKUP_TABLE default\n")
+        for y_idx in range(ny):
+            for x_idx in range(nx):
+                handle.write(f"{_vtk_float(snap['speed'][x_idx, y_idx])}\n")
+        handle.write("SCALARS solid int 1\n")
+        handle.write("LOOKUP_TABLE default\n")
+        for y_idx in range(ny):
+            for x_idx in range(nx):
+                handle.write(f"{int(solid[x_idx, y_idx])}\n")
+
+
+def _write_particles_vtk(path: Path, snap: dict) -> None:
+    """Write DEM particles as VTK polydata points with radius and force scalars."""
+    positions = snap["pos"]
+    velocities = snap["vel"]
+    radii = snap["radii"]
+    forces = snap["total_force"]
+    n_particles = len(positions)
+    with path.open("w", encoding="utf-8") as handle:
+        handle.write("# vtk DataFile Version 3.0\n")
+        handle.write(f"LBM-DEM particles step {snap['step']}\n")
+        handle.write("ASCII\n")
+        handle.write("DATASET POLYDATA\n")
+        handle.write(f"POINTS {n_particles} float\n")
+        for pos in positions:
+            handle.write(f"{_vtk_float(pos[0])} {_vtk_float(pos[1])} 0\n")
+        handle.write(f"VERTICES {n_particles} {2 * n_particles}\n")
+        for idx in range(n_particles):
+            handle.write(f"1 {idx}\n")
+        handle.write(f"POINT_DATA {n_particles}\n")
+        handle.write("SCALARS radius float 1\n")
+        handle.write("LOOKUP_TABLE default\n")
+        for radius in radii:
+            handle.write(f"{_vtk_float(radius)}\n")
+        handle.write("VECTORS velocity float\n")
+        for vel in velocities:
+            handle.write(f"{_vtk_float(vel[0])} {_vtk_float(vel[1])} 0\n")
+        handle.write("SCALARS force_magnitude float 1\n")
+        handle.write("LOOKUP_TABLE default\n")
+        for force in forces:
+            handle.write(f"{_vtk_float(force)}\n")
+
+
+def _write_cylinders_vtk(
+    path: Path,
+    cylinders: list[tuple[float, float, float]],
+    n_segments: int = 96,
+) -> None:
+    """Write fixed cylinders as polygonal discs for ParaView."""
+    points: list[tuple[float, float, float]] = []
+    polygons: list[list[int]] = []
+    for cx, cy, radius in cylinders:
+        start = len(points)
+        polygon = []
+        for seg in range(n_segments):
+            theta = 2.0 * np.pi * seg / n_segments
+            points.append((cx + radius * np.cos(theta), cy + radius * np.sin(theta), 0.0))
+            polygon.append(start + seg)
+        polygons.append(polygon)
+
+    with path.open("w", encoding="utf-8") as handle:
+        handle.write("# vtk DataFile Version 3.0\n")
+        handle.write("LBM-DEM fixed cylinders\n")
+        handle.write("ASCII\n")
+        handle.write("DATASET POLYDATA\n")
+        handle.write(f"POINTS {len(points)} float\n")
+        for x_pos, y_pos, z_pos in points:
+            handle.write(f"{_vtk_float(x_pos)} {_vtk_float(y_pos)} {_vtk_float(z_pos)}\n")
+        handle.write(f"POLYGONS {len(polygons)} {len(polygons) * (n_segments + 1)}\n")
+        for polygon in polygons:
+            handle.write(f"{len(polygon)} {' '.join(str(idx) for idx in polygon)}\n")
+        handle.write(f"CELL_DATA {len(polygons)}\n")
+        handle.write("SCALARS radius float 1\n")
+        handle.write("LOOKUP_TABLE default\n")
+        for _, _, radius in cylinders:
+            handle.write(f"{_vtk_float(radius)}\n")
+
+
+def _write_pvd(path: Path, entries: list[tuple[int, Path]]) -> None:
+    """Write a ParaView collection file for a VTK time series."""
+    with path.open("w", encoding="utf-8") as handle:
+        handle.write('<?xml version="1.0"?>\n')
+        handle.write('<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">\n')
+        handle.write("  <Collection>\n")
+        for step, vtk_path in entries:
+            handle.write(
+                f'    <DataSet timestep="{step}" group="" part="0" '
+                f'file="{vtk_path.as_posix()}"/>\n'
+            )
+        handle.write("  </Collection>\n")
+        handle.write("</VTKFile>\n")
+
+
+def _paraview_snapshot_indices(n_snapshots: int, every: int) -> list[int]:
+    """Return snapshot indices to export. 0 means final snapshot only."""
+    if n_snapshots <= 0:
+        return []
+    if every == 0:
+        return [n_snapshots - 1]
+    indices = list(range(0, n_snapshots, every))
+    if indices[-1] != n_snapshots - 1:
+        indices.append(n_snapshots - 1)
+    return indices
+
+
+def _export_paraview_data(
+    out_dir: Path,
+    snapshots: list[dict],
+    solid: np.ndarray,
+    cylinders: list[tuple[float, float, float]],
+    every: int,
+) -> Path:
+    """Export fluid, particle, and cylinder data for ParaView."""
+    paraview_dir = out_dir / "paraview"
+    paraview_dir.mkdir(parents=True, exist_ok=True)
+
+    _write_cylinders_vtk(paraview_dir / "cylinders.vtk", cylinders)
+    fluid_entries: list[tuple[int, Path]] = []
+    particle_entries: list[tuple[int, Path]] = []
+    for frame_idx in _paraview_snapshot_indices(len(snapshots), every):
+        snap = snapshots[frame_idx]
+        step = int(snap["step"])
+        fluid_name = f"fluid_{frame_idx:04d}_step_{step:07d}.vtk"
+        particle_name = f"particles_{frame_idx:04d}_step_{step:07d}.vtk"
+        _write_fluid_vtk(paraview_dir / fluid_name, snap, solid)
+        _write_particles_vtk(paraview_dir / particle_name, snap)
+        fluid_entries.append((step, Path(fluid_name)))
+        particle_entries.append((step, Path(particle_name)))
+
+    _write_pvd(paraview_dir / "fluid_series.pvd", fluid_entries)
+    _write_pvd(paraview_dir / "particles_series.pvd", particle_entries)
+    return paraview_dir
+
 # ---------------------------------------------------------------------------
 # 初期化
 # ---------------------------------------------------------------------------
@@ -387,6 +555,21 @@ if args.particle_source == "left-inlet":
     print(f"  投入済み粒子面積: {sim.injected_particle_area:.4e}")
     print(f"  未投入面積予算  : {sim.inlet_particle_area_budget:.4e}")
 
+# ParaView 用データを保存
+paraview_dir = None
+if args.paraview_output:
+    paraview_dir = _export_paraview_data(
+        OUT_DIR,
+        snapshots,
+        sim.solid,
+        CYLINDERS,
+        args.paraview_every,
+    )
+    if args.paraview_every == 0:
+        print(f"\nParaViewデータ保存: {paraview_dir} (final snapshot only)")
+    else:
+        print(f"\nParaViewデータ保存: {paraview_dir} (every {args.paraview_every} snapshots)")
+
 # 静止画を保存
 fig_stat, axes = plt.subplots(1, 3, figsize=(16, 5))
 fig_stat.suptitle(
@@ -458,6 +641,11 @@ if args.no_video:
     print("\n[3/3] 動画作成をスキップ (--no-video)")
     print(f"\n出力ファイル:")
     print(f"  静止画: {static_path}")
+    if paraview_dir is not None:
+        print(f"  ParaView: {paraview_dir}")
+        print(f"    流体時系列: {paraview_dir / 'fluid_series.pvd'}")
+        print(f"    粒子時系列: {paraview_dir / 'particles_series.pvd'}")
+        print(f"    固定円柱  : {paraview_dir / 'cylinders.vtk'}")
     print(f"\n完了!")
     sys.exit(0)
 
@@ -581,4 +769,9 @@ print(f"動画保存: {video_path}")
 print(f"\n出力ファイル:")
 print(f"  静止画: {static_path}")
 print(f"  動  画: {video_path}")
+if paraview_dir is not None:
+    print(f"  ParaView: {paraview_dir}")
+    print(f"    流体時系列: {paraview_dir / 'fluid_series.pvd'}")
+    print(f"    粒子時系列: {paraview_dir / 'particles_series.pvd'}")
+    print(f"    固定円柱  : {paraview_dir / 'cylinders.vtk'}")
 print(f"\n完了!")
