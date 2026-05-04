@@ -67,6 +67,16 @@ def test_particle_repulsion_pushes_separated_particles_apart():
     np.testing.assert_allclose(forces[0], -forces[1], rtol=1e-12, atol=1e-12)
 
 
+def test_particle_pair_candidates_use_interaction_cutoff():
+    """The cell list must include separated particles inside the surface-force range."""
+    sim = _two_particle_solver(particle_attraction=True)
+    sim.pos[:] = np.array([[20.0, 15.0], [26.5, 15.0]])
+
+    pairs = list(sim._particle_pair_candidates())
+
+    assert pairs == [(0, 1)]
+
+
 def test_particle_attraction_and_repulsion_are_mutually_exclusive():
     """The two non-contact surface-force modes cannot be enabled together."""
     try:

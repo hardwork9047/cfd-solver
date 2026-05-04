@@ -707,38 +707,60 @@ class LBMDEMSolver:
         torque_limit = self.rolling_friction_coeff * normal_force * radius
         return float(np.clip(torque_trial, -torque_limit, torque_limit))
 
-    def _particle_pair_candidates(self) -> list[tuple[int, int]]:
-        """Return nearby particle pairs using a simple cell list."""
-        if self.n_p < 2:
-            return []
+    def _particle_interaction_search_radius(self) -> float:
+        """Maximum centre-to-centre distance that can produce pair forces."""
         interaction_cutoff = 0.0
         if self.particle_attraction:
             interaction_cutoff = max(interaction_cutoff, self.attraction_cutoff)
         if self.particle_repulsion:
             interaction_cutoff = max(interaction_cutoff, self.repulsion_cutoff)
-        cell_size = max(2.0 * float(np.max(self.radii)) + interaction_cutoff + 1.0, 1.0)
+        return 2.0 * float(np.max(self.radii)) + interaction_cutoff
+
+    def _particle_cell_size(self) -> float:
+        """Cell-list size for contact and near-surface particle interactions."""
+        if self.n_p == 0:
+            return 1.0
+        return max(self._particle_interaction_search_radius(), 1.0)
+
+    def _build_particle_cell_list(self, cell_size: float) -> dict[tuple[int, int], list[int]]:
+        """Assign particle centres to spatial cells."""
         cells: dict[tuple[int, int], list[int]] = {}
         for i in range(self.n_p):
-            key = (int(self.pos[i, 0] // cell_size), int(self.pos[i, 1] // cell_size))
+            key = (
+                int(np.floor(self.pos[i, 0] / cell_size)),
+                int(np.floor(self.pos[i, 1] / cell_size)),
+            )
             cells.setdefault(key, []).append(i)
+        return cells
 
-        pairs: list[tuple[int, int]] = []
-        seen: set[tuple[int, int]] = set()
+    def _particle_pair_candidates(self):
+        """Yield nearby particle pairs using a DEM-style cell list.
+
+        The cell size is at least the largest centre-to-centre interaction
+        range.  Therefore each particle only needs its own cell and the
+        adjacent cells.  Only the forward half-neighbourhood is traversed so
+        pairs are generated once without a ``seen`` set.
+        """
+        if self.n_p < 2:
+            return
+
+        cell_size = self._particle_cell_size()
+        cells = self._build_particle_cell_list(cell_size)
+        neighbour_offsets = ((0, 0), (1, -1), (1, 0), (1, 1), (0, 1))
+
         for (cx, cy), ids in cells.items():
-            for dx in (-1, 0, 1):
-                for dy in (-1, 0, 1):
-                    other = cells.get((cx + dx, cy + dy))
-                    if other is None:
-                        continue
+            for dx, dy in neighbour_offsets:
+                other = cells.get((cx + dx, cy + dy))
+                if other is None:
+                    continue
+                if dx == 0 and dy == 0:
+                    for i_idx, i in enumerate(ids):
+                        for j in ids[i_idx + 1 :]:
+                            yield i, j
+                else:
                     for i in ids:
                         for j in other:
-                            if i >= j:
-                                continue
-                            pair = (i, j)
-                            if pair not in seen:
-                                seen.add(pair)
-                                pairs.append(pair)
-        return pairs
+                            yield i, j
 
     def _dem_loads(self, dt_sub: float) -> tuple[np.ndarray, np.ndarray]:
         """
