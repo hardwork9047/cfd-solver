@@ -12,6 +12,7 @@ import argparse
 import csv
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -268,6 +269,8 @@ if args.result_tag:
 if PARTICLE_VOLUME_FRACTION is not None:
     pct = int(round(PARTICLE_VOLUME_FRACTION * 100))
     out_parts.append(f"phi_{pct:02d}pct")
+run_timestamp = datetime.now().strftime("run_%Y%m%d_%H%M%S_%f")
+out_parts.append(run_timestamp)
 OUT_DIR = program_results_dir(__file__, *out_parts)
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
