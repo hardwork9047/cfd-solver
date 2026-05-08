@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
+import platform
+import subprocess
 import sys
 import time
 from datetime import datetime
@@ -297,6 +300,77 @@ OUT_DIR = program_results_dir(__file__, *out_parts)
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def _git_value(args_: list[str]) -> str | None:
+    """Return a git command result, or None when unavailable."""
+    try:
+        completed = subprocess.run(
+            ["git", *args_],
+            cwd=Path(__file__).resolve().parents[2],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return completed.stdout.strip()
+
+
+def _write_metadata(path: Path, sim: LBMDEMSolver | None = None) -> None:
+    """Write reproducibility metadata next to numerical outputs."""
+    git_status = _git_value(["status", "--short"])
+    metadata = {
+        "schema_version": 1,
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "program": str(Path(__file__).resolve()),
+        "command": sys.argv,
+        "output_dir": str(OUT_DIR),
+        "python": {
+            "version": sys.version,
+            "executable": sys.executable,
+            "platform": platform.platform(),
+        },
+        "git": {
+            "commit": _git_value(["rev-parse", "HEAD"]),
+            "branch": _git_value(["branch", "--show-current"]),
+            "is_dirty": bool(git_status),
+            "status_short": git_status or "",
+        },
+        "arguments": vars(args),
+        "configuration": {
+            "nx": NX,
+            "ny": NY,
+            "reynolds_number": RE,
+            "target_u_max": U_MAX,
+            "reynolds_length": REYNOLDS_LENGTH,
+            "particle_radius": RADIUS,
+            "radius_variation": RADIUS_VARIATION,
+            "density_ratio": DENSITY_RATIO,
+            "gravity": GRAVITY,
+            "total_steps": TOTAL_STEPS,
+            "snapshot_every": SNAPSHOT_EVERY,
+            "warmup_steps": args.warmup_steps,
+            "particle_volume_fraction": PARTICLE_VOLUME_FRACTION,
+            "source_volume_fraction": SOURCE_VOLUME_FRACTION,
+            "n_particles_requested": N_PARTICLES,
+            "cylinders": [
+                {"x": float(cx), "y": float(cy), "radius": float(cr)}
+                for cx, cy, cr in CYLINDERS
+            ],
+        },
+    }
+    if sim is not None:
+        metadata["solver"] = {
+            "nu": sim.nu,
+            "tau": sim.tau,
+            "omega": sim.omega,
+            "initial_drive_force": sim.initial_F_drive,
+            "current_drive_force": sim.F_drive,
+            "fluid_area": sim.fluid_area,
+            "solid_area_fraction": float(np.count_nonzero(sim.solid) / sim.solid.size),
+        }
+    path.write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")
+
+
 def _vtk_float(value: float) -> str:
     """Format a float compactly for ASCII VTK."""
     return f"{float(value):.9g}"
@@ -535,17 +609,22 @@ def _contact_counts(sim: FastLBMDEM) -> dict[str, int]:
         wall += int(np.count_nonzero(sim.pos[:, 1] > wall_top))
 
     cylinder = 0
-    for cx, cy, cr in sim.cylinders:
+    cylinder_contacts_by_id: dict[str, int] = {}
+    for idx, (cx, cy, cr) in enumerate(sim.cylinders, start=1):
         if sim.n_p == 0:
-            break
+            cylinder_contacts_by_id[f"cylinder_{idx:02d}_contacts"] = 0
+            continue
         dist = np.hypot(sim.pos[:, 0] - cx, sim.pos[:, 1] - cy)
-        cylinder += int(np.count_nonzero(dist < cr + sim.radii))
+        contacts = int(np.count_nonzero(dist < cr + sim.radii))
+        cylinder_contacts_by_id[f"cylinder_{idx:02d}_contacts"] = contacts
+        cylinder += contacts
 
     return {
         "particle_particle_contacts": particle_particle,
         "wall_contacts": wall,
         "cylinder_contacts": cylinder,
         "total_contacts": particle_particle + wall + cylinder,
+        **cylinder_contacts_by_id,
     }
 
 
@@ -641,6 +720,9 @@ sim = FastLBMDEM(
     particle_source=args.particle_source.replace("-", "_"),
     source_volume_fraction=SOURCE_VOLUME_FRACTION,
 )
+metadata_path = OUT_DIR / "metadata.json"
+_write_metadata(metadata_path, sim)
+print(f"Metadata saved: {metadata_path}")
 
 # ---------------------------------------------------------------------------
 # ウォームアップ (流れを発達させる)
@@ -910,6 +992,7 @@ plt.close(fig_stat)
 
 if args.no_video:
     print("\n[3/3] 動画作成をスキップ (--no-video)")
+    _write_metadata(metadata_path, sim)
     print(f"\n出力ファイル:")
     print(f"  静止画: {static_path}")
     print(f"  時系列CSV: {analysis_csv}")
@@ -1034,6 +1117,7 @@ writer = animation.FFMpegWriter(fps=FPS, bitrate=2000,
                                  extra_args=["-pix_fmt", "yuv420p"])
 ani.save(str(video_path), writer=writer, dpi=150)
 plt.close(fig_anim)
+_write_metadata(metadata_path, sim)
 
 print(f"動画保存: {video_path}")
 print(f"\n出力ファイル:")
