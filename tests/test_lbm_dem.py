@@ -170,3 +170,45 @@ def test_left_inlet_mode_generates_particles_from_flux_budget_and_deletes_outflo
 
     assert sim.n_p == 0
     assert sim.removed_particles == 1
+
+
+def test_reynolds_length_sets_viscosity_from_particle_diameter_scale():
+    """The Reynolds-number length scale can be decoupled from channel height."""
+    sim = LBMDEMSolver(
+        nx=40,
+        ny=30,
+        Re=100.0,
+        u_max=0.05,
+        reynolds_length=4.0,
+        n_particles=1,
+        particle_radius=2.0,
+        gravity=0.0,
+        seed=5,
+    )
+
+    assert np.isclose(sim.reynolds_length, 4.0)
+    assert np.isclose(sim.nu, 0.05 * 4.0 / 100.0)
+
+
+def test_target_max_velocity_flow_control_relaxes_drive_force():
+    """Target-max-speed control should reduce drive force when the flow is too fast."""
+    sim = LBMDEMSolver(
+        nx=40,
+        ny=30,
+        Re=100.0,
+        u_max=0.05,
+        reynolds_length=4.0,
+        flow_control="target_max_velocity",
+        flow_control_gain=0.5,
+        n_particles=1,
+        particle_radius=2.0,
+        gravity=0.0,
+        seed=6,
+    )
+    ux = np.full((sim.nx, sim.ny), 0.10)
+    uy = np.zeros((sim.nx, sim.ny))
+    old_drive = sim.F_drive
+
+    sim._control_drive_force(ux, uy)
+
+    assert sim.F_drive < old_drive

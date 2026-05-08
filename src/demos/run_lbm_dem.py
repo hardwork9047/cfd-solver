@@ -34,6 +34,18 @@ parser.add_argument("--nx", type=int, default=180,
                     help="Grid width in lattice nodes (default: 180)")
 parser.add_argument("--ny", type=int, default=70,
                     help="Grid height in lattice nodes (default: 70)")
+parser.add_argument("--reynolds-number", "--Re", dest="reynolds_number",
+                    type=float, default=100.0,
+                    help="Particle-diameter Reynolds number based on max flow speed "
+                         "(default: 100)")
+parser.add_argument("--u-max", type=float, default=0.05,
+                    help="Target maximum fluid speed in lattice units (default: 0.05)")
+parser.add_argument("--flow-control", action=argparse.BooleanOptionalAction,
+                    default=True,
+                    help="Adjust drive force to keep max fluid speed near --u-max "
+                         "(default: enabled)")
+parser.add_argument("--flow-control-gain", type=float, default=0.2,
+                    help="Relaxation gain for max-speed flow control (default: 0.2)")
 parser.add_argument("--cylinder", action="store_true", help="Add a fixed solid cylinder")
 parser.add_argument("--cyl-x", type=float, default=None,
                     help="Cylinder center x [lattice] (default: NX/4)")
@@ -112,6 +124,12 @@ if args.nx <= 2:
     parser.error("--nx must be greater than 2")
 if args.ny <= 2:
     parser.error("--ny must be greater than 2")
+if args.reynolds_number <= 0.0:
+    parser.error("--reynolds-number must be positive")
+if args.u_max < 0.0:
+    parser.error("--u-max must be non-negative")
+if not (0.0 < args.flow_control_gain <= 1.0):
+    parser.error("--flow-control-gain must be in the range (0, 1]")
 if args.particle_radius <= 0.0:
     parser.error("--particle-radius must be positive")
 if args.radius_variation < 0.0:
@@ -158,6 +176,9 @@ class FastLBMDEM(LBMDEMSolver):
             self._refresh_cache()
         return self._cached_rho, self._cached_ux, self._cached_uy
 
+    def _invalidate_macroscopic_cache(self):
+        self._cache_step = -1
+
     def advance(self, n_steps: int = 1):
         for _ in range(n_steps):
             # LBM ステップ前にキャッシュを更新
@@ -172,10 +193,11 @@ class FastLBMDEM(LBMDEMSolver):
 
 NX              = args.nx    # 格子幅
 NY              = args.ny     # 格子高さ
-RE              = 100.0  # Reynolds 数
-U_MAX           = 0.05   # 最大流速 (格子単位)
+RE              = args.reynolds_number  # 粒子径基準 Reynolds 数
+U_MAX           = args.u_max   # 目標最大流速 (格子単位)
 DEFAULT_N_PARTICLES = 40 # 粒子数 (分率未指定時)
 RADIUS          = args.particle_radius    # 粒子平均半径 (格子単位)
+REYNOLDS_LENGTH = 2.0 * RADIUS  # 代表長さ: 粒子径
 RADIUS_VARIATION = args.radius_variation  # 粒子径バリエーション
 DENSITY_RATIO   = 2.0    # ρ_p / ρ_f
 GRAVITY         = 3e-5   # 重力加速度 (格子単位)
@@ -555,6 +577,18 @@ def _write_analysis_outputs(out_dir: Path, rows: list[dict[str, float | int]]) -
 print("=" * 60)
 print("  LBM-DEM 連成シミュレーション")
 print("=" * 60)
+print(
+    f"Reynolds definition: Re_p = U_max * d_p / nu = {RE:.1f}, "
+    f"d_p={REYNOLDS_LENGTH:.3f}, U_max={U_MAX:.4f}"
+)
+print(
+    "Flow control: "
+    + (
+        f"target max velocity (gain={args.flow_control_gain:.2f})"
+        if args.flow_control
+        else "fixed pressure/body force"
+    )
+)
 if PARTICLE_VOLUME_FRACTION is not None:
     if args.particle_source == "left-inlet":
         print(
@@ -580,6 +614,9 @@ if CYLINDERS:
 sim = FastLBMDEM(
     nx=NX, ny=NY,
     Re=RE, u_max=U_MAX,
+    reynolds_length=REYNOLDS_LENGTH,
+    flow_control="target_max_velocity" if args.flow_control else "fixed_pressure",
+    flow_control_gain=args.flow_control_gain,
     n_particles=N_PARTICLES,
     particle_radius=RADIUS,
     radius_variation=RADIUS_VARIATION,
@@ -691,6 +728,10 @@ for frame_idx in range(n_frames):
         "inlet_flux": inlet_flux,
         "outlet_flux": outlet_flux,
         "permeate_flux": outlet_flux,
+        "reynolds_number": RE,
+        "reynolds_length": REYNOLDS_LENGTH,
+        "target_u_max": U_MAX,
+        "drive_force": sim.F_drive,
         "mean_ux": float(np.mean(ux[fluid_mask])),
         "max_speed": float(speed[fluid_mask].max()),
         "mean_pressure": float(np.mean(pressure[fluid_mask])),

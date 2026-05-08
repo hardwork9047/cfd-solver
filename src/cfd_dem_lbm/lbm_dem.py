@@ -235,6 +235,12 @@ class LBMDEMSolver:
     nx, ny            : int   — grid dimensions
     Re                : float — Reynolds number  Re = u_max * ny / nu
     u_max             : float — target Poiseuille centreline velocity (<0.3 for stability)
+    reynolds_length   : float | None — characteristic length for Re.  Defaults
+                        to channel height for backward compatibility.
+    flow_control      : str — ``"fixed_pressure"`` keeps a constant body force;
+                        ``"target_max_velocity"`` adjusts the body force so the
+                        fluid maximum speed approaches ``u_max``.
+    flow_control_gain : float — relaxation gain for target-max-velocity control.
     n_particles       : int   — number of DEM particles
     particle_radius   : float — mean particle radius [lattice nodes]
     radius_variation  : float — uniform ±fraction for per-particle radius (e.g. 0.15 = ±15%)
@@ -306,6 +312,9 @@ class LBMDEMSolver:
         ny: int = 80,
         Re: float = 100.0,
         u_max: float = 0.05,
+        reynolds_length: float | None = None,
+        flow_control: str = "fixed_pressure",
+        flow_control_gain: float = 0.2,
         n_particles: int = 20,
         particle_radius: float = 3.0,
         radius_variation: float = 0.0,
@@ -339,11 +348,20 @@ class LBMDEMSolver:
             raise ValueError("particle_source must be 'initial' or 'left_inlet'")
         if source_volume_fraction is not None and source_volume_fraction < 0.0:
             raise ValueError("source_volume_fraction must be non-negative")
+        if reynolds_length is not None and reynolds_length <= 0.0:
+            raise ValueError("reynolds_length must be positive")
+        if flow_control not in {"fixed_pressure", "target_max_velocity"}:
+            raise ValueError("flow_control must be 'fixed_pressure' or 'target_max_velocity'")
+        if not (0.0 < flow_control_gain <= 1.0):
+            raise ValueError("flow_control_gain must be in the range (0, 1]")
 
         self.nx = nx
         self.ny = ny
         self.Re = Re
         self.u_max = u_max
+        self.reynolds_length = reynolds_length if reynolds_length is not None else float(ny)
+        self.flow_control = flow_control
+        self.flow_control_gain = flow_control_gain
         self.n_p = n_particles
         self.r_p = particle_radius  # representative (mean) radius
         self.radius_variation = radius_variation
@@ -376,11 +394,12 @@ class LBMDEMSolver:
         self.last_inlet_flow_rate = 0.0
 
         # --- Fluid parameters ---
-        self.nu = u_max * ny / Re
+        self.nu = u_max * self.reynolds_length / Re if Re > 0.0 else 0.0
         self.tau = self.nu / CS2 + 0.5
         self.omega = 1.0 / self.tau
         # Body force to sustain Poiseuille flow: ∂p/∂x = -8 μ u_max / ny²
         self.F_drive = 8.0 * self.nu * u_max / ny**2
+        self.initial_F_drive = self.F_drive
 
         # Per-particle radii (uniform ±radius_variation around r_p)
         rng_rv = np.random.default_rng(seed + 999)
@@ -398,8 +417,14 @@ class LBMDEMSolver:
 
         print("LBM-DEM Coupled Solver")
         print(f"  Grid         : {nx} × {ny}")
-        print(f"  Re           : {Re:.1f}   nu = {self.nu:.5f}   tau = {self.tau:.4f}")
-        print(f"  u_max        : {u_max:.4f}   F_drive = {self.F_drive:.2e}")
+        print(
+            f"  Re           : {Re:.1f}   L_ref = {self.reynolds_length:.3f}   "
+            f"nu = {self.nu:.5f}   tau = {self.tau:.4f}"
+        )
+        print(
+            f"  u_max target : {u_max:.4f}   F_drive = {self.F_drive:.2e}   "
+            f"flow_control={flow_control}"
+        )
         print(
             f"  Particles    : {n_particles}  r = {particle_radius:.1f} ± "
             f"{radius_variation*100:.0f}%  density_ratio = {density_ratio:.1f}"
@@ -735,6 +760,28 @@ class LBMDEMSolver:
         ux += 0.5 * self.Fx / rho
         uy += 0.5 * self.Fy / rho
         return rho, ux, uy
+
+    def _invalidate_macroscopic_cache(self) -> None:
+        """Hook for subclasses that cache macroscopic fields."""
+        return None
+
+    def _fluid_max_speed(self, ux: np.ndarray, uy: np.ndarray) -> float:
+        """Return the maximum fluid speed over non-solid nodes."""
+        speed = np.sqrt(ux**2 + uy**2)
+        if self.fluid_area <= 0.0:
+            return 0.0
+        return float(np.max(speed[~self.solid]))
+
+    def _control_drive_force(self, ux: np.ndarray, uy: np.ndarray) -> None:
+        """Adjust the drive force to keep the maximum fluid speed near ``u_max``."""
+        if self.flow_control != "target_max_velocity" or self.u_max <= 0.0:
+            return
+        current_max = self._fluid_max_speed(ux, uy)
+        if current_max <= 1e-12:
+            return
+        ratio = np.clip(self.u_max / current_max, 0.5, 2.0)
+        gain = self.flow_control_gain
+        self.F_drive *= (1.0 - gain) + gain * ratio
 
     def _lbm_step(self, rho: np.ndarray, ux: np.ndarray, uy: np.ndarray) -> None:
         """One LBM step: collide → stream → bounce-back."""
@@ -1255,9 +1302,13 @@ class LBMDEMSolver:
         for _ in range(n_steps):
             self._try_feed_left_inlet_particles()
 
+            _, ux_ctrl, uy_ctrl = self._macroscopic()
+            self._control_drive_force(ux_ctrl, uy_ctrl)
+
             # --- Reset body force to driving force only ---
             self.Fx[:] = self.F_drive
             self.Fy[:] = 0.0
+            self._invalidate_macroscopic_cache()
 
             # --- Particle → fluid back-reaction (per-particle radius) ---
             if self.n_p:
@@ -1271,6 +1322,7 @@ class LBMDEMSolver:
                     -drag[:, 1],
                     self.radii,
                 )
+                self._invalidate_macroscopic_cache()
 
             # --- LBM step ---
             rho, ux, uy = self._macroscopic()
