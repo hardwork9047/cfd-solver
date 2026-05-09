@@ -132,6 +132,13 @@ def test_invalid_solver_methods_are_rejected():
         raise AssertionError("Expected invalid fluid accelerator to fail")
 
     try:
+        LBMDEMSolver(compute_accelerator="not-an-accelerator")
+    except ValueError as exc:
+        assert "compute_accelerator" in str(exc)
+    else:
+        raise AssertionError("Expected invalid compute accelerator to fail")
+
+    try:
         LBMDEMSolver(particle_search="not-a-search")
     except ValueError as exc:
         assert "particle_search" in str(exc)
@@ -465,3 +472,39 @@ def test_numba_fluid_accelerator_matches_numpy_when_available():
 
     for numpy_field, numba_field in zip(numpy_sim.get_fields(), numba_sim.get_fields()):
         np.testing.assert_allclose(numba_field, numpy_field, rtol=1e-12, atol=1e-12)
+
+
+def test_numba_compute_accelerator_matches_numpy_when_available():
+    """Compiled DEM boundary and solid-mask helpers should match NumPy helpers."""
+    kwargs = dict(
+        nx=44,
+        ny=24,
+        Re=30.0,
+        u_max=0.02,
+        n_particles=2,
+        particle_radius=2.0,
+        gravity=0.0,
+        rolling_friction=True,
+        cylinders=[(18.0, 12.0, 4.0)],
+        particle_fluid_coupling="solid_boundary",
+        seed=13,
+    )
+    numpy_sim = FastLBMDEM(**kwargs, compute_accelerator="numpy")
+    numba_sim = FastLBMDEM(**kwargs, compute_accelerator="numba")
+    if not numba_sim.uses_numba_compute:
+        return
+    positions = np.array([[21.0, 12.0], [30.0, 3.0]])
+    velocities = np.array([[-0.2, 0.0], [0.1, -0.1]])
+    for sim in (numpy_sim, numba_sim):
+        sim.pos[:] = positions
+        sim.vel[:] = velocities
+        sim.omega_p[:] = np.array([0.3, -0.2])
+        sim._update_particle_solid_mask()
+
+    np.testing.assert_array_equal(numba_sim.particle_solid, numpy_sim.particle_solid)
+    np.testing.assert_allclose(
+        numba_sim._dem_forces(dt_sub=1.0),
+        numpy_sim._dem_forces(dt_sub=1.0),
+        rtol=1e-12,
+        atol=1e-12,
+    )

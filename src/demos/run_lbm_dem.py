@@ -63,6 +63,11 @@ parser.add_argument("--fluid-accelerator",
                     default="numpy",
                     help="LBM execution backend. 'numba' uses the compiled step "
                          "when available; default keeps the stable NumPy path")
+parser.add_argument("--compute-accelerator",
+                    choices=["numpy", "numba", "auto"],
+                    default="auto",
+                    help="Backend for DEM boundary loads, solid masks, and IBM "
+                         "bookkeeping (default: auto)")
 parser.add_argument("--particle-method",
                     choices=["dem-hertz", "dem-linear"],
                     default="dem-hertz",
@@ -371,6 +376,7 @@ def _write_metadata(path: Path, sim: LBMDEMSolver | None = None) -> None:
             "flow_condition": FLOW_CONDITION,
             "fluid_method": args.fluid_method,
             "fluid_accelerator": args.fluid_accelerator,
+            "compute_accelerator": args.compute_accelerator,
             "particle_method": args.particle_method,
             "particle_search": args.particle_search,
             "particle_fluid_coupling": args.particle_fluid_coupling,
@@ -401,6 +407,8 @@ def _write_metadata(path: Path, sim: LBMDEMSolver | None = None) -> None:
             "fluid_method": sim.fluid_method,
             "fluid_accelerator": sim.fluid_accelerator,
             "uses_numba_lbm": sim.uses_numba_lbm,
+            "compute_accelerator": sim.compute_accelerator,
+            "uses_numba_compute": sim.uses_numba_compute,
             "particle_method": sim.particle_method,
             "particle_search": sim.particle_search,
             "particle_fluid_coupling": sim.particle_fluid_coupling,
@@ -716,6 +724,7 @@ print(
 )
 print(f"Fluid method: {args.fluid_method}")
 print(f"Fluid accelerator: {args.fluid_accelerator}")
+print(f"Compute accelerator: {args.compute_accelerator}")
 print(f"Particle method: {args.particle_method}")
 print(f"Particle search: {args.particle_search}")
 print(f"Particle-fluid coupling: {args.particle_fluid_coupling}")
@@ -750,6 +759,7 @@ sim = FastLBMDEM(
     flow_control_gain=args.flow_control_gain,
     fluid_method=args.fluid_method,
     fluid_accelerator=args.fluid_accelerator,
+    compute_accelerator=args.compute_accelerator,
     particle_method=args.particle_method,
     particle_search=args.particle_search,
     particle_fluid_coupling=args.particle_fluid_coupling,

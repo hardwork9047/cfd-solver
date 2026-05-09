@@ -64,6 +64,7 @@ CS2 = 1.0 / 3.0  # lattice speed of sound squared
 FLUID_METHODS = ("lbm-bgk-guo", "lbm-trt-guo")
 PARTICLE_FLUID_COUPLINGS = ("point_force", "solid_boundary", "immersed_boundary")
 FLUID_ACCELERATORS = ("numpy", "numba", "auto")
+COMPUTE_ACCELERATORS = ("numpy", "numba", "auto")
 PARTICLE_SEARCH_METHODS = ("cell_list", "all_pairs")
 
 
@@ -272,6 +273,91 @@ else:
     _lbm_step_numba = None
 
 
+if njit is not None:  # pragma: no cover - exercised only when numba is installed
+
+    @njit(cache=True)
+    def _particle_solid_mask_numba(pos, radii, nx, ny, fixed_solid):
+        particle_solid = np.zeros((nx, ny), dtype=np.bool_)
+        for i in range(pos.shape[0]):
+            radius = radii[i]
+            x_pos = pos[i, 0]
+            y_pos = pos[i, 1]
+            x_min = int(np.floor(x_pos - radius))
+            x_max = int(np.ceil(x_pos + radius))
+            y_min = max(0, int(np.floor(y_pos - radius)))
+            y_max = min(ny - 1, int(np.ceil(y_pos + radius)))
+            r2 = radius * radius
+            for x_raw in range(x_min, x_max + 1):
+                ix = x_raw % nx
+                dx = x_raw - x_pos
+                for iy in range(y_min, y_max + 1):
+                    dy = iy - y_pos
+                    if dx * dx + dy * dy <= r2 and not fixed_solid[ix, iy]:
+                        particle_solid[ix, iy] = True
+        return particle_solid
+
+    @njit(cache=True)
+    def _ibm_markers_numba(pos, vel, omega_p, radii, marker_spacing, ny):
+        total = 0
+        for i in range(pos.shape[0]):
+            total += max(8, int(np.ceil(2.0 * np.pi * radii[i] / marker_spacing)))
+        marker_x = np.empty(total)
+        marker_y = np.empty(total)
+        marker_rx = np.empty(total)
+        marker_ry = np.empty(total)
+        marker_ds = np.empty(total)
+        marker_owner = np.empty(total, dtype=np.int64)
+        marker_ubx = np.empty(total)
+        marker_uby = np.empty(total)
+        cursor = 0
+        for i in range(pos.shape[0]):
+            radius = radii[i]
+            n_markers = max(8, int(np.ceil(2.0 * np.pi * radius / marker_spacing)))
+            ds = 2.0 * np.pi * radius / n_markers
+            for m in range(n_markers):
+                theta = 2.0 * np.pi * m / n_markers
+                rx = radius * np.cos(theta)
+                ry = radius * np.sin(theta)
+                y = pos[i, 1] + ry
+                if y < 0.5:
+                    y = 0.5
+                elif y > ny - 1.5:
+                    y = ny - 1.5
+                marker_x[cursor] = pos[i, 0] + rx
+                marker_y[cursor] = y
+                marker_rx[cursor] = rx
+                marker_ry[cursor] = ry
+                marker_ds[cursor] = ds
+                marker_owner[cursor] = i
+                marker_ubx[cursor] = vel[i, 0] - omega_p[i] * ry
+                marker_uby[cursor] = vel[i, 1] + omega_p[i] * rx
+                cursor += 1
+        return marker_x, marker_y, marker_rx, marker_ry, marker_ds, marker_owner, marker_ubx, marker_uby
+
+    @njit(cache=True)
+    def _ibm_particle_reaction_numba(
+        marker_owner,
+        marker_rx,
+        marker_ry,
+        marker_fx,
+        marker_fy,
+        n_particles,
+    ):
+        forces = np.zeros((n_particles, 2))
+        torques = np.zeros(n_particles)
+        for k in range(marker_owner.shape[0]):
+            owner = marker_owner[k]
+            forces[owner, 0] -= marker_fx[k]
+            forces[owner, 1] -= marker_fy[k]
+            torques[owner] -= marker_rx[k] * marker_fy[k] - marker_ry[k] * marker_fx[k]
+        return forces, torques
+
+else:
+    _particle_solid_mask_numba = None
+    _ibm_markers_numba = None
+    _ibm_particle_reaction_numba = None
+
+
 # ---------------------------------------------------------------------------
 # LBM helpers
 # ---------------------------------------------------------------------------
@@ -378,6 +464,9 @@ class LBMDEMSolver:
                         ``"numba"`` uses a compiled LBM step when numba is
                         installed, otherwise it falls back to NumPy with a
                         clear runtime flag.
+    compute_accelerator : str — ``"numpy"``, ``"numba"``, or ``"auto"``.
+                        Controls non-LBM kernels such as wall/cylinder DEM
+                        loads, particle solid masks, and IBM marker bookkeeping.
     particle_search   : str — ``"cell_list"`` or ``"all_pairs"``.
                         ``"cell_list"`` is the scalable DEM neighbourhood
                         search used for production runs.
@@ -418,6 +507,7 @@ class LBMDEMSolver:
         particle_method: str = "dem-hertz",
         particle_fluid_coupling: str = "point_force",
         fluid_accelerator: str = "numpy",
+        compute_accelerator: str = "auto",
         particle_search: str = "cell_list",
         spatial_dimension: int = 2,
         ibm_stiffness: float = 1.0,
@@ -469,6 +559,8 @@ class LBMDEMSolver:
             raise ValueError(f"particle_fluid_coupling must be one of {PARTICLE_FLUID_COUPLINGS}")
         if fluid_accelerator not in FLUID_ACCELERATORS:
             raise ValueError(f"fluid_accelerator must be one of {FLUID_ACCELERATORS}")
+        if compute_accelerator not in COMPUTE_ACCELERATORS:
+            raise ValueError(f"compute_accelerator must be one of {COMPUTE_ACCELERATORS}")
         if particle_search not in PARTICLE_SEARCH_METHODS:
             raise ValueError(f"particle_search must be one of {PARTICLE_SEARCH_METHODS}")
         if spatial_dimension != 2:
@@ -489,12 +581,17 @@ class LBMDEMSolver:
         self.particle_method = particle_method
         self.particle_fluid_coupling = particle_fluid_coupling
         self.fluid_accelerator = fluid_accelerator
+        self.compute_accelerator = compute_accelerator
         self.particle_search = particle_search
         self.spatial_dimension = spatial_dimension
         self.uses_numba_lbm = (
             fluid_accelerator == "numba"
             or (fluid_accelerator == "auto" and _lbm_step_numba is not None)
         ) and _lbm_step_numba is not None
+        self.uses_numba_compute = (
+            compute_accelerator == "numba"
+            or (compute_accelerator == "auto" and _particle_solid_mask_numba is not None)
+        ) and _particle_solid_mask_numba is not None
         self.ibm_stiffness = ibm_stiffness
         self.ibm_marker_spacing = ibm_marker_spacing
         self.n_p = n_particles
@@ -568,6 +665,10 @@ class LBMDEMSolver:
         print(
             f"  LBM accel.   : {fluid_accelerator}"
             f"{' (numba active)' if self.uses_numba_lbm else ' (numpy path)'}"
+        )
+        print(
+            f"  Compute acc. : {compute_accelerator}"
+            f"{' (numba active)' if self.uses_numba_compute else ' (numpy path)'}"
         )
         print(f"  DEM method   : {particle_method}")
         print(f"  DEM search   : {particle_search}")
@@ -934,21 +1035,30 @@ class LBMDEMSolver:
             self._invalidate_macroscopic_cache()
             return
 
-        particle_solid = np.zeros_like(self.fixed_solid)
-        for (x_pos, y_pos), radius in zip(self.pos, self.radii):
-            x_min = int(np.floor(x_pos - radius))
-            x_max = int(np.ceil(x_pos + radius))
-            y_min = max(0, int(np.floor(y_pos - radius)))
-            y_max = min(self.ny - 1, int(np.ceil(y_pos + radius)))
-            if y_max < y_min:
-                continue
-            x_indices = np.arange(x_min, x_max + 1)
-            y_indices = np.arange(y_min, y_max + 1)
-            xx = x_indices[:, np.newaxis] % self.nx
-            yy = y_indices[np.newaxis, :]
-            local = (x_indices[:, np.newaxis] - x_pos) ** 2 + (y_indices[np.newaxis, :] - y_pos) ** 2 <= radius**2
-            particle_solid[xx, yy] |= local
-        particle_solid &= ~self.fixed_solid
+        if self.uses_numba_compute and _particle_solid_mask_numba is not None:
+            particle_solid = _particle_solid_mask_numba(
+                self.pos,
+                self.radii,
+                self.nx,
+                self.ny,
+                self.fixed_solid,
+            )
+        else:
+            particle_solid = np.zeros_like(self.fixed_solid)
+            for (x_pos, y_pos), radius in zip(self.pos, self.radii):
+                x_min = int(np.floor(x_pos - radius))
+                x_max = int(np.ceil(x_pos + radius))
+                y_min = max(0, int(np.floor(y_pos - radius)))
+                y_max = min(self.ny - 1, int(np.ceil(y_pos + radius)))
+                if y_max < y_min:
+                    continue
+                x_indices = np.arange(x_min, x_max + 1)
+                y_indices = np.arange(y_min, y_max + 1)
+                xx = x_indices[:, np.newaxis] % self.nx
+                yy = y_indices[np.newaxis, :]
+                local = (x_indices[:, np.newaxis] - x_pos) ** 2 + (y_indices[np.newaxis, :] - y_pos) ** 2 <= radius**2
+                particle_solid[xx, yy] |= local
+            particle_solid &= ~self.fixed_solid
         self.particle_solid = particle_solid
         self.solid = self.fixed_solid | self.particle_solid
         self._invalidate_macroscopic_cache()
@@ -1249,48 +1359,77 @@ class LBMDEMSolver:
         if self.n_p == 0 or self.particle_fluid_coupling != "immersed_boundary":
             return
 
-        marker_x_parts: list[np.ndarray] = []
-        marker_y_parts: list[np.ndarray] = []
-        marker_rx_parts: list[np.ndarray] = []
-        marker_ry_parts: list[np.ndarray] = []
-        marker_ds_parts: list[np.ndarray] = []
-        marker_owner_parts: list[np.ndarray] = []
+        if self.uses_numba_compute and _ibm_markers_numba is not None:
+            (
+                marker_x,
+                marker_y,
+                marker_rx,
+                marker_ry,
+                marker_ds,
+                marker_owner,
+                ub_x,
+                ub_y,
+            ) = _ibm_markers_numba(
+                self.pos,
+                self.vel,
+                self.omega_p,
+                self.radii,
+                self.ibm_marker_spacing,
+                self.ny,
+            )
+        else:
+            marker_x_parts: list[np.ndarray] = []
+            marker_y_parts: list[np.ndarray] = []
+            marker_rx_parts: list[np.ndarray] = []
+            marker_ry_parts: list[np.ndarray] = []
+            marker_ds_parts: list[np.ndarray] = []
+            marker_owner_parts: list[np.ndarray] = []
 
-        for i in range(self.n_p):
-            radius = float(self.radii[i])
-            n_markers = max(8, int(np.ceil(2.0 * np.pi * radius / self.ibm_marker_spacing)))
-            ds = 2.0 * np.pi * radius / n_markers
-            theta = 2.0 * np.pi * np.arange(n_markers) / n_markers
-            rx = radius * np.cos(theta)
-            ry = radius * np.sin(theta)
-            x = self.pos[i, 0] + rx
-            y = np.clip(self.pos[i, 1] + ry, 0.5, self.ny - 1.5)
-            marker_x_parts.append(x)
-            marker_y_parts.append(y)
-            marker_rx_parts.append(rx)
-            marker_ry_parts.append(ry)
-            marker_ds_parts.append(np.full(n_markers, ds))
-            marker_owner_parts.append(np.full(n_markers, i, dtype=np.int64))
+            for i in range(self.n_p):
+                radius = float(self.radii[i])
+                n_markers = max(8, int(np.ceil(2.0 * np.pi * radius / self.ibm_marker_spacing)))
+                ds = 2.0 * np.pi * radius / n_markers
+                theta = 2.0 * np.pi * np.arange(n_markers) / n_markers
+                rx = radius * np.cos(theta)
+                ry = radius * np.sin(theta)
+                x = self.pos[i, 0] + rx
+                y = np.clip(self.pos[i, 1] + ry, 0.5, self.ny - 1.5)
+                marker_x_parts.append(x)
+                marker_y_parts.append(y)
+                marker_rx_parts.append(rx)
+                marker_ry_parts.append(ry)
+                marker_ds_parts.append(np.full(n_markers, ds))
+                marker_owner_parts.append(np.full(n_markers, i, dtype=np.int64))
 
-        marker_x = np.concatenate(marker_x_parts)
-        marker_y = np.concatenate(marker_y_parts)
-        marker_rx = np.concatenate(marker_rx_parts)
-        marker_ry = np.concatenate(marker_ry_parts)
-        marker_ds = np.concatenate(marker_ds_parts)
-        marker_owner = np.concatenate(marker_owner_parts)
+            marker_x = np.concatenate(marker_x_parts)
+            marker_y = np.concatenate(marker_y_parts)
+            marker_rx = np.concatenate(marker_rx_parts)
+            marker_ry = np.concatenate(marker_ry_parts)
+            marker_ds = np.concatenate(marker_ds_parts)
+            marker_owner = np.concatenate(marker_owner_parts)
+            owner_vel = self.vel[marker_owner]
+            owner_omega = self.omega_p[marker_owner]
+            ub_x = owner_vel[:, 0] - owner_omega * marker_ry
+            ub_y = owner_vel[:, 1] + owner_omega * marker_rx
 
         uf_x, uf_y = self._interp_velocity_many(marker_x, marker_y, ux=ux, uy=uy)
-        owner_vel = self.vel[marker_owner]
-        owner_omega = self.omega_p[marker_owner]
-        ub_x = owner_vel[:, 0] - owner_omega * marker_ry
-        ub_y = owner_vel[:, 1] + owner_omega * marker_rx
         marker_fx = self.ibm_stiffness * (ub_x - uf_x) * marker_ds
         marker_fy = self.ibm_stiffness * (ub_y - uf_y) * marker_ds
 
-        np.add.at(self.ibm_forces_p[:, 0], marker_owner, -marker_fx)
-        np.add.at(self.ibm_forces_p[:, 1], marker_owner, -marker_fy)
-        marker_torque = marker_rx * marker_fy - marker_ry * marker_fx
-        np.add.at(self.ibm_torques_p, marker_owner, -marker_torque)
+        if self.uses_numba_compute and _ibm_particle_reaction_numba is not None:
+            self.ibm_forces_p, self.ibm_torques_p = _ibm_particle_reaction_numba(
+                marker_owner,
+                marker_rx,
+                marker_ry,
+                marker_fx,
+                marker_fy,
+                self.n_p,
+            )
+        else:
+            np.add.at(self.ibm_forces_p[:, 0], marker_owner, -marker_fx)
+            np.add.at(self.ibm_forces_p[:, 1], marker_owner, -marker_fy)
+            marker_torque = marker_rx * marker_fy - marker_ry * marker_fx
+            np.add.at(self.ibm_torques_p, marker_owner, -marker_torque)
 
         self._distribute_lagrangian_forces_many(
             marker_x,
@@ -1729,6 +1868,12 @@ def main() -> None:
         help="LBM execution backend (default numpy)",
     )
     parser.add_argument(
+        "--compute-accelerator",
+        choices=COMPUTE_ACCELERATORS,
+        default="auto",
+        help="Non-LBM compute backend (default auto)",
+    )
+    parser.add_argument(
         "--particle-method",
         choices=PARTICLE_METHODS,
         default="dem-hertz",
@@ -1885,6 +2030,7 @@ def main() -> None:
         u_max=args.u_max,
         fluid_method=args.fluid_method,
         fluid_accelerator=args.fluid_accelerator,
+        compute_accelerator=args.compute_accelerator,
         particle_method=args.particle_method,
         particle_search=args.particle_search,
         particle_fluid_coupling=args.particle_fluid_coupling,

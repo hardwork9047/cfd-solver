@@ -8,6 +8,125 @@ import numpy as np
 
 PARTICLE_METHODS = ("dem-hertz", "dem-linear")
 
+try:  # Optional acceleration for particle-boundary contacts.
+    from numba import njit
+except ImportError:  # pragma: no cover - depends on the local environment
+    njit = None
+
+
+if njit is not None:  # pragma: no cover - exercised when numba is installed
+
+    @njit(cache=True)
+    def _wall_cylinder_loads_numba(
+        pos,
+        vel,
+        radii,
+        masses,
+        omega_p,
+        cylinders,
+        ny,
+        k_n,
+        damping,
+        contact_model_id,
+        rolling_friction,
+        sliding_friction,
+        tangential_damping,
+        rolling_friction_coeff,
+        rolling_damping,
+        forces,
+        torques,
+    ):
+        """Apply wall and fixed-cylinder DEM loads in compiled code."""
+        n_p = pos.shape[0]
+        for i in range(n_p):
+            wall_bot = radii[i] + 0.5
+            wall_top = ny - 1.5 - radii[i]
+            if pos[i, 1] < wall_bot:
+                overlap = wall_bot - pos[i, 1]
+                v_n = -vel[i, 1]
+                if contact_model_id == 1:
+                    f_n = k_n * overlap
+                else:
+                    f_n = k_n * overlap**1.5
+                f_mag = f_n - damping * v_n * (k_n * masses[i]) ** 0.5
+                if f_mag < 0.0:
+                    f_mag = 0.0
+                forces[i, 1] += f_mag
+                if rolling_friction and f_mag > 0.0:
+                    tx = -1.0
+                    ty = 0.0
+                    v_t = vel[i, 0] * tx + vel[i, 1] * ty - omega_p[i] * radii[i]
+                    f_trial = -tangential_damping * (k_n * masses[i]) ** 0.5 * v_t
+                    f_limit = sliding_friction * f_mag
+                    f_t = min(max(f_trial, -f_limit), f_limit)
+                    forces[i, 0] += f_t * tx
+                    forces[i, 1] += f_t * ty
+                    torques[i] -= radii[i] * f_t
+                    torque_trial = -rolling_damping * (k_n * masses[i]) ** 0.5 * radii[i] ** 2 * omega_p[i]
+                    torque_limit = rolling_friction_coeff * f_mag * radii[i]
+                    torques[i] += min(max(torque_trial, -torque_limit), torque_limit)
+
+            if pos[i, 1] > wall_top:
+                overlap = pos[i, 1] - wall_top
+                v_n = vel[i, 1]
+                if contact_model_id == 1:
+                    f_n = k_n * overlap
+                else:
+                    f_n = k_n * overlap**1.5
+                f_mag = f_n - damping * v_n * (k_n * masses[i]) ** 0.5
+                if f_mag < 0.0:
+                    f_mag = 0.0
+                forces[i, 1] -= f_mag
+                if rolling_friction and f_mag > 0.0:
+                    tx = 1.0
+                    ty = 0.0
+                    v_t = vel[i, 0] * tx + vel[i, 1] * ty - omega_p[i] * radii[i]
+                    f_trial = -tangential_damping * (k_n * masses[i]) ** 0.5 * v_t
+                    f_limit = sliding_friction * f_mag
+                    f_t = min(max(f_trial, -f_limit), f_limit)
+                    forces[i, 0] += f_t * tx
+                    forces[i, 1] += f_t * ty
+                    torques[i] -= radii[i] * f_t
+                    torque_trial = -rolling_damping * (k_n * masses[i]) ** 0.5 * radii[i] ** 2 * omega_p[i]
+                    torque_limit = rolling_friction_coeff * f_mag * radii[i]
+                    torques[i] += min(max(torque_trial, -torque_limit), torque_limit)
+
+            for c in range(cylinders.shape[0]):
+                dx = pos[i, 0] - cylinders[c, 0]
+                dy = pos[i, 1] - cylinders[c, 1]
+                dist = (dx * dx + dy * dy) ** 0.5
+                min_dist = cylinders[c, 2] + radii[i]
+                if dist < min_dist and dist > 1e-10:
+                    overlap = min_dist - dist
+                    nx_ = dx / dist
+                    ny_ = dy / dist
+                    v_n = vel[i, 0] * nx_ + vel[i, 1] * ny_
+                    if contact_model_id == 1:
+                        f_n = k_n * overlap
+                    else:
+                        f_n = k_n * overlap**1.5
+                    f_mag = f_n - damping * v_n * (k_n * masses[i]) ** 0.5
+                    if f_mag < 0.0:
+                        f_mag = 0.0
+                    forces[i, 0] += f_mag * nx_
+                    forces[i, 1] += f_mag * ny_
+                    if rolling_friction and f_mag > 0.0:
+                        tx = -ny_
+                        ty = nx_
+                        v_t = vel[i, 0] * tx + vel[i, 1] * ty - omega_p[i] * radii[i]
+                        f_trial = -tangential_damping * (k_n * masses[i]) ** 0.5 * v_t
+                        f_limit = sliding_friction * f_mag
+                        f_t = min(max(f_trial, -f_limit), f_limit)
+                        forces[i, 0] += f_t * tx
+                        forces[i, 1] += f_t * ty
+                        torques[i] -= radii[i] * f_t
+                        torque_trial = -rolling_damping * (k_n * masses[i]) ** 0.5 * radii[i] ** 2 * omega_p[i]
+                        torque_limit = rolling_friction_coeff * f_mag * radii[i]
+                        torques[i] += min(max(torque_trial, -torque_limit), torque_limit)
+
+else:
+    _wall_cylinder_loads_numba = None
+
 
 class DEMSolver:
     """Compute DEM forces and torques for a coupled LBM-DEM simulation.
@@ -136,8 +255,31 @@ class DEMSolver:
             for i, j in sim._particle_pair_candidates():
                 self._apply_particle_pair_loads(i, j, forces, torques)
 
-        self._apply_wall_loads(forces, torques)
-        self._apply_cylinder_loads(forces, torques)
+        if sim.uses_numba_compute and _wall_cylinder_loads_numba is not None:
+            contact_model_id = 1 if self.contact_model == "dem-linear" else 0
+            cylinders = np.asarray(sim.cylinders, dtype=np.float64).reshape((-1, 3))
+            _wall_cylinder_loads_numba(
+                sim.pos,
+                sim.vel,
+                sim.radii,
+                sim.masses,
+                sim.omega_p,
+                cylinders,
+                sim.ny,
+                sim.k_n,
+                sim.damping,
+                contact_model_id,
+                sim.rolling_friction,
+                sim.sliding_friction,
+                sim.tangential_damping,
+                sim.rolling_friction_coeff,
+                sim.rolling_damping,
+                forces,
+                torques,
+            )
+        else:
+            self._apply_wall_loads(forces, torques)
+            self._apply_cylinder_loads(forces, torques)
         return forces, torques
 
     def _apply_particle_pair_loads(

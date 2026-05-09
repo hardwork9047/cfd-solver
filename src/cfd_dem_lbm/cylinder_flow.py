@@ -21,7 +21,7 @@ import numpy as np
 from cfd.result_paths import program_results_dir
 
 from .fast_solver import FastLBMDEM
-from .lbm_dem import CS2, FLUID_ACCELERATORS, FLUID_METHODS
+from .lbm_dem import CS2, COMPUTE_ACCELERATORS, FLUID_ACCELERATORS, FLUID_METHODS
 
 
 @dataclass
@@ -62,6 +62,7 @@ def build_cylinder_flow_sim(
     flow_control_gain: float = 0.2,
     fluid_method: str = "lbm-bgk-guo",
     fluid_accelerator: str = "numpy",
+    compute_accelerator: str = "auto",
 ) -> FastLBMDEM:
     """Create a fluid-only cylinder-flow simulation with the shared solver."""
     if not cylinders:
@@ -79,6 +80,7 @@ def build_cylinder_flow_sim(
         flow_control_gain=flow_control_gain,
         fluid_method=fluid_method,
         fluid_accelerator=fluid_accelerator,
+        compute_accelerator=compute_accelerator,
         n_particles=1,
         particle_radius=1.0,
         gravity=0.0,
@@ -186,6 +188,7 @@ def run_cylinder_flow(
     flow_control_gain: float,
     fluid_method: str,
     fluid_accelerator: str,
+    compute_accelerator: str = "auto",
     steps: int,
     report_every: int,
 ) -> tuple[FastLBMDEM, list[CylinderFlowMetrics]]:
@@ -202,6 +205,7 @@ def run_cylinder_flow(
         flow_control_gain=flow_control_gain,
         fluid_method=fluid_method,
         fluid_accelerator=fluid_accelerator,
+        compute_accelerator=compute_accelerator,
     )
 
     metrics: list[CylinderFlowMetrics] = [compute_cylinder_flow_metrics(sim)]
@@ -230,6 +234,8 @@ def run_cylinder_flow(
         "fluid_method": fluid_method,
         "fluid_accelerator": fluid_accelerator,
         "uses_numba_lbm": sim.uses_numba_lbm,
+        "compute_accelerator": compute_accelerator,
+        "uses_numba_compute": sim.uses_numba_compute,
         "cylinders": [{"x": x, "y": y, "radius": r} for x, y, r in sim.cylinders],
         "steps": steps,
     }
@@ -277,6 +283,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--flow-control-gain", type=float, default=0.2)
     parser.add_argument("--fluid-method", choices=FLUID_METHODS, default="lbm-bgk-guo")
     parser.add_argument("--fluid-accelerator", choices=FLUID_ACCELERATORS, default="numpy")
+    parser.add_argument("--compute-accelerator", choices=COMPUTE_ACCELERATORS, default="auto")
     parser.add_argument(
         "--cylinder",
         "--cylinder-spec",
@@ -327,6 +334,7 @@ def main(argv: list[str] | None = None) -> None:
         flow_control_gain=args.flow_control_gain,
         fluid_method=args.fluid_method,
         fluid_accelerator=args.fluid_accelerator,
+        compute_accelerator=args.compute_accelerator,
         steps=args.steps,
         report_every=args.report_every,
     )
@@ -335,7 +343,8 @@ def main(argv: list[str] | None = None) -> None:
     print(f"Saved: {output_dir}")
     print(
         "Solver path: cfd_dem_lbm.FastLBMDEM, "
-        f"fluid_method={sim.fluid_method}, accelerator={sim.fluid_accelerator}"
+        f"fluid_method={sim.fluid_method}, accelerator={sim.fluid_accelerator}, "
+        f"compute={sim.compute_accelerator}"
     )
     print(
         f"Final: step={latest.step}, max|u|={latest.max_speed:.6g}, "

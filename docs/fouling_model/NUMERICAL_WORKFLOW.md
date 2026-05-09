@@ -111,6 +111,7 @@ For large fouling sweeps, prefer:
 python src/demos/run_lbm_dem.py \
   --fluid-method lbm-trt-guo \
   --fluid-accelerator auto \
+  --compute-accelerator auto \
   --particle-search cell_list \
   --output-profile analysis
 ```
@@ -126,6 +127,22 @@ backend reached 1093 median steps/s versus 315 median steps/s for the NumPy
 path after compilation warmup, a 3.47x speedup.  The first Numba call includes
 JIT compilation overhead, so short runs should be interpreted separately from
 long production runs.
+
+Use `--compute-accelerator` to choose the non-LBM numerical backend for DEM
+boundary loads, particle-solid-mask updates, and immersed-boundary marker
+bookkeeping.  To measure these components independently:
+
+```bash
+poetry run python src/bin/benchmark_numba_components.py
+```
+
+On the 300-particle, 180 x 70 benchmark run on 2026-05-09, the Numba backend
+gave these median component speedups:
+
+- particle pair loads: 14.93x
+- DEM wall/cylinder boundary loads: 1.82x
+- solid-boundary particle mask update: 240.09x
+- immersed-boundary marker bookkeeping: 3.18x
 
 ## 2. Verification
 
