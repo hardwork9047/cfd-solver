@@ -23,6 +23,7 @@ def main() -> int:
     parser.add_argument("--poiseuille-tol", type=float, default=0.20)
     parser.add_argument("--flux-tol", type=float, default=0.05)
     parser.add_argument("--control-tol", type=float, default=0.20)
+    parser.add_argument("--particle-solid-min-reduction", type=float, default=0.02)
     args = parser.parse_args()
 
     output_dir = program_results_dir(__file__, datetime.now().strftime("run_%Y%m%d_%H%M%S"))
@@ -35,6 +36,7 @@ def main() -> int:
         poiseuille_tol=args.poiseuille_tol,
         flux_tol=args.flux_tol,
         control_tol=args.control_tol,
+        particle_solid_min_reduction=args.particle_solid_min_reduction,
         output_dir=output_dir,
     )
     write_verification_outputs(results, output_dir)

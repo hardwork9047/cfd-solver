@@ -117,6 +117,13 @@ def test_invalid_solver_methods_are_rejected():
     else:
         raise AssertionError("Expected invalid particle method to fail")
 
+    try:
+        LBMDEMSolver(particle_fluid_coupling="not-a-coupling")
+    except ValueError as exc:
+        assert "particle_fluid_coupling" in str(exc)
+    else:
+        raise AssertionError("Expected invalid particle-fluid coupling to fail")
+
 
 def test_linear_dem_contact_model_changes_normal_contact_force():
     """Linear DEM contact is selectable and differs from Hertz for small overlaps."""
@@ -154,6 +161,29 @@ def test_trt_lbm_method_advances_with_finite_fields():
     assert sim.fluid_method == "lbm-trt-guo"
     for field in fields:
         assert np.all(np.isfinite(field))
+
+
+def test_solid_boundary_coupling_overlays_particles_on_solid_mask():
+    """Solid-boundary coupling should expose moving particles to the LBM mask."""
+    sim = LBMDEMSolver(
+        nx=40,
+        ny=24,
+        Re=50.0,
+        u_max=0.02,
+        n_particles=1,
+        particle_radius=3.0,
+        gravity=0.0,
+        particle_fluid_coupling="solid_boundary",
+        seed=9,
+    )
+    sim.pos[:] = np.array([[20.0, 12.0]])
+    sim.vel[:] = 0.0
+    sim._update_particle_solid_mask()
+
+    assert sim.particle_fluid_coupling == "solid_boundary"
+    assert sim.solid[20, 12]
+    assert not sim.fixed_solid[20, 12]
+    assert sim.dynamic_solid_fraction() > 0.0
 
 
 def test_rolling_friction_resists_wall_slip_and_spins_particle():

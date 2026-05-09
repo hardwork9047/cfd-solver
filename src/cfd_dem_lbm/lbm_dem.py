@@ -62,6 +62,7 @@ OPPOSITE = [0, 3, 4, 1, 2, 7, 8, 5, 6]
 Q = 9
 CS2 = 1.0 / 3.0  # lattice speed of sound squared
 FLUID_METHODS = ("lbm-bgk-guo", "lbm-trt-guo")
+PARTICLE_FLUID_COUPLINGS = ("point_force", "solid_boundary")
 
 
 if njit is not None:  # pragma: no cover - exercised only when numba is installed
@@ -319,6 +320,7 @@ class LBMDEMSolver:
         flow_control_gain: float = 0.2,
         fluid_method: str = "lbm-bgk-guo",
         particle_method: str = "dem-hertz",
+        particle_fluid_coupling: str = "point_force",
         n_particles: int = 20,
         particle_radius: float = 3.0,
         radius_variation: float = 0.0,
@@ -362,6 +364,8 @@ class LBMDEMSolver:
             raise ValueError(f"fluid_method must be one of {FLUID_METHODS}")
         if particle_method not in PARTICLE_METHODS:
             raise ValueError(f"particle_method must be one of {PARTICLE_METHODS}")
+        if particle_fluid_coupling not in PARTICLE_FLUID_COUPLINGS:
+            raise ValueError(f"particle_fluid_coupling must be one of {PARTICLE_FLUID_COUPLINGS}")
 
         self.nx = nx
         self.ny = ny
@@ -372,6 +376,7 @@ class LBMDEMSolver:
         self.flow_control_gain = flow_control_gain
         self.fluid_method = fluid_method
         self.particle_method = particle_method
+        self.particle_fluid_coupling = particle_fluid_coupling
         self.n_p = n_particles
         self.r_p = particle_radius  # representative (mean) radius
         self.radius_variation = radius_variation
@@ -439,6 +444,7 @@ class LBMDEMSolver:
         )
         print(f"  Fluid method : {fluid_method}")
         print(f"  DEM method   : {particle_method}")
+        print(f"  Coupling     : {particle_fluid_coupling}")
         print(
             f"  Particles    : {n_particles}  r = {particle_radius:.1f} ± "
             f"{radius_variation*100:.0f}%  density_ratio = {density_ratio:.1f}"
@@ -475,10 +481,11 @@ class LBMDEMSolver:
         rho0 = np.ones((nx, ny))
         self.f = _equilibrium(rho0, np.zeros((nx, ny)), np.zeros((nx, ny)))
 
-        # Solid nodes: top and bottom walls
-        self.solid = np.zeros((nx, ny), dtype=bool)
-        self.solid[:, 0] = True
-        self.solid[:, -1] = True
+        # Solid nodes: top/bottom walls and fixed cylinders.  Moving particle
+        # solids are overlaid in solid-boundary coupling mode.
+        self.fixed_solid = np.zeros((nx, ny), dtype=bool)
+        self.fixed_solid[:, 0] = True
+        self.fixed_solid[:, -1] = True
 
         # Solid nodes: fixed cylinders
         if self.cylinders:
@@ -486,7 +493,9 @@ class LBMDEMSolver:
             iy = np.arange(ny)
             XX, YY = np.meshgrid(ix, iy, indexing="ij")
             for cx, cy, cr in self.cylinders:
-                self.solid |= (XX - cx) ** 2 + (YY - cy) ** 2 <= cr**2
+                self.fixed_solid |= (XX - cx) ** 2 + (YY - cy) ** 2 <= cr**2
+        self.particle_solid = np.zeros((nx, ny), dtype=bool)
+        self.solid = self.fixed_solid.copy()
 
         # Fluid body-force arrays (reset each step; includes driving + particle feedback)
         self.Fx = np.full((nx, ny), self.F_drive)
@@ -507,6 +516,7 @@ class LBMDEMSolver:
         self._inlet_cursor = 0
         self._rng_inlet = np.random.default_rng(seed + 2027)
         self._init_particles(seed)
+        self._update_particle_solid_mask()
         pair_kernel = _dem_pair_loads_numba if particle_method == "dem-hertz" else None
         self.dem_solver = DEMSolver(
             self,
@@ -758,12 +768,36 @@ class LBMDEMSolver:
         self.inertias = self.inertias[keep]
         self.n_p = int(self.pos.shape[0])
         self.removed_particles += removed
+        self._update_particle_solid_mask()
 
     def _delete_right_outflow_particles(self) -> None:
         """Remove particles whose full disc has left the right outlet."""
         if self.particle_source != "left_inlet" or self.n_p == 0:
             return
         self._delete_particles(self.pos[:, 0] - self.radii > self.nx)
+
+    def _update_particle_solid_mask(self) -> None:
+        """Overlay active DEM particles onto the LBM solid mask when requested."""
+        if self.particle_fluid_coupling != "solid_boundary" or self.n_p == 0:
+            self.particle_solid = np.zeros_like(self.fixed_solid)
+            self.solid = self.fixed_solid.copy()
+            self._invalidate_macroscopic_cache()
+            return
+
+        particle_solid = np.zeros_like(self.fixed_solid)
+        ix = np.arange(self.nx)
+        iy = np.arange(self.ny)
+        XX, YY = np.meshgrid(ix, iy, indexing="ij")
+        for (x_pos, y_pos), radius in zip(self.pos, self.radii):
+            particle_solid |= (XX - x_pos) ** 2 + (YY - y_pos) ** 2 <= radius**2
+        particle_solid &= ~self.fixed_solid
+        self.particle_solid = particle_solid
+        self.solid = self.fixed_solid | self.particle_solid
+        self._invalidate_macroscopic_cache()
+
+    def dynamic_solid_fraction(self) -> float:
+        """Return the current fraction of lattice nodes blocked by moving particles."""
+        return float(np.count_nonzero(self.particle_solid) / self.particle_solid.size)
 
     # ------------------------------------------------------------------
     # LBM — macroscopic fields
@@ -1193,6 +1227,7 @@ class LBMDEMSolver:
 
         for _ in range(n_steps):
             self._try_feed_left_inlet_particles()
+            self._update_particle_solid_mask()
 
             _, ux_ctrl, uy_ctrl = self._macroscopic()
             self._control_drive_force(ux_ctrl, uy_ctrl)
@@ -1203,7 +1238,7 @@ class LBMDEMSolver:
             self._invalidate_macroscopic_cache()
 
             # --- Particle → fluid back-reaction (per-particle radius) ---
-            if self.n_p:
+            if self.n_p and self.particle_fluid_coupling == "point_force":
                 _, ux_drag, uy_drag = self._macroscopic()
                 drag = self._particle_drag_forces(ux=ux_drag, uy=uy_drag)
                 # Newton 3rd law: -drag acts on the fluid
@@ -1223,6 +1258,7 @@ class LBMDEMSolver:
             # --- DEM sub-steps ---
             for _ in range(self.dem_substeps):
                 self._dem_substep(dt_sub)
+            self._update_particle_solid_mask()
 
             self.step_count += 1
 
@@ -1411,6 +1447,12 @@ def main() -> None:
         help="DEM normal contact model (default dem-hertz)",
     )
     parser.add_argument(
+        "--particle-fluid-coupling",
+        choices=PARTICLE_FLUID_COUPLINGS,
+        default="point_force",
+        help="Fluid-particle coupling mode (default point_force)",
+    )
+    parser.add_argument(
         "--n-particles", type=int, default=20, help="Number of DEM particles (default 20)"
     )
     parser.add_argument(
@@ -1537,6 +1579,7 @@ def main() -> None:
         u_max=args.u_max,
         fluid_method=args.fluid_method,
         particle_method=args.particle_method,
+        particle_fluid_coupling=args.particle_fluid_coupling,
         n_particles=args.n_particles,
         particle_radius=args.radius,
         density_ratio=args.density_ratio,

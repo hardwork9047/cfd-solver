@@ -187,6 +187,56 @@ def verify_target_max_velocity(
     )
 
 
+def verify_particle_solid_boundary_reduces_flux(
+    nx: int,
+    ny: int,
+    steps: int,
+    re: float,
+    u_max: float,
+    min_reduction: float,
+) -> VerificationResult:
+    """Check that dynamic particle solids reduce through-channel flux."""
+    common = dict(
+        nx=nx,
+        ny=ny,
+        Re=re,
+        u_max=u_max,
+        reynolds_length=float(ny),
+        flow_control="fixed_pressure",
+        n_particles=1,
+        particle_radius=max(2.0, 0.18 * ny),
+        gravity=0.0,
+        seed=14,
+    )
+    open_sim = fluid_only(FastLBMDEM(**common))
+    blocked_sim = FastLBMDEM(
+        **common,
+        particle_fluid_coupling="solid_boundary",
+    )
+    blocked_sim.pos[:] = np.array([[0.5 * nx, 0.5 * ny]])
+    blocked_sim.vel[:] = 0.0
+    blocked_sim._update_particle_solid_mask()
+
+    open_sim.advance(steps)
+    blocked_sim.advance(steps)
+    _, ux_open, _ = open_sim.get_fields()
+    _, ux_blocked, _ = blocked_sim.get_fields()
+    section = nx // 2
+    q_open = positive_flux(ux_open, open_sim.solid, section)
+    q_blocked = positive_flux(ux_blocked, blocked_sim.solid, section)
+    reduction = 1.0 - q_blocked / max(q_open, 1e-12)
+    return VerificationResult(
+        name="particle_solid_boundary_flux_reduction",
+        passed=reduction >= min_reduction,
+        metric=reduction,
+        tolerance=min_reduction,
+        details=(
+            "Flux reduction from overlaying one DEM particle as a moving LBM solid. "
+            f"section={section}, open_flux={q_open:.6g}, blocked_flux={q_blocked:.6g}."
+        ),
+    )
+
+
 def run_fluid_verification(
     *,
     nx: int,
@@ -197,6 +247,7 @@ def run_fluid_verification(
     poiseuille_tol: float,
     flux_tol: float,
     control_tol: float,
+    particle_solid_min_reduction: float,
     output_dir: Path,
 ) -> list[VerificationResult]:
     """Run the standard fluid-only verification suite."""
@@ -205,6 +256,14 @@ def run_fluid_verification(
         verify_plane_poiseuille(nx, ny, steps, re, u_max, poiseuille_tol, output_dir),
         verify_flux_balance(nx, ny, steps, re, u_max, flux_tol),
         verify_target_max_velocity(nx, ny, steps, re, u_max, control_tol),
+        verify_particle_solid_boundary_reduces_flux(
+            nx,
+            ny,
+            max(steps // 3, 1),
+            re,
+            u_max,
+            particle_solid_min_reduction,
+        ),
     ]
 
 

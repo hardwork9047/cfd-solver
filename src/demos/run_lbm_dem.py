@@ -57,6 +57,11 @@ parser.add_argument("--particle-method",
                     choices=["dem-hertz", "dem-linear"],
                     default="dem-hertz",
                     help="DEM normal contact model (default: dem-hertz)")
+parser.add_argument("--particle-fluid-coupling",
+                    choices=["point_force", "solid_boundary"],
+                    default="point_force",
+                    help="Fluid-particle coupling mode: point force or dynamic "
+                         "solid-boundary mask (default: point_force)")
 parser.add_argument("--cylinder", action="store_true", help="Add a fixed solid cylinder")
 parser.add_argument("--cyl-x", type=float, default=None,
                     help="Cylinder center x [lattice] (default: NX/4)")
@@ -318,6 +323,7 @@ def _write_metadata(path: Path, sim: LBMDEMSolver | None = None) -> None:
             "reynolds_length": REYNOLDS_LENGTH,
             "fluid_method": args.fluid_method,
             "particle_method": args.particle_method,
+            "particle_fluid_coupling": args.particle_fluid_coupling,
             "particle_radius": RADIUS,
             "radius_variation": RADIUS_VARIATION,
             "density_ratio": DENSITY_RATIO,
@@ -338,6 +344,7 @@ def _write_metadata(path: Path, sim: LBMDEMSolver | None = None) -> None:
         metadata["solver"] = {
             "fluid_method": sim.fluid_method,
             "particle_method": sim.particle_method,
+            "particle_fluid_coupling": sim.particle_fluid_coupling,
             "nu": sim.nu,
             "tau": sim.tau,
             "omega": sim.omega,
@@ -648,6 +655,7 @@ print(
 )
 print(f"Fluid method: {args.fluid_method}")
 print(f"Particle method: {args.particle_method}")
+print(f"Particle-fluid coupling: {args.particle_fluid_coupling}")
 if PARTICLE_VOLUME_FRACTION is not None:
     if args.particle_source == "left-inlet":
         print(
@@ -678,6 +686,7 @@ sim = FastLBMDEM(
     flow_control_gain=args.flow_control_gain,
     fluid_method=args.fluid_method,
     particle_method=args.particle_method,
+    particle_fluid_coupling=args.particle_fluid_coupling,
     n_particles=N_PARTICLES,
     particle_radius=RADIUS,
     radius_variation=RADIUS_VARIATION,
@@ -748,6 +757,8 @@ force_global_min = np.inf
 force_global_max = -np.inf
 max_particles_in_frames = 0
 analysis_rows: list[dict[str, float | int]] = []
+reference_outlet_flux: float | None = None
+reference_pressure_drop: float | None = None
 
 t1 = time.perf_counter()
 for frame_idx in range(n_frames):
@@ -765,7 +776,28 @@ for frame_idx in range(n_frames):
     outlet_flux = _boundary_flux(ux, sim.solid, NX - 1)
     inlet_pressure = _boundary_mean(pressure, sim.solid, 0)
     outlet_pressure = _boundary_mean(pressure, sim.solid, NX - 1)
+    pressure_drop = inlet_pressure - outlet_pressure
+    if reference_outlet_flux is None and outlet_flux > 1e-12:
+        reference_outlet_flux = outlet_flux
+    if reference_pressure_drop is None and np.isfinite(pressure_drop):
+        reference_pressure_drop = pressure_drop
     contacts = _contact_counts(sim)
+    generated_for_ratio = max(sim.generated_particles, 1)
+    pass_ratio = sim.removed_particles / generated_for_ratio
+    retained_ratio = max(sim.generated_particles - sim.removed_particles, 0) / generated_for_ratio
+    normalized_permeate_flux = (
+        outlet_flux / reference_outlet_flux
+        if reference_outlet_flux is not None and reference_outlet_flux > 1e-12
+        else 0.0
+    )
+    pressure_drop_ratio = (
+        pressure_drop / reference_pressure_drop
+        if reference_pressure_drop is not None and abs(reference_pressure_drop) > 1e-12
+        else 1.0
+    )
+    inlet_outlet_flux_ratio = outlet_flux / inlet_flux if inlet_flux > 1e-12 else 0.0
+    dynamic_solid_fraction = sim.dynamic_solid_fraction()
+    total_solid_fraction = float(np.count_nonzero(sim.solid) / sim.solid.size)
 
     snap = {
         "step": sim.step_count,
@@ -801,9 +833,17 @@ for frame_idx in range(n_frames):
         "mean_pressure": float(np.mean(pressure[fluid_mask])),
         "inlet_pressure": inlet_pressure,
         "outlet_pressure": outlet_pressure,
-        "pressure_drop": inlet_pressure - outlet_pressure,
+        "pressure_drop": pressure_drop,
+        "pressure_drop_ratio": pressure_drop_ratio,
         "mean_pressure_gauge": float(np.mean(pressure_gauge[fluid_mask])),
         "particle_area_fraction": float(np.sum(np.pi * sim.radii**2) / sim.fluid_area),
+        "retained_particle_ratio": retained_ratio,
+        "passed_particle_ratio": pass_ratio,
+        "normalized_permeate_flux": normalized_permeate_flux,
+        "inlet_outlet_flux_ratio": inlet_outlet_flux_ratio,
+        "dynamic_particle_solid_fraction": dynamic_solid_fraction,
+        "total_solid_fraction": total_solid_fraction,
+        "fouling_resistance_index": pressure_drop_ratio / max(normalized_permeate_flux, 1e-12),
         "particle_ke": 0.5 * float(np.sum(sim.masses * np.sum(sim.vel**2, axis=1))),
         "mean_force": float(total_force_mags.mean()) if len(total_force_mags) else 0.0,
         **contacts,

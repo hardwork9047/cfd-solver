@@ -1,0 +1,44 @@
+{
+  "defaults": {
+    "nx": 120,
+    "ny": 48,
+    "particle_source": "left-inlet",
+    "particle_volume_fraction": 0.05,
+    "total_steps": 2000,
+    "snapshot_every": 100,
+    "warmup_steps": 200,
+    "paraview_every": 5,
+    "rolling_friction": true,
+    "cylinder_spec": [
+      [45, 18, 5],
+      [45, 30, 5],
+      [72, 24, 6]
+    ]
+  },
+  "cases": [
+    {
+      "name": "bgk_hertz_point_force",
+      "args": {
+        "fluid_method": "lbm-bgk-guo",
+        "particle_method": "dem-hertz",
+        "particle_fluid_coupling": "point_force"
+      }
+    },
+    {
+      "name": "trt_hertz_solid_boundary",
+      "args": {
+        "fluid_method": "lbm-trt-guo",
+        "particle_method": "dem-hertz",
+        "particle_fluid_coupling": "solid_boundary"
+      }
+    },
+    {
+      "name": "bgk_linear_solid_boundary",
+      "args": {
+        "fluid_method": "lbm-bgk-guo",
+        "particle_method": "dem-linear",
+        "particle_fluid_coupling": "solid_boundary"
+      }
+    }
+  ]
+}
