@@ -30,7 +30,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 from cfd.result_paths import program_results_dir
-from .dem_solver import DEMSolver
+from .dem_solver import DEMSolver, PARTICLE_METHODS
 
 try:  # Optional acceleration. The solver keeps a pure-NumPy/Python fallback.
     from numba import njit
@@ -61,6 +61,7 @@ W = np.array([4 / 9, 1 / 9, 1 / 9, 1 / 9, 1 / 9, 1 / 36, 1 / 36, 1 / 36, 1 / 36]
 OPPOSITE = [0, 3, 4, 1, 2, 7, 8, 5, 6]
 Q = 9
 CS2 = 1.0 / 3.0  # lattice speed of sound squared
+FLUID_METHODS = ("lbm-bgk-guo", "lbm-trt-guo")
 
 
 if njit is not None:  # pragma: no cover - exercised only when numba is installed
@@ -316,6 +317,8 @@ class LBMDEMSolver:
         reynolds_length: float | None = None,
         flow_control: str = "fixed_pressure",
         flow_control_gain: float = 0.2,
+        fluid_method: str = "lbm-bgk-guo",
+        particle_method: str = "dem-hertz",
         n_particles: int = 20,
         particle_radius: float = 3.0,
         radius_variation: float = 0.0,
@@ -355,6 +358,10 @@ class LBMDEMSolver:
             raise ValueError("flow_control must be 'fixed_pressure' or 'target_max_velocity'")
         if not (0.0 < flow_control_gain <= 1.0):
             raise ValueError("flow_control_gain must be in the range (0, 1]")
+        if fluid_method not in FLUID_METHODS:
+            raise ValueError(f"fluid_method must be one of {FLUID_METHODS}")
+        if particle_method not in PARTICLE_METHODS:
+            raise ValueError(f"particle_method must be one of {PARTICLE_METHODS}")
 
         self.nx = nx
         self.ny = ny
@@ -363,6 +370,8 @@ class LBMDEMSolver:
         self.reynolds_length = reynolds_length if reynolds_length is not None else float(ny)
         self.flow_control = flow_control
         self.flow_control_gain = flow_control_gain
+        self.fluid_method = fluid_method
+        self.particle_method = particle_method
         self.n_p = n_particles
         self.r_p = particle_radius  # representative (mean) radius
         self.radius_variation = radius_variation
@@ -398,6 +407,8 @@ class LBMDEMSolver:
         self.nu = u_max * self.reynolds_length / Re if Re > 0.0 else 0.0
         self.tau = self.nu / CS2 + 0.5
         self.omega = 1.0 / self.tau
+        self.trt_magic_parameter = 3.0 / 16.0
+        self.trt_omega_minus = self._trt_omega_minus()
         # Body force to sustain Poiseuille flow: ∂p/∂x = -8 μ u_max / ny²
         self.F_drive = 8.0 * self.nu * u_max / ny**2
         self.initial_F_drive = self.F_drive
@@ -426,6 +437,8 @@ class LBMDEMSolver:
             f"  u_max target : {u_max:.4f}   F_drive = {self.F_drive:.2e}   "
             f"flow_control={flow_control}"
         )
+        print(f"  Fluid method : {fluid_method}")
+        print(f"  DEM method   : {particle_method}")
         print(
             f"  Particles    : {n_particles}  r = {particle_radius:.1f} ± "
             f"{radius_variation*100:.0f}%  density_ratio = {density_ratio:.1f}"
@@ -494,7 +507,12 @@ class LBMDEMSolver:
         self._inlet_cursor = 0
         self._rng_inlet = np.random.default_rng(seed + 2027)
         self._init_particles(seed)
-        self.dem_solver = DEMSolver(self, pair_kernel=_dem_pair_loads_numba)
+        pair_kernel = _dem_pair_loads_numba if particle_method == "dem-hertz" else None
+        self.dem_solver = DEMSolver(
+            self,
+            pair_kernel=pair_kernel,
+            contact_model=particle_method,
+        )
         if self.particle_source != "left_inlet":
             self.generated_particles = self.n_p
         self.particle_area = float(
@@ -785,12 +803,47 @@ class LBMDEMSolver:
         gain = self.flow_control_gain
         self.F_drive *= (1.0 - gain) + gain * ratio
 
-    def _lbm_step(self, rho: np.ndarray, ux: np.ndarray, uy: np.ndarray) -> None:
-        """One LBM step: collide → stream → bounce-back."""
-        # Collision with Guo forcing
+    def _trt_omega_minus(self) -> float:
+        """Return the odd-mode TRT relaxation rate from the magic parameter."""
+        tau_plus_offset = max(1.0 / self.omega - 0.5, 1e-12)
+        tau_minus = 0.5 + self.trt_magic_parameter / tau_plus_offset
+        return 1.0 / tau_minus
+
+    def _collide_bgk_guo(self, rho: np.ndarray, ux: np.ndarray, uy: np.ndarray) -> None:
+        """Single-relaxation-time BGK collision with Guo forcing."""
         feq = _equilibrium(rho, ux, uy)
         S = _guo_forcing(ux, uy, self.Fx, self.Fy, self.omega)
         self.f += self.omega * (feq - self.f) + S
+
+    def _collide_trt_guo(self, rho: np.ndarray, ux: np.ndarray, uy: np.ndarray) -> None:
+        """Two-relaxation-time collision using even/odd D2Q9 populations."""
+        feq = _equilibrium(rho, ux, uy)
+        S = _guo_forcing(ux, uy, self.Fx, self.Fy, self.omega)
+        f_old = self.f.copy()
+        f_new = np.empty_like(f_old)
+        omega_plus = self.omega
+        omega_minus = self.trt_omega_minus
+
+        for i in range(Q):
+            j = OPPOSITE[i]
+            f_plus = 0.5 * (f_old[i] + f_old[j])
+            f_minus = 0.5 * (f_old[i] - f_old[j])
+            feq_plus = 0.5 * (feq[i] + feq[j])
+            feq_minus = 0.5 * (feq[i] - feq[j])
+            f_new[i] = (
+                f_old[i]
+                - omega_plus * (f_plus - feq_plus)
+                - omega_minus * (f_minus - feq_minus)
+                + S[i]
+            )
+        self.f = f_new
+
+    def _lbm_step(self, rho: np.ndarray, ux: np.ndarray, uy: np.ndarray) -> None:
+        """One LBM step: collide → stream → bounce-back."""
+        if self.fluid_method == "lbm-trt-guo":
+            self._collide_trt_guo(rho, ux, uy)
+        else:
+            self._collide_bgk_guo(rho, ux, uy)
 
         # Streaming (periodic via np.roll)
         for i in range(Q):
@@ -1346,6 +1399,18 @@ def main() -> None:
         help="Max (centreline) fluid velocity in lattice units (default 0.05)",
     )
     parser.add_argument(
+        "--fluid-method",
+        choices=FLUID_METHODS,
+        default="lbm-bgk-guo",
+        help="LBM collision/forcing method (default lbm-bgk-guo)",
+    )
+    parser.add_argument(
+        "--particle-method",
+        choices=PARTICLE_METHODS,
+        default="dem-hertz",
+        help="DEM normal contact model (default dem-hertz)",
+    )
+    parser.add_argument(
         "--n-particles", type=int, default=20, help="Number of DEM particles (default 20)"
     )
     parser.add_argument(
@@ -1470,6 +1535,8 @@ def main() -> None:
         ny=args.ny,
         Re=args.Re,
         u_max=args.u_max,
+        fluid_method=args.fluid_method,
+        particle_method=args.particle_method,
         n_particles=args.n_particles,
         particle_radius=args.radius,
         density_ratio=args.density_ratio,

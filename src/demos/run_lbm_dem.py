@@ -49,6 +49,14 @@ parser.add_argument("--flow-control", action=argparse.BooleanOptionalAction,
                          "(default: enabled)")
 parser.add_argument("--flow-control-gain", type=float, default=0.2,
                     help="Relaxation gain for max-speed flow control (default: 0.2)")
+parser.add_argument("--fluid-method",
+                    choices=["lbm-bgk-guo", "lbm-trt-guo"],
+                    default="lbm-bgk-guo",
+                    help="LBM collision/forcing method (default: lbm-bgk-guo)")
+parser.add_argument("--particle-method",
+                    choices=["dem-hertz", "dem-linear"],
+                    default="dem-hertz",
+                    help="DEM normal contact model (default: dem-hertz)")
 parser.add_argument("--cylinder", action="store_true", help="Add a fixed solid cylinder")
 parser.add_argument("--cyl-x", type=float, default=None,
                     help="Cylinder center x [lattice] (default: NX/4)")
@@ -308,6 +316,8 @@ def _write_metadata(path: Path, sim: LBMDEMSolver | None = None) -> None:
             "reynolds_number": RE,
             "target_u_max": U_MAX,
             "reynolds_length": REYNOLDS_LENGTH,
+            "fluid_method": args.fluid_method,
+            "particle_method": args.particle_method,
             "particle_radius": RADIUS,
             "radius_variation": RADIUS_VARIATION,
             "density_ratio": DENSITY_RATIO,
@@ -326,6 +336,8 @@ def _write_metadata(path: Path, sim: LBMDEMSolver | None = None) -> None:
     }
     if sim is not None:
         metadata["solver"] = {
+            "fluid_method": sim.fluid_method,
+            "particle_method": sim.particle_method,
             "nu": sim.nu,
             "tau": sim.tau,
             "omega": sim.omega,
@@ -634,6 +646,8 @@ print(
         else "fixed pressure/body force"
     )
 )
+print(f"Fluid method: {args.fluid_method}")
+print(f"Particle method: {args.particle_method}")
 if PARTICLE_VOLUME_FRACTION is not None:
     if args.particle_source == "left-inlet":
         print(
@@ -662,6 +676,8 @@ sim = FastLBMDEM(
     reynolds_length=REYNOLDS_LENGTH,
     flow_control="target_max_velocity" if args.flow_control else "fixed_pressure",
     flow_control_gain=args.flow_control_gain,
+    fluid_method=args.fluid_method,
+    particle_method=args.particle_method,
     n_particles=N_PARTICLES,
     particle_radius=RADIUS,
     radius_variation=RADIUS_VARIATION,

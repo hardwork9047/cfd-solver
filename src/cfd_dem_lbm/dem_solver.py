@@ -6,6 +6,8 @@ from typing import Callable
 
 import numpy as np
 
+PARTICLE_METHODS = ("dem-hertz", "dem-linear")
+
 
 class DEMSolver:
     """Compute DEM forces and torques for a coupled LBM-DEM simulation.
@@ -17,9 +19,17 @@ class DEMSolver:
     contact physics in scripts.
     """
 
-    def __init__(self, coupled_solver, pair_kernel: Callable | None = None):
+    def __init__(
+        self,
+        coupled_solver,
+        pair_kernel: Callable | None = None,
+        contact_model: str = "dem-hertz",
+    ):
+        if contact_model not in PARTICLE_METHODS:
+            raise ValueError(f"contact_model must be one of {PARTICLE_METHODS}")
         self.sim = coupled_solver
         self.pair_kernel = pair_kernel
+        self.contact_model = contact_model
 
     @staticmethod
     def tangent_from_normal(nx_: float, ny_: float) -> np.ndarray:
@@ -27,9 +37,12 @@ class DEMSolver:
         return np.array([-ny_, nx_])
 
     def normal_contact_magnitude(self, overlap: float, v_n: float, mass: float) -> float:
-        """Hertz normal force with damping, clamped to avoid artificial tension."""
+        """Normal contact force with damping, clamped to avoid artificial tension."""
         sim = self.sim
-        f_n = sim.k_n * overlap**1.5
+        if self.contact_model == "dem-linear":
+            f_n = sim.k_n * overlap
+        else:
+            f_n = sim.k_n * overlap**1.5
         f_damp = -sim.damping * v_n * float(np.sqrt(sim.k_n * mass))
         return max(f_n + f_damp, 0.0)
 

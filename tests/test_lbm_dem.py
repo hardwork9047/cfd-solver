@@ -9,6 +9,7 @@ def _two_particle_solver(
     *,
     particle_attraction: bool = False,
     particle_repulsion: bool = False,
+    particle_method: str = "dem-hertz",
 ) -> LBMDEMSolver:
     sim = LBMDEMSolver(
         nx=50,
@@ -21,6 +22,7 @@ def _two_particle_solver(
         gravity=0.0,
         particle_attraction=particle_attraction,
         particle_repulsion=particle_repulsion,
+        particle_method=particle_method,
         attraction_strength=6e-3,
         repulsion_strength=6e-3,
         attraction_cutoff=3.0,
@@ -97,6 +99,61 @@ def test_particle_attraction_and_repulsion_are_mutually_exclusive():
         assert "mutually exclusive" in str(exc)
     else:
         raise AssertionError("Expected mutually exclusive surface-force modes to fail")
+
+
+def test_invalid_solver_methods_are_rejected():
+    """Fluid and DEM method options should fail early when misspelled."""
+    try:
+        LBMDEMSolver(fluid_method="not-a-fluid-method")
+    except ValueError as exc:
+        assert "fluid_method" in str(exc)
+    else:
+        raise AssertionError("Expected invalid fluid method to fail")
+
+    try:
+        LBMDEMSolver(particle_method="not-a-particle-method")
+    except ValueError as exc:
+        assert "particle_method" in str(exc)
+    else:
+        raise AssertionError("Expected invalid particle method to fail")
+
+
+def test_linear_dem_contact_model_changes_normal_contact_force():
+    """Linear DEM contact is selectable and differs from Hertz for small overlaps."""
+    sim_hertz = _two_particle_solver()
+    sim_linear = _two_particle_solver(particle_method="dem-linear")
+
+    sim_hertz.pos[:] = np.array([[20.0, 15.0], [23.5, 15.0]])
+    sim_linear.pos[:] = sim_hertz.pos.copy()
+
+    hertz_forces = sim_hertz._dem_forces(dt_sub=1.0)
+    linear_forces = sim_linear._dem_forces(dt_sub=1.0)
+
+    assert linear_forces[1, 0] > hertz_forces[1, 0]
+    assert sim_linear.dem_solver.pair_kernel is None
+
+
+def test_trt_lbm_method_advances_with_finite_fields():
+    """TRT LBM is selectable for the same coupled solver path."""
+    sim = LBMDEMSolver(
+        nx=32,
+        ny=20,
+        Re=50.0,
+        u_max=0.03,
+        n_particles=1,
+        particle_radius=2.0,
+        gravity=0.0,
+        fluid_method="lbm-trt-guo",
+        seed=8,
+    )
+    sim._delete_particles(np.ones(sim.n_p, dtype=bool))
+
+    sim.advance(5)
+    fields = sim.get_fields()
+
+    assert sim.fluid_method == "lbm-trt-guo"
+    for field in fields:
+        assert np.all(np.isfinite(field))
 
 
 def test_rolling_friction_resists_wall_slip_and_spins_particle():
