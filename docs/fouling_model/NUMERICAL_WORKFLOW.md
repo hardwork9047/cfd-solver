@@ -3,16 +3,69 @@
 This note records the current practical workflow for developing the membrane
 fouling model.
 
-## 1. Particle-fluid coupling modes
+## 1. Solver method options
+
+`run_lbm_dem.py` exposes three method axes that can be included in JSON
+sweeps.
+
+### Fluid solver method
+
+Use `--fluid-method`.
+
+- `lbm-bgk-guo`: single-relaxation-time BGK LBM with Guo forcing.  This is the
+  default and the simplest reference method.  It is useful for baseline runs,
+  quick comparisons, and continuity with earlier results.  Its weakness is that
+  the single relaxation parameter controls all non-conserved modes, so it can be
+  less robust near solid boundaries, narrow gaps, and high blockage.
+- `lbm-trt-guo`: two-relaxation-time LBM with Guo forcing.  The even and odd
+  distribution components relax separately, which usually gives better boundary
+  behavior than BGK for bounce-back solids.  This is the preferred candidate for
+  pore-blockage studies, especially with `solid_boundary` coupling.  It is a
+  little more expensive and should be compared against BGK during validation.
+
+### Particle contact method
+
+Use `--particle-method`.
+
+- `dem-hertz`: nonlinear Hertz normal contact with damping.  This is the
+  default and is closer to elastic sphere/disc contact.  Contact stiffness grows
+  with overlap, so it is suitable when the qualitative packing and collision
+  response matter.  It can require smaller DEM substeps or careful stiffness
+  tuning in dense fouling layers.
+- `dem-linear`: linear spring normal contact with damping.  This is simpler and
+  often easier to reason about when debugging or performing sensitivity sweeps.
+  It is less physically specific than Hertz contact, but can be useful for
+  isolating whether a result comes from geometry, adhesion/repulsion, or the
+  nonlinear contact law.
+
+### Particle-fluid coupling method
 
 `run_lbm_dem.py` supports two coupling modes.
 
 - `point_force`: the previous two-way Stokes-drag back reaction.  Particles
   exchange momentum with the fluid but do not geometrically block lattice nodes.
+  This is computationally light and useful for legacy comparison, dilute
+  transport, and sensitivity studies where complete pore blockage is not the
+  central question.  It should not be interpreted as a fully blocked membrane
+  pore even if particles visually fill a gap.
 - `solid_boundary`: active DEM particles are overlaid on the LBM `solid` mask.
   This makes deposited particles act as moving no-slip obstacles for the fluid
   solver.  It is still a 2-D approximation, but it is the preferred mode when
-  testing pore blockage and flux decline.
+  testing pore blockage and flux decline.  It is more physical for fouling
+  resistance, but also more sensitive to lattice resolution, particle radius,
+  and bounce-back boundary accuracy.
+
+### Recommended combinations
+
+- Baseline/legacy comparison:
+  `--fluid-method lbm-bgk-guo --particle-method dem-hertz --particle-fluid-coupling point_force`
+- Pore-blockage screening:
+  `--fluid-method lbm-trt-guo --particle-method dem-hertz --particle-fluid-coupling solid_boundary`
+- Debug/sensitivity runs:
+  `--fluid-method lbm-bgk-guo --particle-method dem-linear --particle-fluid-coupling solid_boundary`
+
+For publication-quality interpretation, compare at least BGK vs TRT and point
+force vs solid-boundary coupling on a small set of representative geometries.
 
 Example:
 
