@@ -493,6 +493,14 @@ class LBMDEMSolver:
         # --- LBM distribution functions f[q, x, y] ---
         rho0 = np.ones((nx, ny))
         self.f = _equilibrium(rho0, np.zeros((nx, ny)), np.zeros((nx, ny)))
+        self._stream_x_src = [
+            (np.arange(nx) - int(C[i, 0])) % nx
+            for i in range(Q)
+        ]
+        self._stream_y_src = [
+            (np.arange(ny) - int(C[i, 1])) % ny
+            for i in range(Q)
+        ]
 
         # Solid nodes: top/bottom walls and fixed cylinders.  Moving particle
         # solids are overlaid in solid-boundary coupling mode.
@@ -808,11 +816,19 @@ class LBMDEMSolver:
             return
 
         particle_solid = np.zeros_like(self.fixed_solid)
-        ix = np.arange(self.nx)
-        iy = np.arange(self.ny)
-        XX, YY = np.meshgrid(ix, iy, indexing="ij")
         for (x_pos, y_pos), radius in zip(self.pos, self.radii):
-            particle_solid |= (XX - x_pos) ** 2 + (YY - y_pos) ** 2 <= radius**2
+            x_min = int(np.floor(x_pos - radius))
+            x_max = int(np.ceil(x_pos + radius))
+            y_min = max(0, int(np.floor(y_pos - radius)))
+            y_max = min(self.ny - 1, int(np.ceil(y_pos + radius)))
+            if y_max < y_min:
+                continue
+            x_indices = np.arange(x_min, x_max + 1)
+            y_indices = np.arange(y_min, y_max + 1)
+            xx = x_indices[:, np.newaxis] % self.nx
+            yy = y_indices[np.newaxis, :]
+            local = (x_indices[:, np.newaxis] - x_pos) ** 2 + (y_indices[np.newaxis, :] - y_pos) ** 2 <= radius**2
+            particle_solid[xx, yy] |= local
         particle_solid &= ~self.fixed_solid
         self.particle_solid = particle_solid
         self.solid = self.fixed_solid | self.particle_solid
@@ -905,10 +921,11 @@ class LBMDEMSolver:
         else:
             self._collide_bgk_guo(rho, ux, uy)
 
-        # Streaming (periodic via np.roll)
+        # Streaming (periodic source indices are precomputed at initialization)
+        streamed = np.empty_like(self.f)
         for i in range(Q):
-            self.f[i] = np.roll(self.f[i], int(C[i, 0]), axis=0)
-            self.f[i] = np.roll(self.f[i], int(C[i, 1]), axis=1)
+            streamed[i] = self.f[i][np.ix_(self._stream_x_src[i], self._stream_y_src[i])]
+        self.f = streamed
 
         # Bounce-back on solid nodes
         f_tmp = self.f.copy()
@@ -1094,10 +1111,12 @@ class LBMDEMSolver:
         if self.n_p == 0 or self.particle_fluid_coupling != "immersed_boundary":
             return
 
-        marker_x: list[float] = []
-        marker_y: list[float] = []
-        marker_fx: list[float] = []
-        marker_fy: list[float] = []
+        marker_x_parts: list[np.ndarray] = []
+        marker_y_parts: list[np.ndarray] = []
+        marker_rx_parts: list[np.ndarray] = []
+        marker_ry_parts: list[np.ndarray] = []
+        marker_ds_parts: list[np.ndarray] = []
+        marker_owner_parts: list[np.ndarray] = []
 
         for i in range(self.n_p):
             radius = float(self.radii[i])
@@ -1108,25 +1127,38 @@ class LBMDEMSolver:
             ry = radius * np.sin(theta)
             x = self.pos[i, 0] + rx
             y = np.clip(self.pos[i, 1] + ry, 0.5, self.ny - 1.5)
-            uf_x, uf_y = self._interp_velocity_many(x, y, ux=ux, uy=uy)
-            ub_x = self.vel[i, 0] - self.omega_p[i] * ry
-            ub_y = self.vel[i, 1] + self.omega_p[i] * rx
-            fx = self.ibm_stiffness * (ub_x - uf_x) * ds
-            fy = self.ibm_stiffness * (ub_y - uf_y) * ds
+            marker_x_parts.append(x)
+            marker_y_parts.append(y)
+            marker_rx_parts.append(rx)
+            marker_ry_parts.append(ry)
+            marker_ds_parts.append(np.full(n_markers, ds))
+            marker_owner_parts.append(np.full(n_markers, i, dtype=np.int64))
 
-            self.ibm_forces_p[i, 0] -= float(np.sum(fx))
-            self.ibm_forces_p[i, 1] -= float(np.sum(fy))
-            self.ibm_torques_p[i] -= float(np.sum(rx * fy - ry * fx))
-            marker_x.extend(x.tolist())
-            marker_y.extend(y.tolist())
-            marker_fx.extend(fx.tolist())
-            marker_fy.extend(fy.tolist())
+        marker_x = np.concatenate(marker_x_parts)
+        marker_y = np.concatenate(marker_y_parts)
+        marker_rx = np.concatenate(marker_rx_parts)
+        marker_ry = np.concatenate(marker_ry_parts)
+        marker_ds = np.concatenate(marker_ds_parts)
+        marker_owner = np.concatenate(marker_owner_parts)
+
+        uf_x, uf_y = self._interp_velocity_many(marker_x, marker_y, ux=ux, uy=uy)
+        owner_vel = self.vel[marker_owner]
+        owner_omega = self.omega_p[marker_owner]
+        ub_x = owner_vel[:, 0] - owner_omega * marker_ry
+        ub_y = owner_vel[:, 1] + owner_omega * marker_rx
+        marker_fx = self.ibm_stiffness * (ub_x - uf_x) * marker_ds
+        marker_fy = self.ibm_stiffness * (ub_y - uf_y) * marker_ds
+
+        np.add.at(self.ibm_forces_p[:, 0], marker_owner, -marker_fx)
+        np.add.at(self.ibm_forces_p[:, 1], marker_owner, -marker_fy)
+        marker_torque = marker_rx * marker_fy - marker_ry * marker_fx
+        np.add.at(self.ibm_torques_p, marker_owner, -marker_torque)
 
         self._distribute_lagrangian_forces_many(
-            np.asarray(marker_x),
-            np.asarray(marker_y),
-            np.asarray(marker_fx),
-            np.asarray(marker_fy),
+            marker_x,
+            marker_y,
+            marker_fx,
+            marker_fy,
         )
 
     # ------------------------------------------------------------------

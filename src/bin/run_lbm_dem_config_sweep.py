@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import FIRST_COMPLETED, Future, wait
 import itertools
 import json
 import subprocess
@@ -123,12 +124,39 @@ def _write_status_row(path: Path, row: dict[str, str]) -> None:
         handle.write("\t".join(row[column] for column in STATUS_HEADER) + "\n")
 
 
+def _run_case(
+    *,
+    idx: int,
+    total: int,
+    name: str,
+    command: list[str],
+    log_file: Path,
+) -> dict[str, str]:
+    quoted = " ".join(subprocess.list2cmdline([part]) for part in command)
+    print(f"[{idx}/{total}] {name}")
+    print(f"  {quoted}")
+    with log_file.open("w", encoding="utf-8") as handle:
+        handle.write(f"Command: {quoted}\n")
+        completed = subprocess.run(command, cwd=REPO_ROOT, stdout=handle, stderr=subprocess.STDOUT)
+    status = "ok" if completed.returncode == 0 else "failed"
+    return {
+        "case": name,
+        "status": status,
+        "exit_code": str(completed.returncode),
+        "log_file": str(log_file),
+        "command": quoted,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run LBM-DEM sweeps from JSON config")
     parser.add_argument("config", type=Path, help="JSON sweep configuration")
     parser.add_argument("--dry-run", action="store_true", help="Print commands without running them")
+    parser.add_argument("--jobs", type=int, default=1, help="Maximum number of cases to run in parallel")
     parser.add_argument("--stop-on-failure", action="store_true", help="Stop at first failed case")
     args = parser.parse_args()
+    if args.jobs <= 0:
+        parser.error("--jobs must be positive")
 
     config = _load_config(args.config)
     run_id = datetime.now().strftime("run_%Y%m%d_%H%M%S")
@@ -140,7 +168,7 @@ def main() -> int:
     if not cases:
         raise ValueError("configuration expanded to zero cases")
 
-    failures = 0
+    prepared: list[tuple[int, str, list[str], Path, str]] = []
     for idx, case in enumerate(cases, start=1):
         if not isinstance(case, dict):
             raise ValueError("each case must be a JSON object")
@@ -148,31 +176,58 @@ def main() -> int:
         command = _case_command(config, case)
         log_file = log_root / f"{idx:03d}_{name}.log"
         quoted = " ".join(subprocess.list2cmdline([part]) for part in command)
-        print(f"[{idx}/{len(cases)}] {name}")
-        print(f"  {quoted}")
-        if args.dry_run:
-            continue
-        with log_file.open("w", encoding="utf-8") as handle:
-            handle.write(f"Command: {quoted}\n")
-            completed = subprocess.run(command, cwd=REPO_ROOT, stdout=handle, stderr=subprocess.STDOUT)
-        status = "ok" if completed.returncode == 0 else "failed"
-        if completed.returncode != 0:
-            failures += 1
-        _write_status_row(
-            status_path,
-            {
-                "case": name,
-                "status": status,
-                "exit_code": str(completed.returncode),
-                "log_file": str(log_file),
-                "command": quoted,
-            },
-        )
-        if completed.returncode != 0 and args.stop_on_failure:
-            break
+        prepared.append((idx, name, command, log_file, quoted))
 
-    if not args.dry_run:
-        print(f"Status: {status_path}")
+    if args.dry_run:
+        for idx, name, _command, _log_file, quoted in prepared:
+            print(f"[{idx}/{len(cases)}] {name}")
+            print(f"  {quoted}")
+        return 0
+
+    failures = 0
+    if args.jobs == 1:
+        for idx, name, command, log_file, _quoted in prepared:
+            row = _run_case(
+                idx=idx,
+                total=len(cases),
+                name=name,
+                command=command,
+                log_file=log_file,
+            )
+            if row["status"] != "ok":
+                failures += 1
+            _write_status_row(status_path, row)
+            if row["status"] != "ok" and args.stop_on_failure:
+                break
+    else:
+        from concurrent.futures import ThreadPoolExecutor
+
+        pending = list(prepared)
+        running: dict[Future[dict[str, str]], tuple[int, str]] = {}
+        with ThreadPoolExecutor(max_workers=args.jobs) as executor:
+            while pending or running:
+                while pending and len(running) < args.jobs:
+                    idx, name, command, log_file, _quoted = pending.pop(0)
+                    future = executor.submit(
+                        _run_case,
+                        idx=idx,
+                        total=len(cases),
+                        name=name,
+                        command=command,
+                        log_file=log_file,
+                    )
+                    running[future] = (idx, name)
+                done, _ = wait(running, return_when=FIRST_COMPLETED)
+                for future in done:
+                    row = future.result()
+                    running.pop(future)
+                    if row["status"] != "ok":
+                        failures += 1
+                    _write_status_row(status_path, row)
+                    if row["status"] != "ok" and args.stop_on_failure:
+                        pending.clear()
+
+    print(f"Status: {status_path}")
     return 1 if failures else 0
 
 

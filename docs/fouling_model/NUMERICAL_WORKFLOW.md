@@ -133,6 +133,7 @@ Use JSON configs to keep parameter sweeps reproducible:
 ```bash
 src/bin/run_lbm_dem_config_sweep.py src/bin/lbm_dem_sweep_example.json --dry-run
 src/bin/run_lbm_dem_config_sweep.py src/bin/lbm_dem_sweep_example.json
+src/bin/run_lbm_dem_config_sweep.py src/bin/lbm_dem_factor_sweep_example.json --jobs 4
 src/bin/run_lbm_dem_config_sweep.py src/bin/lbm_dem_factor_sweep_example.json --dry-run
 ```
 
@@ -144,6 +145,8 @@ Two config styles are supported:
 - `cases`: explicitly list named cases.
 - `factors`: define lists of values and let the runner expand the Cartesian
   product into cases.
+- `--jobs N`: run up to `N` cases in parallel.  Use this for independent
+  sweeps, choosing `N` so memory and CPU usage remain comfortable.
 
 After a sweep, summarize all available run directories with:
 
@@ -165,3 +168,19 @@ Use `--flow-condition` to make the intended boundary/control condition explicit.
 
 The older `--flow-control` / `--no-flow-control` flags are still accepted for
 backward compatibility, but `--flow-condition` is preferred for new sweeps.
+
+## 6. Performance Notes
+
+The current execution path includes several speed-oriented choices:
+
+- `solid_boundary` updates only local particle bounding boxes instead of
+  rebuilding particle solids from a full-grid mesh each step.
+- `immersed_boundary` computes marker interpolation and marker forces in
+  batched arrays before spreading them back to the lattice.
+- LBM streaming uses precomputed periodic source indices instead of repeated
+  `np.roll` calls.
+- Config sweeps can run independent cases concurrently with `--jobs`.
+
+For large sweeps, reduce I/O first: increase `--snapshot-every`, set
+`--paraview-every 0` for final-only VTK, and use `--no-video` unless movies are
+needed for every condition.
