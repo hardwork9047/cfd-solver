@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from cfd_dem_lbm import FastLBMDEM, LBMDEMSolver
+from cfd_dem_lbm import DEMSolver, FastLBMDEM, LBMDEMSolver
 
 
 def _two_particle_solver(
@@ -41,6 +41,18 @@ def test_particle_attraction_is_disabled_by_default_for_separated_particles():
     forces = sim._dem_forces(dt_sub=1.0)
 
     np.testing.assert_allclose(forces, 0.0, atol=1e-12)
+    assert isinstance(sim.dem_solver, DEMSolver)
+
+
+def test_dem_solver_directly_matches_coupled_dem_force_api():
+    """Verification code can use the same DEM solver as production coupling."""
+    sim = _two_particle_solver(particle_attraction=True)
+
+    direct_forces, direct_torques = sim.dem_solver.compute_loads(dt_sub=1.0)
+    api_forces = sim._dem_forces(dt_sub=1.0)
+
+    np.testing.assert_allclose(direct_forces, api_forces, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(direct_torques, sim.torques_p, rtol=1e-12, atol=1e-12)
 
 
 def test_particle_attraction_pulls_separated_particles_together():

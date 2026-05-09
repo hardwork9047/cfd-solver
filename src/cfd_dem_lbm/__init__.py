@@ -15,11 +15,13 @@ except PackageNotFoundError:
 __author__ = "hardwork9047"
 __license__ = "MIT"
 
+from .dem_solver import DEMSolver
 from .fast_solver import FastLBMDEM
 from .fluid_verification import VerificationResult, run_fluid_verification, write_verification_outputs
 from .lbm_dem import LBMDEMSolver, plot_fields, plot_particles
 
 __all__ = [
+    "DEMSolver",
     "FastLBMDEM",
     "LBMDEMSolver",
     "VerificationResult",

@@ -30,6 +30,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 from cfd.result_paths import program_results_dir
+from .dem_solver import DEMSolver
 
 try:  # Optional acceleration. The solver keeps a pure-NumPy/Python fallback.
     from numba import njit
@@ -493,6 +494,7 @@ class LBMDEMSolver:
         self._inlet_cursor = 0
         self._rng_inlet = np.random.default_rng(seed + 2027)
         self._init_particles(seed)
+        self.dem_solver = DEMSolver(self, pair_kernel=_dem_pair_loads_numba)
         if self.particle_source != "left_inlet":
             self.generated_particles = self.n_p
         self.particle_area = float(
@@ -1051,171 +1053,8 @@ class LBMDEMSolver:
         return pair_array[:, 0], pair_array[:, 1]
 
     def _dem_loads(self, dt_sub: float) -> tuple[np.ndarray, np.ndarray]:
-        """
-        Compute total force and torque on each particle:
-          gravity + Stokes drag + contact + optional attraction/friction.
-
-        ``dt_sub`` is unused here but kept for future damping models.
-        """
-        forces = np.zeros((self.n_p, 2))
-        torques = np.zeros(self.n_p)
-
-        # 1. Gravity (buoyancy-corrected, per-particle mass)
-        buoyancy_factor = 1.0 - 1.0 / self.density_ratio
-        forces[:, 1] -= self.masses * self.g * buoyancy_factor
-
-        # 2. Stokes drag from interpolated fluid velocity (per-particle radius)
-        drag = self._particle_drag_forces()
-        forces += drag
-
-        # 3. Particle–particle Hertz contact (per-particle radii / masses)
-        pair_i: np.ndarray | None = None
-        pair_j: np.ndarray | None = None
-        if _dem_pair_loads_numba is not None and self.n_p >= 2:
-            pair_i, pair_j = self._particle_pair_arrays()
-            _dem_pair_loads_numba(
-                pair_i,
-                pair_j,
-                self.pos,
-                self.vel,
-                self.radii,
-                self.masses,
-                self.omega_p,
-                self.k_n,
-                self.damping,
-                self.rolling_friction,
-                self.sliding_friction,
-                self.tangential_damping,
-                self.rolling_friction_coeff,
-                self.rolling_damping,
-                self.particle_attraction,
-                self.particle_repulsion,
-                self.attraction_strength,
-                self.repulsion_strength,
-                self.attraction_cutoff,
-                self.repulsion_cutoff,
-                self.attraction_min_gap,
-                self.repulsion_min_gap,
-                forces,
-                torques,
-            )
-
-        pair_iter = zip(pair_i, pair_j) if pair_i is not None else self._particle_pair_candidates()
-        if _dem_pair_loads_numba is None:
-            for i, j in pair_iter:
-                dp = self.pos[j] - self.pos[i]
-                dist = float(np.linalg.norm(dp))
-                min_dist = self.radii[i] + self.radii[j]
-                if dist <= 1e-10:
-                    continue
-
-                n = dp / dist
-
-                if dist < min_dist:
-                    overlap = min_dist - dist
-                    v_n = float(np.dot(self.vel[j] - self.vel[i], n))
-                    avg_m = (self.masses[i] + self.masses[j]) / 2.0
-                    f_mag = self._normal_contact_magnitude(overlap, v_n, avg_m)
-                    f_total = f_mag * n
-                    forces[i] -= f_total
-                    forces[j] += f_total
-
-                    t = self._tangent_from_normal(n[0], n[1])
-                    v_t = float(np.dot(self.vel[j] - self.vel[i], t))
-                    v_t -= self.omega_p[j] * self.radii[j] + self.omega_p[i] * self.radii[i]
-                    f_t = self._tangential_force_magnitude(v_t, f_mag, avg_m)
-                    f_t_vec = f_t * t
-                    forces[i] -= f_t_vec
-                    forces[j] += f_t_vec
-                    torques[i] -= self.radii[i] * f_t
-                    torques[j] -= self.radii[j] * f_t
-                    torques[i] += self._rolling_resistance_torque(
-                        self.omega_p[i], f_mag, self.radii[i], self.masses[i]
-                    )
-                    torques[j] += self._rolling_resistance_torque(
-                        self.omega_p[j], f_mag, self.radii[j], self.masses[j]
-                    )
-
-                # Hamaker-like near-surface force between particle surfaces.
-                # |F| = A* R_eff / (6 h^2), regularised at h_min and truncated by cutoff.
-                if self.particle_attraction and self.attraction_strength > 0.0:
-                    surface_gap = dist - min_dist
-                    if surface_gap <= self.attraction_cutoff:
-                        h_min = max(self.attraction_min_gap, 1e-12)
-                        h = max(surface_gap, h_min)
-                        r_eff = self.radii[i] * self.radii[j] / min_dist
-                        f_attr = self.attraction_strength * r_eff / (6.0 * h**2)
-                        forces[i] += f_attr * n
-                        forces[j] -= f_attr * n
-                elif self.particle_repulsion and self.repulsion_strength > 0.0:
-                    surface_gap = dist - min_dist
-                    if surface_gap <= self.repulsion_cutoff:
-                        h_min = max(self.repulsion_min_gap, 1e-12)
-                        h = max(surface_gap, h_min)
-                        r_eff = self.radii[i] * self.radii[j] / min_dist
-                        f_rep = self.repulsion_strength * r_eff / (6.0 * h**2)
-                        forces[i] -= f_rep * n
-                        forces[j] += f_rep * n
-
-        # 4. Wall contacts (Hertz, per-particle radius / mass)
-        for i in range(self.n_p):
-            wall_bot = self.radii[i] + 0.5
-            wall_top = self.ny - 1.5 - self.radii[i]
-            if self.pos[i, 1] < wall_bot:
-                overlap = wall_bot - self.pos[i, 1]
-                v_n = -self.vel[i, 1]
-                f_mag = self._normal_contact_magnitude(overlap, v_n, self.masses[i])
-                forces[i, 1] += f_mag
-                n = np.array([0.0, 1.0])
-                t = self._tangent_from_normal(n[0], n[1])
-                v_t = float(np.dot(self.vel[i], t)) - self.omega_p[i] * self.radii[i]
-                f_t = self._tangential_force_magnitude(v_t, f_mag, self.masses[i])
-                forces[i] += f_t * t
-                torques[i] -= self.radii[i] * f_t
-                torques[i] += self._rolling_resistance_torque(
-                    self.omega_p[i], f_mag, self.radii[i], self.masses[i]
-                )
-            if self.pos[i, 1] > wall_top:
-                overlap = self.pos[i, 1] - wall_top
-                v_n = self.vel[i, 1]
-                f_mag = self._normal_contact_magnitude(overlap, v_n, self.masses[i])
-                forces[i, 1] -= f_mag
-                n = np.array([0.0, -1.0])
-                t = self._tangent_from_normal(n[0], n[1])
-                v_t = float(np.dot(self.vel[i], t)) - self.omega_p[i] * self.radii[i]
-                f_t = self._tangential_force_magnitude(v_t, f_mag, self.masses[i])
-                forces[i] += f_t * t
-                torques[i] -= self.radii[i] * f_t
-                torques[i] += self._rolling_resistance_torque(
-                    self.omega_p[i], f_mag, self.radii[i], self.masses[i]
-                )
-
-        # 5. Cylinder contacts (Hertz, per-particle radius / mass)
-        if self.cylinders:
-            for cx, cy, cr in self.cylinders:
-                for i in range(self.n_p):
-                    dx = self.pos[i, 0] - cx
-                    dy = self.pos[i, 1] - cy
-                    dist = float(np.hypot(dx, dy))
-                    min_dist = cr + self.radii[i]
-                    if dist < min_dist and dist > 1e-10:
-                        overlap = min_dist - dist
-                        nx_ = dx / dist
-                        ny_ = dy / dist
-                        v_n = self.vel[i, 0] * nx_ + self.vel[i, 1] * ny_
-                        f_mag = self._normal_contact_magnitude(overlap, v_n, self.masses[i])
-                        forces[i, 0] += f_mag * nx_
-                        forces[i, 1] += f_mag * ny_
-                        t = self._tangent_from_normal(nx_, ny_)
-                        v_t = float(np.dot(self.vel[i], t)) - self.omega_p[i] * self.radii[i]
-                        f_t = self._tangential_force_magnitude(v_t, f_mag, self.masses[i])
-                        forces[i] += f_t * t
-                        torques[i] -= self.radii[i] * f_t
-                        torques[i] += self._rolling_resistance_torque(
-                            self.omega_p[i], f_mag, self.radii[i], self.masses[i]
-                        )
-
-        return forces, torques
+        """Compute total DEM force and torque through the shared DEM solver."""
+        return self.dem_solver.compute_loads(dt_sub)
 
     def _dem_forces(self, dt_sub: float) -> np.ndarray:
         """Return total DEM forces, preserving the historical test/helper API."""
