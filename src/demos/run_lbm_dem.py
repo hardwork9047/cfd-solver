@@ -177,6 +177,10 @@ parser.add_argument("--porous-resistance", action=argparse.BooleanOptionalAction
                     help="Apply Brinkman-like drag in particle-occupied cake cells")
 parser.add_argument("--porous-resistance-coeff", type=float, default=0.0,
                     help="Porous drag coefficient for cake-layer resistance (default: 0)")
+parser.add_argument("--max-stable-speed", type=float, default=1.0,
+                    help="Abort and mark run failed if max fluid or particle speed exceeds this value")
+parser.add_argument("--max-stable-pressure", type=float, default=10.0,
+                    help="Abort and mark run failed if absolute pressure exceeds this value")
 args = parser.parse_args()
 if args.particle_attraction and args.particle_repulsion:
     parser.error("--particle-attraction and --particle-repulsion are mutually exclusive")
@@ -212,6 +216,10 @@ if args.paraview_every < 0:
     parser.error("--paraview-every must be non-negative")
 if args.porous_resistance_coeff < 0.0:
     parser.error("--porous-resistance-coeff must be non-negative")
+if args.max_stable_speed <= 0.0:
+    parser.error("--max-stable-speed must be positive")
+if args.max_stable_pressure <= 0.0:
+    parser.error("--max-stable-pressure must be positive")
 
 if args.output_profile == "analysis":
     args.no_video = True
@@ -426,6 +434,14 @@ def _write_run_status(
 def _record_uncaught_exception(exc_type, exc_value, exc_tb) -> None:
     """Persist failed run state before Python prints the original traceback."""
     try:
+        existing_status = OUT_DIR / "run_status.json"
+        if existing_status.exists():
+            try:
+                payload = json.loads(existing_status.read_text(encoding="utf-8"))
+                if str(payload.get("status", "")).startswith("failed"):
+                    return
+            except (OSError, json.JSONDecodeError):
+                pass
         _write_run_status(
             "failed",
             error=f"{exc_type.__name__}: {exc_value}",
@@ -491,6 +507,8 @@ def _write_metadata(path: Path, sim: LBMDEMSolver | None = None) -> None:
             "n_particles_requested": N_PARTICLES,
             "porous_resistance": args.porous_resistance,
             "porous_resistance_coeff": args.porous_resistance_coeff,
+            "max_stable_speed": args.max_stable_speed,
+            "max_stable_pressure": args.max_stable_pressure,
             "cylinders": [
                 {"x": float(cx), "y": float(cy), "radius": float(cr)}
                 for cx, cy, cr in CYLINDERS
@@ -780,6 +798,77 @@ def _boundary_mean(field: np.ndarray, solid: np.ndarray, x_idx: int) -> float:
     return float(np.mean(field[x_idx, fluid]))
 
 
+def _section_mean(field: np.ndarray, solid: np.ndarray, x_idx: int) -> float:
+    """Mean scalar value on a clamped vertical section."""
+    x_idx = int(np.clip(x_idx, 0, field.shape[0] - 1))
+    return _boundary_mean(field, solid, x_idx)
+
+
+def _pressure_sections(cylinders: list[tuple[float, float, float]]) -> dict[str, int]:
+    """Return standard pressure sampling sections for global and pore-local loss."""
+    if cylinders:
+        upstream_edge = min(cx - cr for cx, _, cr in cylinders)
+        downstream_edge = max(cx + cr for cx, _, cr in cylinders)
+        margin = max(2.0, 0.05 * NX)
+        upstream = int(np.floor(upstream_edge - margin))
+        downstream = int(np.ceil(downstream_edge + margin))
+    else:
+        upstream = int(0.25 * NX)
+        downstream = int(0.75 * NX)
+    return {
+        "inlet_x": 1,
+        "outlet_x": NX - 2,
+        "pore_upstream_x": int(np.clip(upstream, 1, NX - 2)),
+        "pore_downstream_x": int(np.clip(downstream, 1, NX - 2)),
+    }
+
+
+def _instability_reason(
+    *,
+    rho: np.ndarray,
+    ux: np.ndarray,
+    uy: np.ndarray,
+    pressure: np.ndarray,
+    speed: np.ndarray,
+    sim: FastLBMDEM,
+) -> str | None:
+    """Return a reason string when fields or particle states have diverged."""
+    arrays = {
+        "rho": rho,
+        "ux": ux,
+        "uy": uy,
+        "pressure": pressure,
+        "particle_position": sim.pos,
+        "particle_velocity": sim.vel,
+        "particle_force": sim.forces_p,
+    }
+    for name, array in arrays.items():
+        if not np.all(np.isfinite(array)):
+            return f"non-finite values detected in {name}"
+    fluid_mask = ~sim.solid
+    max_fluid_speed = float(np.max(speed[fluid_mask])) if np.any(fluid_mask) else 0.0
+    if max_fluid_speed > args.max_stable_speed:
+        return (
+            f"fluid speed exceeded --max-stable-speed "
+            f"({max_fluid_speed:.6g} > {args.max_stable_speed:.6g})"
+        )
+    max_pressure = float(np.max(np.abs(pressure[fluid_mask]))) if np.any(fluid_mask) else 0.0
+    if max_pressure > args.max_stable_pressure:
+        return (
+            f"pressure exceeded --max-stable-pressure "
+            f"({max_pressure:.6g} > {args.max_stable_pressure:.6g})"
+        )
+    if sim.n_p:
+        particle_speed = np.linalg.norm(sim.vel, axis=1)
+        max_particle_speed = float(np.max(particle_speed))
+        if max_particle_speed > args.max_stable_speed:
+            return (
+                f"particle speed exceeded --max-stable-speed "
+                f"({max_particle_speed:.6g} > {args.max_stable_speed:.6g})"
+            )
+    return None
+
+
 def _contact_counts(sim: FastLBMDEM) -> dict[str, int]:
     """Count active DEM contact points for post-run analysis."""
     particle_particle = 0
@@ -854,6 +943,7 @@ def _write_fouling_summary(
     else:
         final = rows[-1]
         max_pressure_drop = max(float(row["pressure_drop"]) for row in rows)
+        max_local_pressure_drop = max(float(row["local_pressure_drop"]) for row in rows)
         min_normalized_flux = min(float(row["normalized_permeate_flux"]) for row in rows)
         max_contacts = max(int(row["total_contacts"]) for row in rows)
         max_cylinder_contacts = max(int(row["cylinder_contacts"]) for row in rows)
@@ -865,6 +955,7 @@ def _write_fouling_summary(
             "final": final,
             "extrema": {
                 "max_pressure_drop": max_pressure_drop,
+                "max_local_pressure_drop": max_local_pressure_drop,
                 "min_normalized_permeate_flux": min_normalized_flux,
                 "max_total_contacts": max_contacts,
                 "max_cylinder_contacts": max_cylinder_contacts,
@@ -874,8 +965,11 @@ def _write_fouling_summary(
                 "final_passed_particle_ratio": final["passed_particle_ratio"],
                 "final_normalized_permeate_flux": final["normalized_permeate_flux"],
                 "final_pressure_drop_ratio": final["pressure_drop_ratio"],
+                "final_local_pressure_drop_ratio": final["local_pressure_drop_ratio"],
                 "final_fouling_resistance_index": final["fouling_resistance_index"],
                 "final_cylinder_contacts": final["cylinder_contacts"],
+                "final_effective_inlet_particle_fraction": final["effective_inlet_particle_fraction"],
+                "final_inlet_particle_fraction_error": final["inlet_particle_fraction_error"],
                 "max_total_contacts": max_contacts,
             },
             "solver": {
@@ -895,9 +989,12 @@ def _write_fouling_summary(
             [
                 f"- Final normalized permeate flux: {indicators['final_normalized_permeate_flux']:.6g}",
                 f"- Final pressure drop ratio: {indicators['final_pressure_drop_ratio']:.6g}",
+                f"- Final local pressure drop ratio: {indicators['final_local_pressure_drop_ratio']:.6g}",
                 f"- Fouling resistance index: {indicators['final_fouling_resistance_index']:.6g}",
                 f"- Retained particle ratio: {indicators['final_retained_particle_ratio']:.6g}",
                 f"- Passed particle ratio: {indicators['final_passed_particle_ratio']:.6g}",
+                f"- Effective inlet particle fraction: {indicators['final_effective_inlet_particle_fraction']:.6g}",
+                f"- Inlet particle fraction error: {indicators['final_inlet_particle_fraction_error']:.6g}",
                 f"- Final cylinder contacts: {indicators['final_cylinder_contacts']}",
                 f"- Max total contacts: {indicators['max_total_contacts']}",
                 "",
@@ -1054,6 +1151,8 @@ max_particles_in_frames = 0
 analysis_rows: list[dict[str, float | int]] = []
 reference_outlet_flux: float | None = None
 reference_pressure_drop: float | None = None
+reference_local_pressure_drop: float | None = None
+pressure_sections = _pressure_sections(CYLINDERS)
 
 t1 = time.perf_counter()
 for frame_idx in range(n_frames):
@@ -1067,15 +1166,43 @@ for frame_idx in range(n_frames):
     pressure_gauge = pressure - float(np.mean(pressure[~sim.solid]))
     speed = np.sqrt(ux**2 + uy**2)
     fluid_mask = ~sim.solid
-    inlet_flux = _boundary_flux(ux, sim.solid, 0)
-    outlet_flux = _boundary_flux(ux, sim.solid, NX - 1)
-    inlet_pressure = _boundary_mean(pressure, sim.solid, 0)
-    outlet_pressure = _boundary_mean(pressure, sim.solid, NX - 1)
+    instability = _instability_reason(
+        rho=rho,
+        ux=ux,
+        uy=uy,
+        pressure=pressure,
+        speed=speed,
+        sim=sim,
+    )
+    if instability is not None:
+        _write_run_status(
+            "failed_unstable",
+            error=instability,
+            extra={"frame": frame_idx + 1, "step": sim.step_count},
+        )
+        raise RuntimeError(instability)
+    inlet_flux = _boundary_flux(ux, sim.solid, pressure_sections["inlet_x"])
+    outlet_flux = _boundary_flux(ux, sim.solid, pressure_sections["outlet_x"])
+    inlet_pressure = _section_mean(pressure, sim.solid, pressure_sections["inlet_x"])
+    outlet_pressure = _section_mean(pressure, sim.solid, pressure_sections["outlet_x"])
+    pore_upstream_pressure = _section_mean(
+        pressure,
+        sim.solid,
+        pressure_sections["pore_upstream_x"],
+    )
+    pore_downstream_pressure = _section_mean(
+        pressure,
+        sim.solid,
+        pressure_sections["pore_downstream_x"],
+    )
     pressure_drop = inlet_pressure - outlet_pressure
+    local_pressure_drop = pore_upstream_pressure - pore_downstream_pressure
     if reference_outlet_flux is None and outlet_flux > 1e-12:
         reference_outlet_flux = outlet_flux
     if reference_pressure_drop is None and np.isfinite(pressure_drop):
         reference_pressure_drop = pressure_drop
+    if reference_local_pressure_drop is None and np.isfinite(local_pressure_drop):
+        reference_local_pressure_drop = local_pressure_drop
     contacts = _contact_counts(sim)
     generated_for_ratio = max(sim.generated_particles, 1)
     pass_ratio = sim.removed_particles / generated_for_ratio
@@ -1090,11 +1217,22 @@ for frame_idx in range(n_frames):
         if reference_pressure_drop is not None and abs(reference_pressure_drop) > 1e-12
         else 1.0
     )
+    local_pressure_drop_ratio = (
+        local_pressure_drop / reference_local_pressure_drop
+        if reference_local_pressure_drop is not None and abs(reference_local_pressure_drop) > 1e-12
+        else 1.0
+    )
     inlet_outlet_flux_ratio = outlet_flux / inlet_flux if inlet_flux > 1e-12 else 0.0
     dynamic_solid_fraction = sim.dynamic_solid_fraction()
     porous_fraction = sim.porous_resistance_fraction()
     total_solid_fraction = float(np.count_nonzero(sim.solid) / sim.solid.size)
     dimensionless = sim.dimensionless_groups(float(speed[fluid_mask].max()))
+    effective_inlet_particle_fraction = (
+        sim.injected_particle_area / sim.cumulative_inlet_flow_area
+        if sim.cumulative_inlet_flow_area > 1e-12
+        else 0.0
+    )
+    target_source_fraction = SOURCE_VOLUME_FRACTION if SOURCE_VOLUME_FRACTION is not None else 0.0
 
     snap = {
         "step": sim.step_count,
@@ -1129,9 +1267,19 @@ for frame_idx in range(n_frames):
         "generated_particles": sim.generated_particles,
         "pending_particles": int(len(sim._pending_radii)),
         "passed_particles": sim.removed_particles,
+        "inlet_x": pressure_sections["inlet_x"],
+        "outlet_x": pressure_sections["outlet_x"],
+        "pore_upstream_x": pressure_sections["pore_upstream_x"],
+        "pore_downstream_x": pressure_sections["pore_downstream_x"],
         "inlet_flux": inlet_flux,
         "outlet_flux": outlet_flux,
         "permeate_flux": outlet_flux,
+        "cumulative_inlet_flow_area": sim.cumulative_inlet_flow_area,
+        "target_source_particle_fraction": target_source_fraction,
+        "effective_inlet_particle_fraction": effective_inlet_particle_fraction,
+        "injected_particle_area": sim.injected_particle_area,
+        "inlet_particle_area_budget": sim.inlet_particle_area_budget,
+        "inlet_particle_fraction_error": effective_inlet_particle_fraction - target_source_fraction,
         "reynolds_number": RE,
         "observed_reynolds_number": dimensionless["observed_reynolds_number"],
         "particle_reynolds_number": dimensionless["particle_reynolds_number"],
@@ -1148,6 +1296,10 @@ for frame_idx in range(n_frames):
         "outlet_pressure": outlet_pressure,
         "pressure_drop": pressure_drop,
         "pressure_drop_ratio": pressure_drop_ratio,
+        "pore_upstream_pressure": pore_upstream_pressure,
+        "pore_downstream_pressure": pore_downstream_pressure,
+        "local_pressure_drop": local_pressure_drop,
+        "local_pressure_drop_ratio": local_pressure_drop_ratio,
         "mean_pressure_gauge": float(np.mean(pressure_gauge[fluid_mask])),
         "particle_area_fraction": float(np.sum(np.pi * sim.radii**2) / sim.fluid_area),
         "retained_particle_ratio": retained_ratio,
@@ -1274,8 +1426,14 @@ else:
         print("  粒子統計        : 全粒子が右出口から流出済み")
 if args.particle_source == "left-inlet":
     print(f"  最終入口流量    : {sim.last_inlet_flow_rate:.4e} (格子面積/step)")
+    print(f"  累積入口流量    : {sim.cumulative_inlet_flow_area:.4e} (格子面積)")
     print(f"  投入済み粒子面積: {sim.injected_particle_area:.4e}")
     print(f"  未投入面積予算  : {sim.inlet_particle_area_budget:.4e}")
+    if sim.cumulative_inlet_flow_area > 1e-12:
+        print(
+            f"  実効投入分率    : "
+            f"{sim.injected_particle_area / sim.cumulative_inlet_flow_area:.4%}"
+        )
 
 # 静止画を保存
 fig_stat, axes = plt.subplots(1, 3, figsize=(16, 5))

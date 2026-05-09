@@ -435,6 +435,8 @@ def test_left_inlet_mode_generates_particles_from_flux_budget_and_deletes_outflo
 
     assert sim.n_p == 1
     assert sim.generated_particles == 1
+    assert sim.cumulative_inlet_flow_area > 0.0
+    assert sim.injected_particle_area > 0.0
     assert np.all(sim.pos[:, 0] < 25.0 - 4.0)
 
     sim.pos[0, 0] = sim.nx + sim.radii[0] + 0.1

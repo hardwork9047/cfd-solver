@@ -640,6 +640,7 @@ class LBMDEMSolver:
         self.injected_particle_area = 0.0
         self.inlet_particle_area_budget = 0.0
         self.last_inlet_flow_rate = 0.0
+        self.cumulative_inlet_flow_area = 0.0
 
         # --- Fluid parameters ---
         self.nu = u_max * self.reynolds_length / Re if Re > 0.0 else 0.0
@@ -975,13 +976,16 @@ class LBMDEMSolver:
 
     def _try_feed_left_inlet_particles(self, max_new: int = 8) -> None:
         """Inject queued particles according to the inlet-flow concentration budget."""
-        if self.particle_source != "left_inlet" or len(self._pending_radii) == 0:
+        if self.particle_source != "left_inlet":
             return
         phi = 0.0 if self.source_volume_fraction is None else self.source_volume_fraction
         if phi <= 0.0:
             return
 
         self.last_inlet_flow_rate = self._left_boundary_flow_rate()
+        self.cumulative_inlet_flow_area += self.last_inlet_flow_rate
+        if len(self._pending_radii) == 0:
+            return
         self.inlet_particle_area_budget += phi * self.last_inlet_flow_rate
 
         added = 0
