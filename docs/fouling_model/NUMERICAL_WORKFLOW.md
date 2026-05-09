@@ -160,6 +160,10 @@ The current suite checks:
 - flux reduction when a DEM particle is imposed as a solid boundary.
 - hydrodynamic load generation when a particle is represented by the immersed
   boundary method.
+- flux reduction from Brinkman-like porous resistance in particle-occupied
+  cake cells.
+- the surface-adhesion switch: a near-wall particle attaches in slow flow and
+  detaches when local speed exceeds the detachment threshold.
 
 These are not final validation of membrane fouling, but they catch the most
 important numerical failures before running large sweeps.
@@ -174,11 +178,19 @@ Each `run_lbm_dem.py` run writes `analysis/time_series.csv` and
 - `fouling_resistance_index`,
 - `passed_particle_ratio`,
 - `retained_particle_ratio`,
+- `adhered_particles`,
+- `adhesion_events`,
+- `detachment_events`,
 - `particle_area_fraction`,
 - `dynamic_particle_solid_fraction`,
+- `porous_resistance_fraction`,
 - `total_contacts`,
 - `particle_particle_contacts`,
 - `cylinder_contacts`.
+- `observed_reynolds_number`,
+- `particle_reynolds_number`,
+- `stokes_number_estimate`,
+- `brinkman_resistance_number`.
 
 For screening, lower `fouling_resistance_index`, lower retained-particle ratio,
 and higher normalized permeate flux are favorable.  Visual inspection and
@@ -223,11 +235,52 @@ Use `--flow-condition` to make the intended boundary/control condition explicit.
   near `--u-max`.  This is useful for fair geometry comparisons at a controlled
   velocity scale, but the changing drive force must be interpreted as an
   imposed control action.
+- `constant-pressure`: alias for `fixed-pressure`; use this when the intent is
+  clearer in sweep configs.
+- `constant-flux`: alias for the current maximum-speed control.  It is a
+  practical constant-flow proxy, not a strict global integral-flux controller.
 
 The older `--flow-control` / `--no-flow-control` flags are still accepted for
 backward compatibility, but `--flow-condition` is preferred for new sweeps.
 
-## 6. Performance Notes
+## 6. Fouling Model Options
+
+Surface deposition can be represented with:
+
+```bash
+python src/demos/run_lbm_dem.py \
+  --particle-source left-inlet \
+  --particle-volume-fraction 0.10 \
+  --surface-adhesion \
+  --adhesion-distance 0.25 \
+  --adhesion-velocity 0.02 \
+  --detachment-shear 0.06
+```
+
+This is a switch model: particles touching walls or fixed cylinders attach when
+the interpolated local fluid speed is below `--adhesion-velocity`, and adhered
+particles detach when that speed exceeds `--detachment-shear`.  It is intended
+for controlled sensitivity studies, not as a final colloidal adhesion law.
+
+Cake-layer hydraulic resistance can be added with:
+
+```bash
+python src/demos/run_lbm_dem.py \
+  --particle-source left-inlet \
+  --porous-resistance \
+  --porous-resistance-coeff 0.02
+```
+
+This applies a Brinkman-like drag term in lattice cells occupied by retained
+particles.  It lets point-force calculations express flux decline before a full
+3-D resolved cake model exists.  Interpret `--porous-resistance-coeff` as a
+calibration/sensitivity parameter until it is tied to permeability data.
+
+For strict pore-blockage studies, compare these options against
+`--particle-fluid-coupling solid_boundary` and `--particle-fluid-coupling
+immersed_boundary` on the same geometry.
+
+## 7. Performance Notes
 
 The current execution path includes several speed-oriented choices:
 
@@ -253,7 +306,7 @@ For large sweeps, reduce I/O first: increase `--snapshot-every`, set
 `--paraview-every 0` for final-only VTK, and use `--no-video` unless movies are
 needed for every condition.
 
-## 7. Solver API Direction
+## 8. Solver API Direction
 
 The production solver now accepts explicit numerical-method controls:
 

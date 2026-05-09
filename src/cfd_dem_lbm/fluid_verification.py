@@ -278,6 +278,102 @@ def verify_immersed_boundary_particle_load(
     )
 
 
+def verify_porous_resistance_reduces_flux(
+    nx: int,
+    ny: int,
+    steps: int,
+    re: float,
+    u_max: float,
+    min_reduction: float,
+) -> VerificationResult:
+    """Check that particle-occupancy porous resistance lowers local flux."""
+    common = dict(
+        nx=nx,
+        ny=ny,
+        Re=re,
+        u_max=u_max,
+        reynolds_length=float(ny),
+        flow_control="fixed_pressure",
+        n_particles=1,
+        particle_radius=max(2.0, 0.16 * ny),
+        density_ratio=1e6,
+        gravity=0.0,
+        seed=16,
+    )
+    open_sim = fluid_only(FastLBMDEM(**common))
+    porous_sim = FastLBMDEM(
+        **common,
+        porous_resistance=True,
+        porous_resistance_coeff=0.08,
+    )
+    porous_sim.pos[:] = np.array([[0.5 * nx, 0.5 * ny]])
+    porous_sim.vel[:] = 0.0
+
+    open_sim.advance(steps)
+    porous_sim.advance(steps)
+    _, ux_open, _ = open_sim.get_fields()
+    _, ux_porous, _ = porous_sim.get_fields()
+    section = nx // 2
+    q_open = positive_flux(ux_open, open_sim.solid, section)
+    q_porous = positive_flux(ux_porous, porous_sim.solid, section)
+    reduction = 1.0 - q_porous / max(q_open, 1e-12)
+    return VerificationResult(
+        name="porous_resistance_flux_reduction",
+        passed=reduction >= min_reduction,
+        metric=reduction,
+        tolerance=min_reduction,
+        details=(
+            "Flux reduction from applying Brinkman-like drag in particle-occupied cells. "
+            f"section={section}, open_flux={q_open:.6g}, porous_flux={q_porous:.6g}."
+        ),
+    )
+
+
+def verify_surface_adhesion_detachment(
+    nx: int,
+    ny: int,
+    re: float,
+    u_max: float,
+    min_events: float,
+) -> VerificationResult:
+    """Check that near-surface particles can attach and detach by local speed."""
+    sim = FastLBMDEM(
+        nx=nx,
+        ny=ny,
+        Re=re,
+        u_max=u_max,
+        reynolds_length=float(ny),
+        flow_control="fixed_pressure",
+        n_particles=1,
+        particle_radius=max(2.0, 0.08 * ny),
+        gravity=0.0,
+        surface_adhesion=True,
+        adhesion_distance=0.5,
+        adhesion_velocity=0.02,
+        detachment_shear=0.05,
+        cylinders=[(0.45 * nx, 0.5 * ny, 0.10 * ny)],
+        seed=17,
+    )
+    cx, cy, cr = sim.cylinders[0]
+    sim.pos[:] = np.array([[cx - cr - sim.radii[0], cy]])
+    sim.vel[:] = 0.0
+    zeros = np.zeros((nx, ny))
+    sim._apply_surface_adhesion(zeros, zeros)
+    high_ux = np.full((nx, ny), 0.1)
+    sim._apply_surface_adhesion(high_ux, zeros)
+    events = float(sim.adhesion_events + sim.detachment_events)
+    return VerificationResult(
+        name="surface_adhesion_detachment_switch",
+        passed=events >= min_events and not bool(sim.adhered[0]),
+        metric=events,
+        tolerance=min_events,
+        details=(
+            "One cylinder-touching particle should attach in stagnant flow and detach "
+            "when local speed exceeds the detachment threshold."
+        ),
+    )
+
+
 def run_fluid_verification(
     *,
     nx: int,
@@ -291,6 +387,8 @@ def run_fluid_verification(
     particle_solid_min_reduction: float,
     ibm_min_force: float,
     output_dir: Path,
+    porous_min_reduction: float = 0.01,
+    adhesion_events_min: float = 2.0,
 ) -> list[VerificationResult]:
     """Run the standard fluid-only verification suite."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -313,6 +411,21 @@ def run_fluid_verification(
             re,
             u_max,
             ibm_min_force,
+        ),
+        verify_porous_resistance_reduces_flux(
+            nx,
+            ny,
+            max(steps // 3, 1),
+            re,
+            u_max,
+            porous_min_reduction,
+        ),
+        verify_surface_adhesion_detachment(
+            nx,
+            ny,
+            re,
+            u_max,
+            adhesion_events_min,
         ),
     ]
 

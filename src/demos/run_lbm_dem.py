@@ -48,7 +48,12 @@ parser.add_argument("--flow-control", action=argparse.BooleanOptionalAction,
                     help="Adjust drive force to keep max fluid speed near --u-max "
                          "(default: enabled)")
 parser.add_argument("--flow-condition",
-                    choices=["fixed-pressure", "target-max-velocity"],
+                    choices=[
+                        "fixed-pressure",
+                        "target-max-velocity",
+                        "constant-pressure",
+                        "constant-flux",
+                    ],
                     default=None,
                     help="Explicit flow boundary/control condition. Overrides "
                          "--flow-control when set")
@@ -162,6 +167,20 @@ parser.add_argument("--attraction-min-gap", type=float, default=0.05,
                     help="Minimum surface gap for attraction regularisation (default: 0.05)")
 parser.add_argument("--repulsion-min-gap", type=float, default=0.05,
                     help="Minimum surface gap for repulsion regularisation (default: 0.05)")
+parser.add_argument("--surface-adhesion", action=argparse.BooleanOptionalAction,
+                    default=False,
+                    help="Attach slow particles that touch walls or fixed cylinders")
+parser.add_argument("--adhesion-distance", type=float, default=0.25,
+                    help="Surface gap allowed for adhesion [lattice] (default: 0.25)")
+parser.add_argument("--adhesion-velocity", type=float, default=0.02,
+                    help="Attach particles below this local speed (default: 0.02)")
+parser.add_argument("--detachment-shear", type=float, default=0.06,
+                    help="Detach adhered particles above this local speed (default: 0.06)")
+parser.add_argument("--porous-resistance", action=argparse.BooleanOptionalAction,
+                    default=False,
+                    help="Apply Brinkman-like drag in particle-occupied cake cells")
+parser.add_argument("--porous-resistance-coeff", type=float, default=0.0,
+                    help="Porous drag coefficient for cake-layer resistance (default: 0)")
 args = parser.parse_args()
 if args.particle_attraction and args.particle_repulsion:
     parser.error("--particle-attraction and --particle-repulsion are mutually exclusive")
@@ -195,6 +214,14 @@ if args.warmup_steps < 0:
     parser.error("--warmup-steps must be non-negative")
 if args.paraview_every < 0:
     parser.error("--paraview-every must be non-negative")
+if args.adhesion_distance < 0.0:
+    parser.error("--adhesion-distance must be non-negative")
+if args.adhesion_velocity < 0.0:
+    parser.error("--adhesion-velocity must be non-negative")
+if args.detachment_shear < 0.0:
+    parser.error("--detachment-shear must be non-negative")
+if args.porous_resistance_coeff < 0.0:
+    parser.error("--porous-resistance-coeff must be non-negative")
 
 if args.output_profile == "analysis":
     args.no_video = True
@@ -229,6 +256,12 @@ FLOW_CONDITION  = (
     if args.flow_condition is not None
     else ("target-max-velocity" if args.flow_control else "fixed-pressure")
 )
+FLOW_CONTROL_MAP = {
+    "fixed-pressure": "fixed_pressure",
+    "constant-pressure": "constant_pressure",
+    "target-max-velocity": "target_max_velocity",
+    "constant-flux": "constant_flux",
+}
 DEFAULT_N_PARTICLES = 40 # 粒子数 (分率未指定時)
 RADIUS          = args.particle_radius    # 粒子平均半径 (格子単位)
 REYNOLDS_LENGTH = 2.0 * RADIUS  # 代表長さ: 粒子径
@@ -396,6 +429,12 @@ def _write_metadata(path: Path, sim: LBMDEMSolver | None = None) -> None:
             "particle_volume_fraction": PARTICLE_VOLUME_FRACTION,
             "source_volume_fraction": SOURCE_VOLUME_FRACTION,
             "n_particles_requested": N_PARTICLES,
+            "surface_adhesion": args.surface_adhesion,
+            "adhesion_distance": args.adhesion_distance,
+            "adhesion_velocity": args.adhesion_velocity,
+            "detachment_shear": args.detachment_shear,
+            "porous_resistance": args.porous_resistance,
+            "porous_resistance_coeff": args.porous_resistance_coeff,
             "cylinders": [
                 {"x": float(cx), "y": float(cy), "radius": float(cr)}
                 for cx, cy, cr in CYLINDERS
@@ -421,6 +460,9 @@ def _write_metadata(path: Path, sim: LBMDEMSolver | None = None) -> None:
             "current_drive_force": sim.F_drive,
             "fluid_area": sim.fluid_area,
             "solid_area_fraction": float(np.count_nonzero(sim.solid) / sim.solid.size),
+            "dimensionless_groups": sim.dimensionless_groups(),
+            "adhesion_events": sim.adhesion_events,
+            "detachment_events": sim.detachment_events,
         }
     path.write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")
 
@@ -717,8 +759,8 @@ print(
 print(
     "Flow control: "
     + (
-        f"target max velocity (gain={args.flow_control_gain:.2f})"
-        if FLOW_CONDITION == "target-max-velocity"
+        f"target max velocity / constant flux proxy (gain={args.flow_control_gain:.2f})"
+        if FLOW_CONDITION in {"target-max-velocity", "constant-flux"}
         else "fixed pressure/body force"
     )
 )
@@ -728,6 +770,11 @@ print(f"Compute accelerator: {args.compute_accelerator}")
 print(f"Particle method: {args.particle_method}")
 print(f"Particle search: {args.particle_search}")
 print(f"Particle-fluid coupling: {args.particle_fluid_coupling}")
+print(f"Surface adhesion: {'on' if args.surface_adhesion else 'off'}")
+print(
+    "Porous resistance: "
+    + (f"on (coeff={args.porous_resistance_coeff:g})" if args.porous_resistance else "off")
+)
 print(f"Output profile: {args.output_profile}")
 if PARTICLE_VOLUME_FRACTION is not None:
     if args.particle_source == "left-inlet":
@@ -755,7 +802,7 @@ sim = FastLBMDEM(
     nx=NX, ny=NY,
     Re=RE, u_max=U_MAX,
     reynolds_length=REYNOLDS_LENGTH,
-    flow_control="target_max_velocity" if FLOW_CONDITION == "target-max-velocity" else "fixed_pressure",
+    flow_control=FLOW_CONTROL_MAP[FLOW_CONDITION],
     flow_control_gain=args.flow_control_gain,
     fluid_method=args.fluid_method,
     fluid_accelerator=args.fluid_accelerator,
@@ -785,6 +832,12 @@ sim = FastLBMDEM(
     repulsion_cutoff=args.repulsion_cutoff,
     attraction_min_gap=args.attraction_min_gap,
     repulsion_min_gap=args.repulsion_min_gap,
+    surface_adhesion=args.surface_adhesion,
+    adhesion_distance=args.adhesion_distance,
+    adhesion_velocity=args.adhesion_velocity,
+    detachment_shear=args.detachment_shear,
+    porous_resistance=args.porous_resistance,
+    porous_resistance_coeff=args.porous_resistance_coeff,
     cylinders=CYLINDERS,
     particle_source=args.particle_source.replace("-", "_"),
     source_volume_fraction=SOURCE_VOLUME_FRACTION,
@@ -877,7 +930,9 @@ for frame_idx in range(n_frames):
     )
     inlet_outlet_flux_ratio = outlet_flux / inlet_flux if inlet_flux > 1e-12 else 0.0
     dynamic_solid_fraction = sim.dynamic_solid_fraction()
+    porous_fraction = sim.porous_resistance_fraction()
     total_solid_fraction = float(np.count_nonzero(sim.solid) / sim.solid.size)
+    dimensionless = sim.dimensionless_groups(float(speed[fluid_mask].max()))
 
     snap = {
         "step": sim.step_count,
@@ -892,6 +947,7 @@ for frame_idx in range(n_frames):
         "masses": sim.masses.copy(),
         "total_force": total_force_mags.copy(),
         "removed_particles": sim.removed_particles,
+        "adhered": sim.adhered.copy(),
     }
     analysis_rows.append({
         "frame": frame_idx + 1,
@@ -901,10 +957,19 @@ for frame_idx in range(n_frames):
         "generated_particles": sim.generated_particles,
         "pending_particles": int(len(sim._pending_radii)),
         "passed_particles": sim.removed_particles,
+        "adhered_particles": int(np.count_nonzero(sim.adhered)),
+        "adhesion_events": sim.adhesion_events,
+        "detachment_events": sim.detachment_events,
         "inlet_flux": inlet_flux,
         "outlet_flux": outlet_flux,
         "permeate_flux": outlet_flux,
         "reynolds_number": RE,
+        "observed_reynolds_number": dimensionless["observed_reynolds_number"],
+        "particle_reynolds_number": dimensionless["particle_reynolds_number"],
+        "stokes_number_estimate": dimensionless["stokes_number_estimate"],
+        "particle_to_length_ratio": dimensionless["particle_to_length_ratio"],
+        "adhesion_detachment_speed_ratio": dimensionless["adhesion_detachment_speed_ratio"],
+        "brinkman_resistance_number": dimensionless["brinkman_resistance_number"],
         "reynolds_length": REYNOLDS_LENGTH,
         "target_u_max": U_MAX,
         "drive_force": sim.F_drive,
@@ -922,6 +987,7 @@ for frame_idx in range(n_frames):
         "normalized_permeate_flux": normalized_permeate_flux,
         "inlet_outlet_flux_ratio": inlet_outlet_flux_ratio,
         "dynamic_particle_solid_fraction": dynamic_solid_fraction,
+        "porous_resistance_fraction": porous_fraction,
         "total_solid_fraction": total_solid_fraction,
         "fouling_resistance_index": pressure_drop_ratio / max(normalized_permeate_flux, 1e-12),
         "particle_ke": 0.5 * float(np.sum(sim.masses * np.sum(sim.vel**2, axis=1))),

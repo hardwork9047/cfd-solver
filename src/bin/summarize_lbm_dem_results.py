@@ -105,6 +105,9 @@ def _run_record(timeseries: Path) -> dict[str, Any] | None:
         "final_active_particles": _final(rows, "active_particles"),
         "final_generated_particles": final_generated,
         "final_passed_particles": final_passed,
+        "final_adhered_particles": _final(rows, "adhered_particles"),
+        "final_adhesion_events": _final(rows, "adhesion_events"),
+        "final_detachment_events": _final(rows, "detachment_events"),
         "passed_particle_ratio": passed_ratio,
         "final_normalized_permeate_flux": _final(rows, "normalized_permeate_flux"),
         "mean_normalized_permeate_flux": _mean(rows, "normalized_permeate_flux"),
@@ -117,6 +120,11 @@ def _run_record(timeseries: Path) -> dict[str, Any] | None:
         "mean_total_contacts": _mean(rows, "total_contacts"),
         "contact_growth_rate": _slope(rows, "total_contacts"),
         "final_dynamic_particle_solid_fraction": _final(rows, "dynamic_particle_solid_fraction"),
+        "final_porous_resistance_fraction": _final(rows, "porous_resistance_fraction"),
+        "mean_observed_reynolds_number": _mean(rows, "observed_reynolds_number"),
+        "mean_particle_reynolds_number": _mean(rows, "particle_reynolds_number"),
+        "mean_stokes_number_estimate": _mean(rows, "stokes_number_estimate"),
+        "mean_brinkman_resistance_number": _mean(rows, "brinkman_resistance_number"),
     }
 
 

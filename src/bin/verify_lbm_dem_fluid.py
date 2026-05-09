@@ -25,6 +25,8 @@ def main() -> int:
     parser.add_argument("--control-tol", type=float, default=0.20)
     parser.add_argument("--particle-solid-min-reduction", type=float, default=0.02)
     parser.add_argument("--ibm-min-force", type=float, default=1e-8)
+    parser.add_argument("--porous-min-reduction", type=float, default=0.01)
+    parser.add_argument("--adhesion-events-min", type=float, default=2.0)
     args = parser.parse_args()
 
     output_dir = program_results_dir(__file__, datetime.now().strftime("run_%Y%m%d_%H%M%S"))
@@ -39,6 +41,8 @@ def main() -> int:
         control_tol=args.control_tol,
         particle_solid_min_reduction=args.particle_solid_min_reduction,
         ibm_min_force=args.ibm_min_force,
+        porous_min_reduction=args.porous_min_reduction,
+        adhesion_events_min=args.adhesion_events_min,
         output_dir=output_dir,
     )
     write_verification_outputs(results, output_dir)
