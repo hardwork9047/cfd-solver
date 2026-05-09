@@ -81,6 +81,71 @@ def test_particle_repulsion_pushes_separated_particles_apart():
     np.testing.assert_allclose(forces[0], -forces[1], rtol=1e-12, atol=1e-12)
 
 
+def _particle_cylinder_solver(
+    *,
+    particle_attraction: bool = False,
+    particle_repulsion: bool = False,
+    compute_accelerator: str = "numpy",
+) -> LBMDEMSolver:
+    """Return one particle just outside a fixed cylinder surface."""
+    sim = LBMDEMSolver(
+        nx=60,
+        ny=32,
+        Re=100.0,
+        u_max=0.0,
+        n_particles=1,
+        particle_radius=2.0,
+        density_ratio=2.0,
+        gravity=0.0,
+        particle_attraction=particle_attraction,
+        particle_repulsion=particle_repulsion,
+        attraction_strength=6e-3,
+        repulsion_strength=6e-3,
+        attraction_cutoff=3.0,
+        repulsion_cutoff=3.0,
+        attraction_min_gap=0.05,
+        repulsion_min_gap=0.05,
+        cylinders=[(24.0, 16.0, 5.0)],
+        compute_accelerator=compute_accelerator,
+        seed=3,
+    )
+    cx, cy, cr = sim.cylinders[0]
+    sim.pos[:] = np.array([[cx + cr + sim.radii[0] + 1.0, cy]])
+    sim.vel[:] = 0.0
+    return sim
+
+
+def test_particle_cylinder_attraction_pulls_particle_toward_cylinder():
+    """The Hamaker-like attraction also acts between particles and cylinders."""
+    sim = _particle_cylinder_solver(particle_attraction=True)
+
+    forces = sim._dem_forces(dt_sub=1.0)
+
+    assert forces[0, 0] < 0.0
+    np.testing.assert_allclose(forces[0, 1], 0.0, atol=1e-12)
+
+
+def test_particle_cylinder_repulsion_pushes_particle_away_from_cylinder():
+    """The Hamaker-like repulsion also acts between particles and cylinders."""
+    sim = _particle_cylinder_solver(particle_repulsion=True)
+
+    forces = sim._dem_forces(dt_sub=1.0)
+
+    assert forces[0, 0] > 0.0
+    np.testing.assert_allclose(forces[0, 1], 0.0, atol=1e-12)
+
+
+def test_particle_cylinder_surface_force_matches_numba_backend():
+    """Compiled and NumPy boundary kernels should give the same cylinder force."""
+    numpy_sim = _particle_cylinder_solver(particle_attraction=True, compute_accelerator="numpy")
+    numba_sim = _particle_cylinder_solver(particle_attraction=True, compute_accelerator="auto")
+
+    numpy_forces = numpy_sim._dem_forces(dt_sub=1.0)
+    numba_forces = numba_sim._dem_forces(dt_sub=1.0)
+
+    np.testing.assert_allclose(numba_forces, numpy_forces, rtol=1e-12, atol=1e-12)
+
+
 def test_particle_pair_candidates_use_interaction_cutoff():
     """The cell list must include separated particles inside the surface-force range."""
     sim = _two_particle_solver(particle_attraction=True)

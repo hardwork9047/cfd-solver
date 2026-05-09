@@ -162,8 +162,8 @@ The current suite checks:
   boundary method.
 - flux reduction from Brinkman-like porous resistance in particle-occupied
   cake cells.
-- the surface-adhesion switch: a near-wall particle attaches in slow flow and
-  detaches when local speed exceeds the detachment threshold.
+- Hamaker-like particle-cylinder attraction produces a load toward the fixed
+  cylinder surface.
 
 These are not final validation of membrane fouling, but they catch the most
 important numerical failures before running large sweeps.
@@ -178,9 +178,6 @@ Each `run_lbm_dem.py` run writes `analysis/time_series.csv` and
 - `fouling_resistance_index`,
 - `passed_particle_ratio`,
 - `retained_particle_ratio`,
-- `adhered_particles`,
-- `adhesion_events`,
-- `detachment_events`,
 - `particle_area_fraction`,
 - `dynamic_particle_solid_fraction`,
 - `porous_resistance_fraction`,
@@ -245,22 +242,24 @@ backward compatibility, but `--flow-condition` is preferred for new sweeps.
 
 ## 6. Fouling Model Options
 
-Surface deposition can be represented with:
+Particle-particle and particle-cylinder surface forces are controlled by the
+same options:
 
 ```bash
 python src/demos/run_lbm_dem.py \
   --particle-source left-inlet \
   --particle-volume-fraction 0.10 \
-  --surface-adhesion \
-  --adhesion-distance 0.25 \
-  --adhesion-velocity 0.02 \
-  --detachment-shear 0.06
+  --particle-attraction \
+  --attraction-strength 1e-3 \
+  --attraction-cutoff 3.0 \
+  --attraction-min-gap 0.05
 ```
 
-This is a switch model: particles touching walls or fixed cylinders attach when
-the interpolated local fluid speed is below `--adhesion-velocity`, and adhered
-particles detach when that speed exceeds `--detachment-shear`.  It is intended
-for controlled sensitivity studies, not as a final colloidal adhesion law.
+`--particle-attraction` now applies Hamaker-like attraction both between
+particles and between a particle and each fixed cylinder.  The particle-cylinder
+force uses the same gap cutoff, minimum-gap regularisation, and strength
+parameter as the particle-particle force.  The corresponding
+`--particle-repulsion` mode applies the same form with the opposite sign.
 
 Cake-layer hydraulic resistance can be added with:
 

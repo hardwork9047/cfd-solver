@@ -329,14 +329,14 @@ def verify_porous_resistance_reduces_flux(
     )
 
 
-def verify_surface_adhesion_detachment(
+def verify_cylinder_surface_force(
     nx: int,
     ny: int,
     re: float,
     u_max: float,
-    min_events: float,
+    min_force: float,
 ) -> VerificationResult:
-    """Check that near-surface particles can attach and detach by local speed."""
+    """Check that particle-cylinder Hamaker attraction produces a surface load."""
     sim = FastLBMDEM(
         nx=nx,
         ny=ny,
@@ -347,29 +347,27 @@ def verify_surface_adhesion_detachment(
         n_particles=1,
         particle_radius=max(2.0, 0.08 * ny),
         gravity=0.0,
-        surface_adhesion=True,
-        adhesion_distance=0.5,
-        adhesion_velocity=0.02,
-        detachment_shear=0.05,
+        particle_attraction=True,
+        attraction_strength=1e-2,
+        attraction_cutoff=4.0,
+        attraction_min_gap=0.05,
         cylinders=[(0.45 * nx, 0.5 * ny, 0.10 * ny)],
         seed=17,
     )
     cx, cy, cr = sim.cylinders[0]
-    sim.pos[:] = np.array([[cx - cr - sim.radii[0], cy]])
+    gap = 1.0
+    sim.pos[:] = np.array([[cx + cr + sim.radii[0] + gap, cy]])
     sim.vel[:] = 0.0
-    zeros = np.zeros((nx, ny))
-    sim._apply_surface_adhesion(zeros, zeros)
-    high_ux = np.full((nx, ny), 0.1)
-    sim._apply_surface_adhesion(high_ux, zeros)
-    events = float(sim.adhesion_events + sim.detachment_events)
+    forces, _ = sim._dem_loads(1.0 / sim.dem_substeps)
+    force_x = float(forces[0, 0])
     return VerificationResult(
-        name="surface_adhesion_detachment_switch",
-        passed=events >= min_events and not bool(sim.adhered[0]),
-        metric=events,
-        tolerance=min_events,
+        name="particle_cylinder_hamaker_attraction",
+        passed=force_x <= -min_force,
+        metric=abs(force_x),
+        tolerance=min_force,
         details=(
-            "One cylinder-touching particle should attach in stagnant flow and detach "
-            "when local speed exceeds the detachment threshold."
+            "A particle just outside the cylinder attraction cutoff should feel a "
+            f"force toward the cylinder. force_x={force_x:.6g}."
         ),
     )
 
@@ -388,7 +386,7 @@ def run_fluid_verification(
     ibm_min_force: float,
     output_dir: Path,
     porous_min_reduction: float = 0.01,
-    adhesion_events_min: float = 2.0,
+    cylinder_surface_min_force: float = 1e-6,
 ) -> list[VerificationResult]:
     """Run the standard fluid-only verification suite."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -420,12 +418,12 @@ def run_fluid_verification(
             u_max,
             porous_min_reduction,
         ),
-        verify_surface_adhesion_detachment(
+        verify_cylinder_surface_force(
             nx,
             ny,
             re,
             u_max,
-            adhesion_events_min,
+            cylinder_surface_min_force,
         ),
     ]
 

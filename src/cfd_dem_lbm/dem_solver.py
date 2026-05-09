@@ -33,6 +33,14 @@ if njit is not None:  # pragma: no cover - exercised when numba is installed
         tangential_damping,
         rolling_friction_coeff,
         rolling_damping,
+        particle_attraction,
+        particle_repulsion,
+        attraction_strength,
+        repulsion_strength,
+        attraction_cutoff,
+        repulsion_cutoff,
+        attraction_min_gap,
+        repulsion_min_gap,
         forces,
         torques,
     ):
@@ -96,33 +104,57 @@ if njit is not None:  # pragma: no cover - exercised when numba is installed
                 dy = pos[i, 1] - cylinders[c, 1]
                 dist = (dx * dx + dy * dy) ** 0.5
                 min_dist = cylinders[c, 2] + radii[i]
-                if dist < min_dist and dist > 1e-10:
-                    overlap = min_dist - dist
+                if dist > 1e-10:
                     nx_ = dx / dist
                     ny_ = dy / dist
-                    v_n = vel[i, 0] * nx_ + vel[i, 1] * ny_
-                    if contact_model_id == 1:
-                        f_n = k_n * overlap
-                    else:
-                        f_n = k_n * overlap**1.5
-                    f_mag = f_n - damping * v_n * (k_n * masses[i]) ** 0.5
-                    if f_mag < 0.0:
-                        f_mag = 0.0
-                    forces[i, 0] += f_mag * nx_
-                    forces[i, 1] += f_mag * ny_
-                    if rolling_friction and f_mag > 0.0:
-                        tx = -ny_
-                        ty = nx_
-                        v_t = vel[i, 0] * tx + vel[i, 1] * ty - omega_p[i] * radii[i]
-                        f_trial = -tangential_damping * (k_n * masses[i]) ** 0.5 * v_t
-                        f_limit = sliding_friction * f_mag
-                        f_t = min(max(f_trial, -f_limit), f_limit)
-                        forces[i, 0] += f_t * tx
-                        forces[i, 1] += f_t * ty
-                        torques[i] -= radii[i] * f_t
-                        torque_trial = -rolling_damping * (k_n * masses[i]) ** 0.5 * radii[i] ** 2 * omega_p[i]
-                        torque_limit = rolling_friction_coeff * f_mag * radii[i]
-                        torques[i] += min(max(torque_trial, -torque_limit), torque_limit)
+                    if dist < min_dist:
+                        overlap = min_dist - dist
+                        v_n = vel[i, 0] * nx_ + vel[i, 1] * ny_
+                        if contact_model_id == 1:
+                            f_n = k_n * overlap
+                        else:
+                            f_n = k_n * overlap**1.5
+                        f_mag = f_n - damping * v_n * (k_n * masses[i]) ** 0.5
+                        if f_mag < 0.0:
+                            f_mag = 0.0
+                        forces[i, 0] += f_mag * nx_
+                        forces[i, 1] += f_mag * ny_
+                        if rolling_friction and f_mag > 0.0:
+                            tx = -ny_
+                            ty = nx_
+                            v_t = vel[i, 0] * tx + vel[i, 1] * ty - omega_p[i] * radii[i]
+                            f_trial = -tangential_damping * (k_n * masses[i]) ** 0.5 * v_t
+                            f_limit = sliding_friction * f_mag
+                            f_t = min(max(f_trial, -f_limit), f_limit)
+                            forces[i, 0] += f_t * tx
+                            forces[i, 1] += f_t * ty
+                            torques[i] -= radii[i] * f_t
+                            torque_trial = -rolling_damping * (k_n * masses[i]) ** 0.5 * radii[i] ** 2 * omega_p[i]
+                            torque_limit = rolling_friction_coeff * f_mag * radii[i]
+                            torques[i] += min(max(torque_trial, -torque_limit), torque_limit)
+
+                    surface_gap = dist - min_dist
+                    r_eff = radii[i] * cylinders[c, 2] / min_dist
+                    if particle_attraction and attraction_strength > 0.0:
+                        if surface_gap <= attraction_cutoff:
+                            h = surface_gap
+                            if h < attraction_min_gap:
+                                h = attraction_min_gap
+                            if h < 1e-12:
+                                h = 1e-12
+                            f_attr = attraction_strength * r_eff / (6.0 * h**2)
+                            forces[i, 0] -= f_attr * nx_
+                            forces[i, 1] -= f_attr * ny_
+                    elif particle_repulsion and repulsion_strength > 0.0:
+                        if surface_gap <= repulsion_cutoff:
+                            h = surface_gap
+                            if h < repulsion_min_gap:
+                                h = repulsion_min_gap
+                            if h < 1e-12:
+                                h = 1e-12
+                            f_rep = repulsion_strength * r_eff / (6.0 * h**2)
+                            forces[i, 0] += f_rep * nx_
+                            forces[i, 1] += f_rep * ny_
 
 else:
     _wall_cylinder_loads_numba = None
@@ -274,6 +306,14 @@ class DEMSolver:
                 sim.tangential_damping,
                 sim.rolling_friction_coeff,
                 sim.rolling_damping,
+                sim.particle_attraction,
+                sim.particle_repulsion,
+                sim.attraction_strength,
+                sim.repulsion_strength,
+                sim.attraction_cutoff,
+                sim.repulsion_cutoff,
+                sim.attraction_min_gap,
+                sim.repulsion_min_gap,
                 forces,
                 torques,
             )
@@ -379,17 +419,50 @@ class DEMSolver:
                 dy = sim.pos[i, 1] - cy
                 dist = float(np.hypot(dx, dy))
                 min_dist = cr + sim.radii[i]
-                if dist < min_dist and dist > 1e-10:
-                    overlap = min_dist - dist
+                if dist > 1e-10:
                     nx_ = dx / dist
                     ny_ = dy / dist
-                    v_n = sim.vel[i, 0] * nx_ + sim.vel[i, 1] * ny_
-                    f_mag = self.normal_contact_magnitude(overlap, v_n, sim.masses[i])
-                    forces[i, 0] += f_mag * nx_
-                    forces[i, 1] += f_mag * ny_
-                    self._apply_single_body_tangential_load(
-                        i, np.array([nx_, ny_]), f_mag, forces, torques
+                    if dist < min_dist:
+                        overlap = min_dist - dist
+                        v_n = sim.vel[i, 0] * nx_ + sim.vel[i, 1] * ny_
+                        f_mag = self.normal_contact_magnitude(overlap, v_n, sim.masses[i])
+                        forces[i, 0] += f_mag * nx_
+                        forces[i, 1] += f_mag * ny_
+                        self._apply_single_body_tangential_load(
+                            i, np.array([nx_, ny_]), f_mag, forces, torques
+                        )
+                    self._apply_cylinder_surface_force(
+                        i,
+                        dist,
+                        min_dist,
+                        cr,
+                        np.array([nx_, ny_]),
+                        forces,
                     )
+
+    def _apply_cylinder_surface_force(
+        self,
+        i: int,
+        dist: float,
+        min_dist: float,
+        cylinder_radius: float,
+        normal_outward: np.ndarray,
+        forces: np.ndarray,
+    ) -> None:
+        """Apply Hamaker-like particle-cylinder attraction or repulsion."""
+        sim = self.sim
+        surface_gap = dist - min_dist
+        r_eff = sim.radii[i] * cylinder_radius / min_dist
+        if sim.particle_attraction and sim.attraction_strength > 0.0:
+            if surface_gap <= sim.attraction_cutoff:
+                h = max(surface_gap, max(sim.attraction_min_gap, 1e-12))
+                f_attr = sim.attraction_strength * r_eff / (6.0 * h**2)
+                forces[i] -= f_attr * normal_outward
+        elif sim.particle_repulsion and sim.repulsion_strength > 0.0:
+            if surface_gap <= sim.repulsion_cutoff:
+                h = max(surface_gap, max(sim.repulsion_min_gap, 1e-12))
+                f_rep = sim.repulsion_strength * r_eff / (6.0 * h**2)
+                forces[i] += f_rep * normal_outward
 
     def _apply_single_body_tangential_load(
         self,

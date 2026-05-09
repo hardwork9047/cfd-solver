@@ -534,10 +534,6 @@ class LBMDEMSolver:
         repulsion_cutoff: float = 3.0,
         attraction_min_gap: float = 0.05,
         repulsion_min_gap: float = 0.05,
-        surface_adhesion: bool = False,
-        adhesion_distance: float = 0.25,
-        adhesion_velocity: float = 0.02,
-        detachment_shear: float = 0.06,
         porous_resistance: bool = False,
         porous_resistance_coeff: float = 0.0,
         cylinder: tuple | None = None,
@@ -585,12 +581,6 @@ class LBMDEMSolver:
             raise ValueError("ibm_stiffness must be positive")
         if ibm_marker_spacing <= 0.0:
             raise ValueError("ibm_marker_spacing must be positive")
-        if adhesion_distance < 0.0:
-            raise ValueError("adhesion_distance must be non-negative")
-        if adhesion_velocity < 0.0:
-            raise ValueError("adhesion_velocity must be non-negative")
-        if detachment_shear < 0.0:
-            raise ValueError("detachment_shear must be non-negative")
         if porous_resistance_coeff < 0.0:
             raise ValueError("porous_resistance_coeff must be non-negative")
 
@@ -642,17 +632,11 @@ class LBMDEMSolver:
         self.repulsion_cutoff = repulsion_cutoff
         self.attraction_min_gap = attraction_min_gap
         self.repulsion_min_gap = repulsion_min_gap
-        self.surface_adhesion = surface_adhesion
-        self.adhesion_distance = adhesion_distance
-        self.adhesion_velocity = adhesion_velocity
-        self.detachment_shear = detachment_shear
         self.porous_resistance = porous_resistance
         self.porous_resistance_coeff = porous_resistance_coeff
         self.particle_source = particle_source
         self.source_volume_fraction = source_volume_fraction
         self.removed_particles = 0
-        self.adhesion_events = 0
-        self.detachment_events = 0
         self.injected_particle_area = 0.0
         self.inlet_particle_area_budget = 0.0
         self.last_inlet_flow_rate = 0.0
@@ -736,12 +720,6 @@ class LBMDEMSolver:
             )
         else:
             print("  Surface force : disabled")
-        if surface_adhesion:
-            print(
-                "  Adhesion      : enabled  "
-                f"gap={adhesion_distance:.3f}  attach_u={adhesion_velocity:.3g}  "
-                f"detach_u={detachment_shear:.3g}"
-            )
         if porous_resistance and porous_resistance_coeff > 0.0:
             print(f"  Porous drag   : enabled  coeff={porous_resistance_coeff:.3g}")
         if self.cylinders:
@@ -791,7 +769,6 @@ class LBMDEMSolver:
         self.torques_p = np.zeros(n_particles)
         self.ibm_forces_p = np.zeros((n_particles, 2))
         self.ibm_torques_p = np.zeros(n_particles)
-        self.adhered = np.zeros(n_particles, dtype=bool)
         self.total_particles_requested = n_particles
         self.generated_particles = 0
         self._pending_radii = np.empty(0)
@@ -900,7 +877,6 @@ class LBMDEMSolver:
             self.torques_p = self.torques_p[:placed]
             self.ibm_forces_p = self.ibm_forces_p[:placed]
             self.ibm_torques_p = self.ibm_torques_p[:placed]
-            self.adhered = self.adhered[:placed]
             self.radii = self.radii[:placed]
             self.masses = self.masses[:placed]
             self.inertias = self.inertias[:placed]
@@ -925,7 +901,6 @@ class LBMDEMSolver:
         self.torques_p = self.torques_p[:0]
         self.ibm_forces_p = self.ibm_forces_p[:0]
         self.ibm_torques_p = self.ibm_torques_p[:0]
-        self.adhered = self.adhered[:0]
         self.radii = self.radii[:0]
         self.masses = self.masses[:0]
         self.inertias = self.inertias[:0]
@@ -1032,7 +1007,6 @@ class LBMDEMSolver:
             self.torques_p = np.append(self.torques_p, 0.0)
             self.ibm_forces_p = np.vstack([self.ibm_forces_p, np.zeros((1, 2))])
             self.ibm_torques_p = np.append(self.ibm_torques_p, 0.0)
-            self.adhered = np.append(self.adhered, False)
             self.radii = np.append(self.radii, self._pending_radii[0])
             self.masses = np.append(self.masses, self._pending_masses[0])
             self.inertias = np.append(self.inertias, self._pending_inertias[0])
@@ -1058,7 +1032,6 @@ class LBMDEMSolver:
         self.torques_p = self.torques_p[keep]
         self.ibm_forces_p = self.ibm_forces_p[keep]
         self.ibm_torques_p = self.ibm_torques_p[keep]
-        self.adhered = self.adhered[keep]
         self.radii = self.radii[keep]
         self.masses = self.masses[keep]
         self.inertias = self.inertias[keep]
@@ -1138,44 +1111,6 @@ class LBMDEMSolver:
         mask = self._particle_occupancy_mask()
         return float(np.count_nonzero(mask) / mask.size)
 
-    def _surface_contact_mask(self, clearance: float) -> np.ndarray:
-        """Return particles close enough to walls or cylinders to attach."""
-        if self.n_p == 0:
-            return np.zeros(0, dtype=bool)
-        x = self.pos[: self.n_p, 0]
-        y = self.pos[: self.n_p, 1]
-        r = self.radii[: self.n_p]
-        touching = (y <= r + 0.5 + clearance) | (y >= self.ny - 1.5 - r - clearance)
-        for cx, cy, cr in self.cylinders:
-            touching |= np.hypot(x - cx, y - cy) <= cr + r + clearance
-        return touching
-
-    def _apply_surface_adhesion(self, ux: np.ndarray, uy: np.ndarray) -> None:
-        """Attach slow near-surface particles and detach them above a shear-speed threshold."""
-        if not self.surface_adhesion or self.n_p == 0:
-            return
-        if self.adhered.shape[0] != self.n_p:
-            resized = np.zeros(self.n_p, dtype=bool)
-            n_copy = min(self.adhered.shape[0], self.n_p)
-            resized[:n_copy] = self.adhered[:n_copy]
-            self.adhered = resized
-        touching = self._surface_contact_mask(self.adhesion_distance)
-        if not np.any(touching) and not np.any(self.adhered):
-            return
-        uf_x, uf_y = self._interp_velocity_many(self.pos[: self.n_p, 0], self.pos[: self.n_p, 1], ux, uy)
-        local_speed = np.hypot(uf_x, uf_y)
-        new_attach = touching & (~self.adhered) & (local_speed <= self.adhesion_velocity)
-        new_detach = self.adhered & (local_speed >= self.detachment_shear)
-        if np.any(new_attach):
-            self.adhered[new_attach] = True
-            self.adhesion_events += int(np.count_nonzero(new_attach))
-        if np.any(new_detach):
-            self.adhered[new_detach] = False
-            self.detachment_events += int(np.count_nonzero(new_detach))
-        if np.any(self.adhered):
-            self.vel[self.adhered] = 0.0
-            self.omega_p[self.adhered] = 0.0
-
     def dimensionless_groups(self, max_speed: float | None = None) -> dict[str, float]:
         """Return commonly tracked non-dimensional groups for fouling analysis."""
         if max_speed is None:
@@ -1190,7 +1125,6 @@ class LBMDEMSolver:
             "particle_reynolds_number": float(u_ref * particle_diameter / nu),
             "stokes_number_estimate": float(self.density_ratio * particle_diameter**2 * u_ref / (18.0 * nu * l_ref)),
             "particle_to_length_ratio": float(particle_diameter / l_ref),
-            "adhesion_detachment_speed_ratio": float(self.detachment_shear / u_ref) if self.surface_adhesion else 0.0,
             "brinkman_resistance_number": float(self.porous_resistance_coeff * l_ref**2 / nu) if self.porous_resistance else 0.0,
         }
 
@@ -1693,20 +1627,12 @@ class LBMDEMSolver:
 
     def _dem_substep(self, dt: float) -> None:
         """One DEM sub-step via Velocity Verlet with time step ``dt``."""
-        if self.n_p and np.any(self.adhered):
-            self.vel[self.adhered] = 0.0
-            self.omega_p[self.adhered] = 0.0
-
         # Half-velocity update (per-particle mass)
         forces, torques = self._dem_loads(dt)
         acc = forces / self.masses[:, np.newaxis]
         alpha = torques / self.inertias
         self.vel += 0.5 * dt * acc
         self.omega_p += 0.5 * dt * alpha
-        if self.n_p and np.any(self.adhered):
-            self.vel[self.adhered] = 0.0
-            self.omega_p[self.adhered] = 0.0
-
         # Position update.  The historical mode uses x-periodicity; inlet mode
         # lets particles leave the right outlet and deletes them from the DEM set.
         self.pos += dt * self.vel
@@ -1727,10 +1653,6 @@ class LBMDEMSolver:
         alpha_new = torques_new / self.inertias
         self.vel += 0.5 * dt * acc_new
         self.omega_p += 0.5 * dt * alpha_new
-        if self.n_p and np.any(self.adhered):
-            self.vel[self.adhered] = 0.0
-            self.omega_p[self.adhered] = 0.0
-
         # Clamp positions and apply restitution at walls (per-particle radius)
         for i in range(self.n_p):
             wall_bot = self.radii[i] + 0.5
@@ -1820,9 +1742,6 @@ class LBMDEMSolver:
             # --- DEM sub-steps ---
             for _ in range(self.dem_substeps):
                 self._dem_substep(dt_sub)
-            if self.surface_adhesion and self.n_p:
-                _, ux_attach, uy_attach = self._macroscopic()
-                self._apply_surface_adhesion(ux_attach, uy_attach)
             self._update_particle_solid_mask()
 
             self.step_count += 1
