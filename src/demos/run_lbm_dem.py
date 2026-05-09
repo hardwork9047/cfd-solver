@@ -1155,8 +1155,8 @@ if args.show_ibm_markers and len(snap["ibm_marker_x"]):
         s=10, c="#00ff88", marker=".", zorder=7, label="IBM markers",
     )
 _add_cylinder_patch(ax)
-ax.set_title("速度大きさ |u|")
-ax.set_xlabel("x [格子]"); ax.set_ylabel("y [格子]")
+ax.set_title("Velocity magnitude |u|")
+ax.set_xlabel("x [lattice units]"); ax.set_ylabel("y [lattice units]")
 fig_stat.colorbar(im, ax=ax, shrink=0.7)
 
 ax = axes[1]
@@ -1175,7 +1175,7 @@ if args.show_ibm_markers and len(snap["ibm_marker_x"]):
     )
 _add_cylinder_patch(ax)
 ax.set_xlim(0, NX); ax.set_ylim(0, NY)
-ax.set_title("流線"); ax.set_xlabel("x [格子]")
+ax.set_title("Streamlines"); ax.set_xlabel("x [lattice units]")
 
 ax = axes[2]
 if len(snap["pos"]):
@@ -1192,9 +1192,10 @@ if args.show_ibm_markers and len(snap["ibm_marker_x"]):
 ax.imshow(snap["speed"].T, origin="lower", cmap="Blues",
           extent=[0, NX, 0, NY], aspect="auto", alpha=0.5)
 _add_cylinder_patch(ax)
-fig_stat.colorbar(sc, ax=ax, label="合力 |F_total| [格子単位]", shrink=0.7)
+fig_stat.colorbar(sc, ax=ax, label="Total force |F_total| [lattice units]", shrink=0.7)
 ax.set_xlim(0, NX); ax.set_ylim(0, NY)
-ax.set_title("粒子位置 (合力でカラー)"); ax.set_xlabel("x [格子]")
+ax.set_title("Particle positions colored by total force")
+ax.set_xlabel("x [lattice units]")
 
 plt.tight_layout()
 static_path = OUT_DIR / "lbm_dem_final.png"
@@ -1251,7 +1252,7 @@ im_fluid = ax_anim.imshow(
     animated=True,
 )
 cbar_fluid = fig_anim.colorbar(im_fluid, ax=ax_anim, shrink=0.75, pad=0.01)
-cbar_fluid.set_label("|u| [格子単位]", color="white")
+cbar_fluid.set_label("|u| [lattice units]", color="white")
 cbar_fluid.ax.yaxis.set_tick_params(color="white")
 plt.setp(cbar_fluid.ax.yaxis.get_ticklabels(), color="white")
 
@@ -1259,7 +1260,7 @@ plt.setp(cbar_fluid.ax.yaxis.get_ticklabels(), color="white")
 sm_force = plt.cm.ScalarMappable(cmap=force_cmap, norm=force_norm)
 sm_force.set_array([])
 cbar_force = fig_anim.colorbar(sm_force, ax=ax_anim, shrink=0.75, pad=0.12)
-cbar_force.set_label("|F_total| [格子単位]", color="white")
+cbar_force.set_label("|F_total| [lattice units]", color="white")
 cbar_force.ax.yaxis.set_tick_params(color="white")
 plt.setp(cbar_force.ax.yaxis.get_ticklabels(), color="white")
 
@@ -1311,8 +1312,8 @@ else:
 title_txt = ax_anim.set_title(
     f"LBM-DEM  step={snap0['step']:,}", color="white", fontsize=11
 )
-ax_anim.set_xlabel("x [格子]", color="white")
-ax_anim.set_ylabel("y [格子]", color="white")
+ax_anim.set_xlabel("x [lattice units]", color="white")
+ax_anim.set_ylabel("y [lattice units]", color="white")
 ax_anim.tick_params(colors="white")
 for spine in ax_anim.spines.values():
     spine.set_edgecolor("white")
