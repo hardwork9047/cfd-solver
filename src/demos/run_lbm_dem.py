@@ -25,7 +25,7 @@ import numpy as np
 
 # パッケージを src/ から読み込む
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from cfd_dem_lbm import LBMDEMSolver
+from cfd_dem_lbm import FastLBMDEM, LBMDEMSolver
 from cfd.result_paths import program_results_dir
 
 # ---------------------------------------------------------------------------
@@ -155,40 +155,6 @@ if args.cylinder_spec is not None:
             parser.error("--cylinder-spec radius must be positive")
 if args.cyl_r <= 0.0:
     parser.error("--cyl-r must be positive")
-
-# ---------------------------------------------------------------------------
-# キャッシュ付きサブクラス: _macroscopic() を各ステップ1回だけ計算
-# ---------------------------------------------------------------------------
-
-class FastLBMDEM(LBMDEMSolver):
-    """マクロ量をキャッシュして高速化したサブクラス。"""
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._cached_rho = None
-        self._cached_ux = None
-        self._cached_uy = None
-        self._cache_step = -1
-
-    def _refresh_cache(self):
-        self._cached_rho, self._cached_ux, self._cached_uy = super()._macroscopic()
-        self._cache_step = self.step_count
-
-    def _macroscopic(self):
-        if self._cache_step != self.step_count:
-            self._refresh_cache()
-        return self._cached_rho, self._cached_ux, self._cached_uy
-
-    def _invalidate_macroscopic_cache(self):
-        self._cache_step = -1
-
-    def advance(self, n_steps: int = 1):
-        for _ in range(n_steps):
-            # LBM ステップ前にキャッシュを更新
-            self._refresh_cache()
-            # 親クラスの advance を1ステップ呼び出す
-            super().advance(1)
-
 
 # ---------------------------------------------------------------------------
 # シミュレーション設定

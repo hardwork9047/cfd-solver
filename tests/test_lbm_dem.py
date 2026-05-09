@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from cfd_dem_lbm import LBMDEMSolver
+from cfd_dem_lbm import FastLBMDEM, LBMDEMSolver
 
 
 def _two_particle_solver(
@@ -212,3 +212,31 @@ def test_target_max_velocity_flow_control_relaxes_drive_force():
     sim._control_drive_force(ux, uy)
 
     assert sim.F_drive < old_drive
+
+
+def test_fast_solver_matches_base_solver_fluid_fields_without_particles():
+    """The production cached solver must preserve the base LBM fluid path."""
+    kwargs = dict(
+        nx=32,
+        ny=20,
+        Re=50.0,
+        u_max=0.03,
+        reynolds_length=20.0,
+        flow_control="fixed_pressure",
+        n_particles=1,
+        particle_radius=2.0,
+        gravity=0.0,
+        seed=7,
+    )
+    base = LBMDEMSolver(**kwargs)
+    fast = FastLBMDEM(**kwargs)
+    base._delete_particles(np.ones(base.n_p, dtype=bool))
+    fast._delete_particles(np.ones(fast.n_p, dtype=bool))
+
+    base.advance(20)
+    fast.advance(20)
+    base_fields = base.get_fields()
+    fast_fields = fast.get_fields()
+
+    for base_field, fast_field in zip(base_fields, fast_fields):
+        np.testing.assert_allclose(fast_field, base_field, rtol=1e-12, atol=1e-12)
