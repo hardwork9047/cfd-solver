@@ -163,7 +163,7 @@ def verify_target_max_velocity(
             ny=ny,
             Re=re,
             u_max=u_max,
-            reynolds_length=4.0,
+            reynolds_length=float(ny),
             flow_control="target_max_velocity",
             flow_control_gain=0.2,
             n_particles=1,

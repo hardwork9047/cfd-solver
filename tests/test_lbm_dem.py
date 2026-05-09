@@ -348,6 +348,30 @@ def test_target_max_velocity_flow_control_relaxes_drive_force():
     assert sim.F_drive < old_drive
 
 
+def test_target_max_velocity_flow_control_keeps_positive_drive_floor():
+    """The controller must not erase the drive force during high-speed transients."""
+    sim = LBMDEMSolver(
+        nx=40,
+        ny=30,
+        Re=100.0,
+        u_max=0.05,
+        reynolds_length=4.0,
+        flow_control="target_max_velocity",
+        flow_control_gain=1.0,
+        n_particles=1,
+        particle_radius=2.0,
+        gravity=0.0,
+        seed=11,
+    )
+    ux = np.full((sim.nx, sim.ny), 10.0)
+    uy = np.zeros((sim.nx, sim.ny))
+
+    for _ in range(100):
+        sim._control_drive_force(ux, uy)
+
+    assert np.isclose(sim.F_drive, 0.05 * sim.initial_F_drive)
+
+
 def test_fast_solver_matches_base_solver_fluid_fields_without_particles():
     """The production cached solver must preserve the base LBM fluid path."""
     kwargs = dict(

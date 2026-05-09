@@ -859,6 +859,9 @@ class LBMDEMSolver:
         ratio = np.clip(self.u_max / current_max, 0.5, 2.0)
         gain = self.flow_control_gain
         self.F_drive *= (1.0 - gain) + gain * ratio
+        min_drive = 0.05 * self.initial_F_drive
+        if min_drive > 0.0:
+            self.F_drive = max(self.F_drive, min_drive)
 
     def _trt_omega_minus(self) -> float:
         """Return the odd-mode TRT relaxation rate from the magic parameter."""
