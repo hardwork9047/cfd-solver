@@ -62,6 +62,8 @@ Use `--particle-method`.
   moving particle surfaces more naturally than `solid_boundary`.  It is still a
   penalty/direct-forcing IBM, so `--ibm-stiffness`, `--ibm-marker-spacing`, and
   grid resolution must be checked with verification cases.
+  Add `--show-ibm-markers` to overlay these embedded boundary points in the
+  final image/video and to export them as `paraview/ibm_markers_series.pvd`.
 
 ### Recommended combinations
 

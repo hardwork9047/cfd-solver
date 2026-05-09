@@ -331,6 +331,34 @@ def test_immersed_boundary_coupling_applies_particle_reaction_force():
     assert np.any(np.abs(sim.Fx - sim.F_drive) > 0.0)
 
 
+def test_immersed_boundary_marker_points_are_available_for_visualization():
+    """IBM marker coordinates should expose the embedded boundary points."""
+    sim = LBMDEMSolver(
+        nx=40,
+        ny=24,
+        Re=50.0,
+        u_max=0.02,
+        n_particles=1,
+        particle_radius=3.0,
+        gravity=0.0,
+        particle_fluid_coupling="immersed_boundary",
+        ibm_marker_spacing=1.0,
+        seed=10,
+    )
+    sim.pos[:] = np.array([[20.0, 12.0]])
+
+    markers = sim.ibm_marker_points()
+
+    assert len(markers["x"]) >= 8
+    assert markers["x"].shape == markers["y"].shape == markers["owner"].shape
+    assert set(markers["owner"].tolist()) == {0}
+    np.testing.assert_allclose(
+        np.hypot(markers["x"] - 20.0, markers["y"] - 12.0),
+        3.0,
+        atol=1e-12,
+    )
+
+
 def test_rolling_friction_resists_wall_slip_and_spins_particle():
     """Wall contact friction must oppose tangential slip and add a torque."""
     sim = LBMDEMSolver(

@@ -91,6 +91,10 @@ parser.add_argument("--ibm-stiffness", type=float, default=1.0,
 parser.add_argument("--ibm-marker-spacing", type=float, default=1.0,
                     help="Approximate immersed-boundary marker spacing in lattice units "
                          "(default: 1.0)")
+parser.add_argument("--show-ibm-markers", action=argparse.BooleanOptionalAction,
+                    default=False,
+                    help="Export and overlay IBM Lagrangian marker points when using "
+                         "--particle-fluid-coupling immersed_boundary")
 parser.add_argument("--cylinder", action="store_true", help="Add a fixed solid cylinder")
 parser.add_argument("--cyl-x", type=float, default=None,
                     help="Cylinder center x [lattice] (default: NX/4)")
@@ -400,6 +404,7 @@ def _write_metadata(path: Path, sim: LBMDEMSolver | None = None) -> None:
             "particle_fluid_coupling": args.particle_fluid_coupling,
             "ibm_stiffness": args.ibm_stiffness,
             "ibm_marker_spacing": args.ibm_marker_spacing,
+            "show_ibm_markers": args.show_ibm_markers,
             "particle_radius": RADIUS,
             "radius_variation": RADIUS_VARIATION,
             "density_ratio": DENSITY_RATIO,
@@ -525,6 +530,35 @@ def _write_particles_vtk(path: Path, snap: dict) -> None:
             handle.write(f"{_vtk_float(force)}\n")
 
 
+def _write_ibm_markers_vtk(path: Path, snap: dict) -> None:
+    """Write IBM Lagrangian boundary markers as VTK polydata points."""
+    marker_x = snap.get("ibm_marker_x", np.empty(0))
+    marker_y = snap.get("ibm_marker_y", np.empty(0))
+    marker_owner = snap.get("ibm_marker_owner", np.empty(0, dtype=np.int64))
+    marker_ds = snap.get("ibm_marker_ds", np.empty(0))
+    n_markers = len(marker_x)
+    with path.open("w", encoding="utf-8") as handle:
+        handle.write("# vtk DataFile Version 3.0\n")
+        handle.write(f"LBM-DEM IBM markers step {snap['step']}\n")
+        handle.write("ASCII\n")
+        handle.write("DATASET POLYDATA\n")
+        handle.write(f"POINTS {n_markers} float\n")
+        for x_pos, y_pos in zip(marker_x, marker_y):
+            handle.write(f"{_vtk_float(x_pos)} {_vtk_float(y_pos)} 0\n")
+        handle.write(f"VERTICES {n_markers} {2 * n_markers}\n")
+        for idx in range(n_markers):
+            handle.write(f"1 {idx}\n")
+        handle.write(f"POINT_DATA {n_markers}\n")
+        handle.write("SCALARS particle_id int 1\n")
+        handle.write("LOOKUP_TABLE default\n")
+        for owner in marker_owner:
+            handle.write(f"{int(owner)}\n")
+        handle.write("SCALARS marker_spacing float 1\n")
+        handle.write("LOOKUP_TABLE default\n")
+        for ds in marker_ds:
+            handle.write(f"{_vtk_float(ds)}\n")
+
+
 def _write_cylinders_vtk(
     path: Path,
     cylinders: list[tuple[float, float, float]],
@@ -632,6 +666,10 @@ def _write_snapshot_npz(path: Path, snap: dict) -> None:
         masses=snap["masses"],
         total_force=snap["total_force"],
         removed_particles=np.array(snap["removed_particles"], dtype=np.int64),
+        ibm_marker_x=snap.get("ibm_marker_x", np.empty(0)),
+        ibm_marker_y=snap.get("ibm_marker_y", np.empty(0)),
+        ibm_marker_owner=snap.get("ibm_marker_owner", np.empty(0, dtype=np.int64)),
+        ibm_marker_ds=snap.get("ibm_marker_ds", np.empty(0)),
     )
 
 
@@ -651,6 +689,10 @@ def _load_snapshot_npz(path: Path) -> dict:
             "masses": data["masses"],
             "total_force": data["total_force"],
             "removed_particles": int(data["removed_particles"]),
+            "ibm_marker_x": data["ibm_marker_x"] if "ibm_marker_x" in data else np.empty(0),
+            "ibm_marker_y": data["ibm_marker_y"] if "ibm_marker_y" in data else np.empty(0),
+            "ibm_marker_owner": data["ibm_marker_owner"] if "ibm_marker_owner" in data else np.empty(0, dtype=np.int64),
+            "ibm_marker_ds": data["ibm_marker_ds"] if "ibm_marker_ds" in data else np.empty(0),
         }
 
 
@@ -853,6 +895,7 @@ elif args.snapshot_storage == "none":
 paraview_dir = None
 fluid_entries: list[tuple[int, Path]] = []
 particle_entries: list[tuple[int, Path]] = []
+marker_entries: list[tuple[int, Path]] = []
 if args.paraview_output:
     paraview_dir = OUT_DIR / "paraview"
     paraview_dir.mkdir(parents=True, exist_ok=True)
@@ -922,6 +965,17 @@ for frame_idx in range(n_frames):
         "total_force": total_force_mags.copy(),
         "removed_particles": sim.removed_particles,
     }
+    if args.show_ibm_markers:
+        markers = sim.ibm_marker_points()
+        snap["ibm_marker_x"] = markers["x"].copy()
+        snap["ibm_marker_y"] = markers["y"].copy()
+        snap["ibm_marker_owner"] = markers["owner"].copy()
+        snap["ibm_marker_ds"] = markers["ds"].copy()
+    else:
+        snap["ibm_marker_x"] = np.empty(0)
+        snap["ibm_marker_y"] = np.empty(0)
+        snap["ibm_marker_owner"] = np.empty(0, dtype=np.int64)
+        snap["ibm_marker_ds"] = np.empty(0)
     analysis_rows.append({
         "frame": frame_idx + 1,
         "step": sim.step_count,
@@ -985,6 +1039,10 @@ for frame_idx in range(n_frames):
         _write_particles_vtk(paraview_dir / particle_name, snap)
         fluid_entries.append((step, Path(fluid_name)))
         particle_entries.append((step, Path(particle_name)))
+        if args.show_ibm_markers:
+            marker_name = f"ibm_markers_{frame_idx:04d}_step_{step:07d}.vtk"
+            _write_ibm_markers_vtk(paraview_dir / marker_name, snap)
+            marker_entries.append((step, Path(marker_name)))
 
     elapsed = time.perf_counter() - t1
     frac = (frame_idx + 1) / n_frames
@@ -1025,8 +1083,14 @@ if paraview_dir is not None:
         _write_particles_vtk(paraview_dir / particle_name, last)
         fluid_entries.append((step, Path(fluid_name)))
         particle_entries.append((step, Path(particle_name)))
+        if args.show_ibm_markers:
+            marker_name = f"ibm_markers_{frame_idx:04d}_step_{step:07d}.vtk"
+            _write_ibm_markers_vtk(paraview_dir / marker_name, last)
+            marker_entries.append((step, Path(marker_name)))
     _write_pvd(paraview_dir / "fluid_series.pvd", fluid_entries)
     _write_pvd(paraview_dir / "particles_series.pvd", particle_entries)
+    if args.show_ibm_markers:
+        _write_pvd(paraview_dir / "ibm_markers_series.pvd", marker_entries)
     if args.paraview_every == 0:
         print(f"\nParaViewデータ保存: {paraview_dir} (final snapshot only)")
     else:
@@ -1085,6 +1149,11 @@ for i in range(len(snap["pos"])):
     c = plt.Circle((snap["pos"][i,0], snap["pos"][i,1]), snap["radii"][i],
                    color="white", lw=0.8, fill=False)
     ax.add_patch(c)
+if args.show_ibm_markers and len(snap["ibm_marker_x"]):
+    ax.scatter(
+        snap["ibm_marker_x"], snap["ibm_marker_y"],
+        s=10, c="#00ff88", marker=".", zorder=7, label="IBM markers",
+    )
 _add_cylinder_patch(ax)
 ax.set_title("速度大きさ |u|")
 ax.set_xlabel("x [格子]"); ax.set_ylabel("y [格子]")
@@ -1099,6 +1168,11 @@ for i in range(len(snap["pos"])):
     c = plt.Circle((snap["pos"][i,0], snap["pos"][i,1]), snap["radii"][i],
                    color="white", lw=0.8, fill=False)
     ax.add_patch(c)
+if args.show_ibm_markers and len(snap["ibm_marker_x"]):
+    ax.scatter(
+        snap["ibm_marker_x"], snap["ibm_marker_y"],
+        s=10, c="#00ff88", marker=".", zorder=7,
+    )
 _add_cylinder_patch(ax)
 ax.set_xlim(0, NX); ax.set_ylim(0, NY)
 ax.set_title("流線"); ax.set_xlabel("x [格子]")
@@ -1110,6 +1184,11 @@ if len(snap["pos"]):
                     edgecolors="k", lw=0.5, zorder=5)
 else:
     sc = ax.scatter([], [], c=[], cmap="plasma", edgecolors="k", lw=0.5, zorder=5)
+if args.show_ibm_markers and len(snap["ibm_marker_x"]):
+    ax.scatter(
+        snap["ibm_marker_x"], snap["ibm_marker_y"],
+        s=12, c="#00ff88", marker=".", zorder=7,
+    )
 ax.imshow(snap["speed"].T, origin="lower", cmap="Blues",
           extent=[0, NX, 0, NY], aspect="auto", alpha=0.5)
 _add_cylinder_patch(ax)
@@ -1138,6 +1217,8 @@ if args.no_video:
         print(f"  ParaView: {paraview_dir}")
         print(f"    流体時系列: {paraview_dir / 'fluid_series.pvd'}")
         print(f"    粒子時系列: {paraview_dir / 'particles_series.pvd'}")
+        if args.show_ibm_markers:
+            print(f"    IBMマーカー: {paraview_dir / 'ibm_markers_series.pvd'}")
         print(f"    固定円柱  : {paraview_dir / 'cylinders.vtk'}")
     print(f"\n完了!")
     sys.exit(0)
@@ -1208,6 +1289,25 @@ for i in range(max_particles_in_frames):
     ax_anim.add_patch(c)
     particle_circles.append(c)
 
+if args.show_ibm_markers:
+    marker_offsets = (
+        np.column_stack([snap0["ibm_marker_x"], snap0["ibm_marker_y"]])
+        if len(snap0["ibm_marker_x"])
+        else np.empty((0, 2))
+    )
+    ibm_marker_scatter = ax_anim.scatter(
+        marker_offsets[:, 0] if len(marker_offsets) else [],
+        marker_offsets[:, 1] if len(marker_offsets) else [],
+        s=12,
+        c="#00ff88",
+        marker=".",
+        alpha=0.95,
+        zorder=7,
+        animated=True,
+    )
+else:
+    ibm_marker_scatter = None
+
 title_txt = ax_anim.set_title(
     f"LBM-DEM  step={snap0['step']:,}", color="white", fontsize=11
 )
@@ -1234,6 +1334,13 @@ def update(frame_idx: int):
         else:
             c.center = (-100.0, -100.0)
             c.set_alpha(0.0)
+    if ibm_marker_scatter is not None:
+        marker_offsets = (
+            np.column_stack([snap["ibm_marker_x"], snap["ibm_marker_y"]])
+            if len(snap["ibm_marker_x"])
+            else np.empty((0, 2))
+        )
+        ibm_marker_scatter.set_offsets(marker_offsets)
     p_ke = 0.5 * float(np.sum(snap["masses"] * np.sum(snap["vel"] ** 2, axis=1)))
     force_mean = float(snap["total_force"].mean()) if len(snap["total_force"]) else 0.0
     title_txt.set_text(
@@ -1241,6 +1348,8 @@ def update(frame_idx: int):
         f"  KE_p={p_ke:.3e}  |F_total|_mean={force_mean:.3e}"
     )
     artists = [im_fluid, title_txt] + particle_circles
+    if ibm_marker_scatter is not None:
+        artists.append(ibm_marker_scatter)
     return artists
 
 
@@ -1268,5 +1377,7 @@ if paraview_dir is not None:
     print(f"  ParaView: {paraview_dir}")
     print(f"    流体時系列: {paraview_dir / 'fluid_series.pvd'}")
     print(f"    粒子時系列: {paraview_dir / 'particles_series.pvd'}")
+    if args.show_ibm_markers:
+        print(f"    IBMマーカー: {paraview_dir / 'ibm_markers_series.pvd'}")
     print(f"    固定円柱  : {paraview_dir / 'cylinders.vtk'}")
 print(f"\n完了!")

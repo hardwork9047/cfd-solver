@@ -1499,6 +1499,68 @@ class LBMDEMSolver:
             marker_fy,
         )
 
+    def ibm_marker_points(self) -> dict[str, np.ndarray]:
+        """Return current IBM marker coordinates for visualization/debug output."""
+        if self.n_p == 0 or self.particle_fluid_coupling != "immersed_boundary":
+            empty_float = np.empty(0, dtype=float)
+            return {
+                "x": empty_float,
+                "y": empty_float,
+                "owner": np.empty(0, dtype=np.int64),
+                "rx": empty_float,
+                "ry": empty_float,
+                "ds": empty_float,
+            }
+
+        if self.uses_numba_compute and _ibm_markers_numba is not None:
+            marker_x, marker_y, marker_rx, marker_ry, marker_ds, marker_owner, _, _ = (
+                _ibm_markers_numba(
+                    self.pos,
+                    self.vel,
+                    self.omega_p,
+                    self.radii,
+                    self.ibm_marker_spacing,
+                    self.ny,
+                )
+            )
+            return {
+                "x": marker_x,
+                "y": marker_y,
+                "owner": marker_owner,
+                "rx": marker_rx,
+                "ry": marker_ry,
+                "ds": marker_ds,
+            }
+
+        marker_x_parts: list[np.ndarray] = []
+        marker_y_parts: list[np.ndarray] = []
+        marker_rx_parts: list[np.ndarray] = []
+        marker_ry_parts: list[np.ndarray] = []
+        marker_ds_parts: list[np.ndarray] = []
+        marker_owner_parts: list[np.ndarray] = []
+        for i in range(self.n_p):
+            radius = float(self.radii[i])
+            n_markers = max(8, int(np.ceil(2.0 * np.pi * radius / self.ibm_marker_spacing)))
+            ds = 2.0 * np.pi * radius / n_markers
+            theta = 2.0 * np.pi * np.arange(n_markers) / n_markers
+            rx = radius * np.cos(theta)
+            ry = radius * np.sin(theta)
+            marker_x_parts.append(self.pos[i, 0] + rx)
+            marker_y_parts.append(np.clip(self.pos[i, 1] + ry, 0.5, self.ny - 1.5))
+            marker_rx_parts.append(rx)
+            marker_ry_parts.append(ry)
+            marker_ds_parts.append(np.full(n_markers, ds))
+            marker_owner_parts.append(np.full(n_markers, i, dtype=np.int64))
+
+        return {
+            "x": np.concatenate(marker_x_parts),
+            "y": np.concatenate(marker_y_parts),
+            "owner": np.concatenate(marker_owner_parts),
+            "rx": np.concatenate(marker_rx_parts),
+            "ry": np.concatenate(marker_ry_parts),
+            "ds": np.concatenate(marker_ds_parts),
+        }
+
     # ------------------------------------------------------------------
     # DEM
     # ------------------------------------------------------------------
