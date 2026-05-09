@@ -93,10 +93,14 @@ class DEMSolver:
         buoyancy_factor = 1.0 - 1.0 / sim.density_ratio
         forces[:, 1] -= sim.masses * sim.g * buoyancy_factor
 
-        # 2. Stokes drag from interpolated fluid velocity (per-particle radius)
-        forces += sim._particle_drag_forces()
+        # 2. Fluid-particle coupling load.
+        if sim.particle_fluid_coupling == "immersed_boundary":
+            forces += sim.ibm_forces_p
+            torques += sim.ibm_torques_p
+        else:
+            forces += sim._particle_drag_forces()
 
-        # 3. Particle-particle Hertz contact and optional near-surface forces.
+        # 3. Particle-particle contact and optional near-surface forces.
         pair_i: np.ndarray | None = None
         pair_j: np.ndarray | None = None
         if self.pair_kernel is not None and sim.n_p >= 2:

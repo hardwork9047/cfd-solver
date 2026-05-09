@@ -124,6 +124,13 @@ def test_invalid_solver_methods_are_rejected():
     else:
         raise AssertionError("Expected invalid particle-fluid coupling to fail")
 
+    try:
+        LBMDEMSolver(particle_fluid_coupling="immersed_boundary", ibm_stiffness=0.0)
+    except ValueError as exc:
+        assert "ibm_stiffness" in str(exc)
+    else:
+        raise AssertionError("Expected invalid IBM stiffness to fail")
+
 
 def test_linear_dem_contact_model_changes_normal_contact_force():
     """Linear DEM contact is selectable and differs from Hertz for small overlaps."""
@@ -184,6 +191,34 @@ def test_solid_boundary_coupling_overlays_particles_on_solid_mask():
     assert sim.solid[20, 12]
     assert not sim.fixed_solid[20, 12]
     assert sim.dynamic_solid_fraction() > 0.0
+
+
+def test_immersed_boundary_coupling_applies_particle_reaction_force():
+    """IBM coupling should add fluid reaction forces without solidifying particles."""
+    sim = LBMDEMSolver(
+        nx=40,
+        ny=24,
+        Re=50.0,
+        u_max=0.02,
+        n_particles=1,
+        particle_radius=3.0,
+        gravity=0.0,
+        particle_fluid_coupling="immersed_boundary",
+        ibm_stiffness=1.0,
+        seed=10,
+    )
+    sim.pos[:] = np.array([[20.0, 12.0]])
+    sim.vel[:] = np.array([[0.1, 0.0]])
+    sim.omega_p[:] = 0.0
+    _, ux, uy = sim.get_fields()
+    sim.Fx[:] = sim.F_drive
+    sim.Fy[:] = 0.0
+
+    sim._apply_immersed_boundary_forces(ux, uy)
+
+    assert not sim.solid[20, 12]
+    assert sim.ibm_forces_p[0, 0] < 0.0
+    assert np.any(np.abs(sim.Fx - sim.F_drive) > 0.0)
 
 
 def test_rolling_friction_resists_wall_slip_and_spins_particle():

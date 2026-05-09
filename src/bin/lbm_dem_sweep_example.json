@@ -33,6 +33,16 @@
       }
     },
     {
+      "name": "trt_hertz_immersed_boundary",
+      "args": {
+        "fluid_method": "lbm-trt-guo",
+        "particle_method": "dem-hertz",
+        "particle_fluid_coupling": "immersed_boundary",
+        "ibm_stiffness": 1.0,
+        "ibm_marker_spacing": 1.0
+      }
+    },
+    {
       "name": "bgk_linear_solid_boundary",
       "args": {
         "fluid_method": "lbm-bgk-guo",

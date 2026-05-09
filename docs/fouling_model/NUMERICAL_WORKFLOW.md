@@ -54,6 +54,14 @@ Use `--particle-method`.
   testing pore blockage and flux decline.  It is more physical for fouling
   resistance, but also more sensitive to lattice resolution, particle radius,
   and bounce-back boundary accuracy.
+- `immersed_boundary`: circular DEM particle surfaces are represented by
+  Lagrangian marker points.  The solver interpolates fluid velocity to each
+  marker, compares it with the local particle surface velocity, spreads a
+  direct-forcing correction back to the lattice, and applies the opposite force
+  and torque to the particle.  This avoids stair-step solid masks and represents
+  moving particle surfaces more naturally than `solid_boundary`.  It is still a
+  penalty/direct-forcing IBM, so `--ibm-stiffness`, `--ibm-marker-spacing`, and
+  grid resolution must be checked with verification cases.
 
 ### Recommended combinations
 
@@ -61,6 +69,8 @@ Use `--particle-method`.
   `--fluid-method lbm-bgk-guo --particle-method dem-hertz --particle-fluid-coupling point_force`
 - Pore-blockage screening:
   `--fluid-method lbm-trt-guo --particle-method dem-hertz --particle-fluid-coupling solid_boundary`
+- Moving-particle hydrodynamic coupling:
+  `--fluid-method lbm-trt-guo --particle-method dem-hertz --particle-fluid-coupling immersed_boundary`
 - Debug/sensitivity runs:
   `--fluid-method lbm-bgk-guo --particle-method dem-linear --particle-fluid-coupling solid_boundary`
 

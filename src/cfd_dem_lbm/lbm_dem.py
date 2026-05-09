@@ -62,7 +62,7 @@ OPPOSITE = [0, 3, 4, 1, 2, 7, 8, 5, 6]
 Q = 9
 CS2 = 1.0 / 3.0  # lattice speed of sound squared
 FLUID_METHODS = ("lbm-bgk-guo", "lbm-trt-guo")
-PARTICLE_FLUID_COUPLINGS = ("point_force", "solid_boundary")
+PARTICLE_FLUID_COUPLINGS = ("point_force", "solid_boundary", "immersed_boundary")
 
 
 if njit is not None:  # pragma: no cover - exercised only when numba is installed
@@ -321,6 +321,8 @@ class LBMDEMSolver:
         fluid_method: str = "lbm-bgk-guo",
         particle_method: str = "dem-hertz",
         particle_fluid_coupling: str = "point_force",
+        ibm_stiffness: float = 1.0,
+        ibm_marker_spacing: float = 1.0,
         n_particles: int = 20,
         particle_radius: float = 3.0,
         radius_variation: float = 0.0,
@@ -366,6 +368,10 @@ class LBMDEMSolver:
             raise ValueError(f"particle_method must be one of {PARTICLE_METHODS}")
         if particle_fluid_coupling not in PARTICLE_FLUID_COUPLINGS:
             raise ValueError(f"particle_fluid_coupling must be one of {PARTICLE_FLUID_COUPLINGS}")
+        if ibm_stiffness <= 0.0:
+            raise ValueError("ibm_stiffness must be positive")
+        if ibm_marker_spacing <= 0.0:
+            raise ValueError("ibm_marker_spacing must be positive")
 
         self.nx = nx
         self.ny = ny
@@ -377,6 +383,8 @@ class LBMDEMSolver:
         self.fluid_method = fluid_method
         self.particle_method = particle_method
         self.particle_fluid_coupling = particle_fluid_coupling
+        self.ibm_stiffness = ibm_stiffness
+        self.ibm_marker_spacing = ibm_marker_spacing
         self.n_p = n_particles
         self.r_p = particle_radius  # representative (mean) radius
         self.radius_variation = radius_variation
@@ -445,6 +453,11 @@ class LBMDEMSolver:
         print(f"  Fluid method : {fluid_method}")
         print(f"  DEM method   : {particle_method}")
         print(f"  Coupling     : {particle_fluid_coupling}")
+        if particle_fluid_coupling == "immersed_boundary":
+            print(
+                f"  IBM          : stiffness={ibm_stiffness:.3g}  "
+                f"marker_spacing={ibm_marker_spacing:.3g}"
+            )
         print(
             f"  Particles    : {n_particles}  r = {particle_radius:.1f} ± "
             f"{radius_variation*100:.0f}%  density_ratio = {density_ratio:.1f}"
@@ -508,6 +521,8 @@ class LBMDEMSolver:
         self.omega_p = np.zeros(n_particles)
         self.forces_p = np.zeros((n_particles, 2))
         self.torques_p = np.zeros(n_particles)
+        self.ibm_forces_p = np.zeros((n_particles, 2))
+        self.ibm_torques_p = np.zeros(n_particles)
         self.total_particles_requested = n_particles
         self.generated_particles = 0
         self._pending_radii = np.empty(0)
@@ -614,6 +629,8 @@ class LBMDEMSolver:
             self.omega_p = self.omega_p[:placed]
             self.forces_p = self.forces_p[:placed]
             self.torques_p = self.torques_p[:placed]
+            self.ibm_forces_p = self.ibm_forces_p[:placed]
+            self.ibm_torques_p = self.ibm_torques_p[:placed]
             self.radii = self.radii[:placed]
             self.masses = self.masses[:placed]
             self.inertias = self.inertias[:placed]
@@ -636,6 +653,8 @@ class LBMDEMSolver:
         self.omega_p = self.omega_p[:0]
         self.forces_p = self.forces_p[:0]
         self.torques_p = self.torques_p[:0]
+        self.ibm_forces_p = self.ibm_forces_p[:0]
+        self.ibm_torques_p = self.ibm_torques_p[:0]
         self.radii = self.radii[:0]
         self.masses = self.masses[:0]
         self.inertias = self.inertias[:0]
@@ -740,6 +759,8 @@ class LBMDEMSolver:
             self.omega_p = np.append(self.omega_p, 0.0)
             self.forces_p = np.vstack([self.forces_p, np.zeros((1, 2))])
             self.torques_p = np.append(self.torques_p, 0.0)
+            self.ibm_forces_p = np.vstack([self.ibm_forces_p, np.zeros((1, 2))])
+            self.ibm_torques_p = np.append(self.ibm_torques_p, 0.0)
             self.radii = np.append(self.radii, self._pending_radii[0])
             self.masses = np.append(self.masses, self._pending_masses[0])
             self.inertias = np.append(self.inertias, self._pending_inertias[0])
@@ -763,6 +784,8 @@ class LBMDEMSolver:
         self.omega_p = self.omega_p[keep]
         self.forces_p = self.forces_p[keep]
         self.torques_p = self.torques_p[keep]
+        self.ibm_forces_p = self.ibm_forces_p[keep]
+        self.ibm_torques_p = self.ibm_torques_p[keep]
         self.radii = self.radii[keep]
         self.masses = self.masses[keep]
         self.inertias = self.inertias[keep]
@@ -1029,6 +1052,80 @@ class LBMDEMSolver:
             np.add.at(self.Fx, (ix[active], iy[active]), wk[active] * scaled_fx[active])
             np.add.at(self.Fy, (ix[active], iy[active]), wk[active] * scaled_fy[active])
 
+    def _distribute_lagrangian_forces_many(
+        self,
+        x: np.ndarray,
+        y: np.ndarray,
+        fx: np.ndarray,
+        fy: np.ndarray,
+    ) -> None:
+        """Spread IBM marker forces to the Eulerian lattice with bilinear weights."""
+        if len(x) == 0:
+            return
+
+        x_floor = np.floor(x)
+        y_floor = np.floor(y)
+        xi = x_floor.astype(int) % self.nx
+        yi = np.clip(y_floor.astype(int), 0, self.ny - 2)
+        xi1 = (xi + 1) % self.nx
+        yi1 = np.minimum(yi + 1, self.ny - 1)
+        tx = x - x_floor
+        ty = y - y_floor
+        weights = (
+            (1.0 - tx) * (1.0 - ty),
+            tx * (1.0 - ty),
+            (1.0 - tx) * ty,
+            tx * ty,
+        )
+        node_x = (xi, xi1, xi, xi1)
+        node_y = (yi, yi, yi1, yi1)
+        for wk, ix, iy in zip(weights, node_x, node_y):
+            active = ~self.solid[ix, iy]
+            np.add.at(self.Fx, (ix[active], iy[active]), wk[active] * fx[active])
+            np.add.at(self.Fy, (ix[active], iy[active]), wk[active] * fy[active])
+
+    def _apply_immersed_boundary_forces(self, ux: np.ndarray, uy: np.ndarray) -> None:
+        """Direct-forcing IBM for circular DEM particles."""
+        self.ibm_forces_p = np.zeros((self.n_p, 2))
+        self.ibm_torques_p = np.zeros(self.n_p)
+        if self.n_p == 0 or self.particle_fluid_coupling != "immersed_boundary":
+            return
+
+        marker_x: list[float] = []
+        marker_y: list[float] = []
+        marker_fx: list[float] = []
+        marker_fy: list[float] = []
+
+        for i in range(self.n_p):
+            radius = float(self.radii[i])
+            n_markers = max(8, int(np.ceil(2.0 * np.pi * radius / self.ibm_marker_spacing)))
+            ds = 2.0 * np.pi * radius / n_markers
+            theta = 2.0 * np.pi * np.arange(n_markers) / n_markers
+            rx = radius * np.cos(theta)
+            ry = radius * np.sin(theta)
+            x = self.pos[i, 0] + rx
+            y = np.clip(self.pos[i, 1] + ry, 0.5, self.ny - 1.5)
+            uf_x, uf_y = self._interp_velocity_many(x, y, ux=ux, uy=uy)
+            ub_x = self.vel[i, 0] - self.omega_p[i] * ry
+            ub_y = self.vel[i, 1] + self.omega_p[i] * rx
+            fx = self.ibm_stiffness * (ub_x - uf_x) * ds
+            fy = self.ibm_stiffness * (ub_y - uf_y) * ds
+
+            self.ibm_forces_p[i, 0] -= float(np.sum(fx))
+            self.ibm_forces_p[i, 1] -= float(np.sum(fy))
+            self.ibm_torques_p[i] -= float(np.sum(rx * fy - ry * fx))
+            marker_x.extend(x.tolist())
+            marker_y.extend(y.tolist())
+            marker_fx.extend(fx.tolist())
+            marker_fy.extend(fy.tolist())
+
+        self._distribute_lagrangian_forces_many(
+            np.asarray(marker_x),
+            np.asarray(marker_y),
+            np.asarray(marker_fx),
+            np.asarray(marker_fy),
+        )
+
     # ------------------------------------------------------------------
     # DEM
     # ------------------------------------------------------------------
@@ -1166,6 +1263,8 @@ class LBMDEMSolver:
             if self.n_p == 0:
                 self.forces_p = np.zeros((0, 2))
                 self.torques_p = np.zeros(0)
+                self.ibm_forces_p = np.zeros((0, 2))
+                self.ibm_torques_p = np.zeros(0)
                 return
         else:
             self.pos[:, 0] %= self.nx
@@ -1249,6 +1348,10 @@ class LBMDEMSolver:
                     -drag[:, 1],
                     self.radii,
                 )
+                self._invalidate_macroscopic_cache()
+            elif self.n_p and self.particle_fluid_coupling == "immersed_boundary":
+                _, ux_ibm, uy_ibm = self._macroscopic()
+                self._apply_immersed_boundary_forces(ux_ibm, uy_ibm)
                 self._invalidate_macroscopic_cache()
 
             # --- LBM step ---
@@ -1453,6 +1556,18 @@ def main() -> None:
         help="Fluid-particle coupling mode (default point_force)",
     )
     parser.add_argument(
+        "--ibm-stiffness",
+        type=float,
+        default=1.0,
+        help="Direct-forcing immersed-boundary stiffness (default 1.0)",
+    )
+    parser.add_argument(
+        "--ibm-marker-spacing",
+        type=float,
+        default=1.0,
+        help="Approximate immersed-boundary marker spacing in lattice units (default 1.0)",
+    )
+    parser.add_argument(
         "--n-particles", type=int, default=20, help="Number of DEM particles (default 20)"
     )
     parser.add_argument(
@@ -1580,6 +1695,8 @@ def main() -> None:
         fluid_method=args.fluid_method,
         particle_method=args.particle_method,
         particle_fluid_coupling=args.particle_fluid_coupling,
+        ibm_stiffness=args.ibm_stiffness,
+        ibm_marker_spacing=args.ibm_marker_spacing,
         n_particles=args.n_particles,
         particle_radius=args.radius,
         density_ratio=args.density_ratio,

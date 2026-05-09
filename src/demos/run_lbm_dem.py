@@ -58,10 +58,15 @@ parser.add_argument("--particle-method",
                     default="dem-hertz",
                     help="DEM normal contact model (default: dem-hertz)")
 parser.add_argument("--particle-fluid-coupling",
-                    choices=["point_force", "solid_boundary"],
+                    choices=["point_force", "solid_boundary", "immersed_boundary"],
                     default="point_force",
-                    help="Fluid-particle coupling mode: point force or dynamic "
-                         "solid-boundary mask (default: point_force)")
+                    help="Fluid-particle coupling mode: point force, dynamic "
+                         "solid-boundary mask, or immersed boundary (default: point_force)")
+parser.add_argument("--ibm-stiffness", type=float, default=1.0,
+                    help="Direct-forcing immersed-boundary stiffness (default: 1.0)")
+parser.add_argument("--ibm-marker-spacing", type=float, default=1.0,
+                    help="Approximate immersed-boundary marker spacing in lattice units "
+                         "(default: 1.0)")
 parser.add_argument("--cylinder", action="store_true", help="Add a fixed solid cylinder")
 parser.add_argument("--cyl-x", type=float, default=None,
                     help="Cylinder center x [lattice] (default: NX/4)")
@@ -146,6 +151,10 @@ if args.u_max < 0.0:
     parser.error("--u-max must be non-negative")
 if not (0.0 < args.flow_control_gain <= 1.0):
     parser.error("--flow-control-gain must be in the range (0, 1]")
+if args.ibm_stiffness <= 0.0:
+    parser.error("--ibm-stiffness must be positive")
+if args.ibm_marker_spacing <= 0.0:
+    parser.error("--ibm-marker-spacing must be positive")
 if args.particle_radius <= 0.0:
     parser.error("--particle-radius must be positive")
 if args.radius_variation < 0.0:
@@ -324,6 +333,8 @@ def _write_metadata(path: Path, sim: LBMDEMSolver | None = None) -> None:
             "fluid_method": args.fluid_method,
             "particle_method": args.particle_method,
             "particle_fluid_coupling": args.particle_fluid_coupling,
+            "ibm_stiffness": args.ibm_stiffness,
+            "ibm_marker_spacing": args.ibm_marker_spacing,
             "particle_radius": RADIUS,
             "radius_variation": RADIUS_VARIATION,
             "density_ratio": DENSITY_RATIO,
@@ -345,6 +356,8 @@ def _write_metadata(path: Path, sim: LBMDEMSolver | None = None) -> None:
             "fluid_method": sim.fluid_method,
             "particle_method": sim.particle_method,
             "particle_fluid_coupling": sim.particle_fluid_coupling,
+            "ibm_stiffness": sim.ibm_stiffness,
+            "ibm_marker_spacing": sim.ibm_marker_spacing,
             "nu": sim.nu,
             "tau": sim.tau,
             "omega": sim.omega,
@@ -687,6 +700,8 @@ sim = FastLBMDEM(
     fluid_method=args.fluid_method,
     particle_method=args.particle_method,
     particle_fluid_coupling=args.particle_fluid_coupling,
+    ibm_stiffness=args.ibm_stiffness,
+    ibm_marker_spacing=args.ibm_marker_spacing,
     n_particles=N_PARTICLES,
     particle_radius=RADIUS,
     radius_variation=RADIUS_VARIATION,
