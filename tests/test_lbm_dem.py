@@ -125,11 +125,49 @@ def test_invalid_solver_methods_are_rejected():
         raise AssertionError("Expected invalid particle-fluid coupling to fail")
 
     try:
+        LBMDEMSolver(fluid_accelerator="not-an-accelerator")
+    except ValueError as exc:
+        assert "fluid_accelerator" in str(exc)
+    else:
+        raise AssertionError("Expected invalid fluid accelerator to fail")
+
+    try:
+        LBMDEMSolver(particle_search="not-a-search")
+    except ValueError as exc:
+        assert "particle_search" in str(exc)
+    else:
+        raise AssertionError("Expected invalid particle search to fail")
+
+    try:
+        LBMDEMSolver(spatial_dimension=3)
+    except ValueError as exc:
+        assert "spatial_dimension" in str(exc)
+    else:
+        raise AssertionError("Expected unsupported spatial dimension to fail")
+
+    try:
         LBMDEMSolver(particle_fluid_coupling="immersed_boundary", ibm_stiffness=0.0)
     except ValueError as exc:
         assert "ibm_stiffness" in str(exc)
     else:
         raise AssertionError("Expected invalid IBM stiffness to fail")
+
+
+def test_particle_search_methods_are_selectable():
+    """Cell-list search can be replaced by exhaustive pairs for debugging."""
+    cell = _two_particle_solver(particle_attraction=True)
+    all_pairs = _two_particle_solver(particle_attraction=True)
+    all_pairs.particle_search = "all_pairs"
+
+    assert list(cell._particle_pair_candidates()) == [(0, 1)]
+    assert list(all_pairs._particle_pair_candidates()) == [(0, 1)]
+
+    np.testing.assert_allclose(
+        cell._dem_forces(dt_sub=1.0),
+        all_pairs._dem_forces(dt_sub=1.0),
+        rtol=1e-12,
+        atol=1e-12,
+    )
 
 
 def test_linear_dem_contact_model_changes_normal_contact_force():

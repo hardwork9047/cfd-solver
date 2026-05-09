@@ -86,6 +86,35 @@ python src/demos/run_lbm_dem.py \
   --particle-method dem-hertz
 ```
 
+### Acceleration and neighbour-search options
+
+Use `--fluid-accelerator` to choose the LBM execution backend.
+
+- `numpy`: stable default path.  Use this for reference runs and when comparing
+  against older results.
+- `numba`: compiled LBM collision/streaming/bounce-back path when the optional
+  `numba` package is installed.  If numba is not available, the solver records
+  that the NumPy path was used.
+- `auto`: use numba when available, otherwise NumPy.
+
+Use `--particle-search` to choose the DEM pair search.
+
+- `cell_list`: production default.  Particles are binned into cells sized by
+  the maximum contact/surface-force interaction distance, so only neighbouring
+  cells are checked.
+- `all_pairs`: exhaustive `O(N^2)` search for debugging small cases.  This is
+  useful when verifying that cell-list results match a brute-force reference.
+
+For large fouling sweeps, prefer:
+
+```bash
+python src/demos/run_lbm_dem.py \
+  --fluid-method lbm-trt-guo \
+  --fluid-accelerator auto \
+  --particle-search cell_list \
+  --output-profile analysis
+```
+
 ## 2. Verification
 
 Use the production solver path for verification:
@@ -175,12 +204,39 @@ The current execution path includes several speed-oriented choices:
 
 - `solid_boundary` updates only local particle bounding boxes instead of
   rebuilding particle solids from a full-grid mesh each step.
+- DEM particle-particle interactions use a cell-list neighbour search by
+  default; `--particle-search all_pairs` remains available only for small
+  debugging/reference cases.
+- Stokes drag and particle-fluid interpolation are batched across particles.
 - `immersed_boundary` computes marker interpolation and marker forces in
   batched arrays before spreading them back to the lattice.
 - LBM streaming uses precomputed periodic source indices instead of repeated
   `np.roll` calls.
+- `--fluid-accelerator numba` or `--fluid-accelerator auto` can use a compiled
+  LBM step when numba is installed.
+- `--output-profile analysis` disables movie generation and writes only
+  analysis outputs plus final ParaView data without storing intermediate
+  snapshot NPZ files; `--output-profile minimal` skips video, ParaView, and
+  intermediate snapshots for fast parameter screening.
 - Config sweeps can run independent cases concurrently with `--jobs`.
 
 For large sweeps, reduce I/O first: increase `--snapshot-every`, set
 `--paraview-every 0` for final-only VTK, and use `--no-video` unless movies are
 needed for every condition.
+
+## 7. Solver API Direction
+
+The production solver now accepts explicit numerical-method controls:
+
+- `fluid_method`
+- `fluid_accelerator`
+- `particle_method`
+- `particle_search`
+- `particle_fluid_coupling`
+- `spatial_dimension`
+
+Only `spatial_dimension=2` is implemented today, but keeping the dimension as
+an explicit constructor argument avoids hiding 2-D assumptions in scripts.  A
+future 3-D implementation should preserve this API and swap in D3Q19/D3Q27 LBM,
+3-D DEM contact geometry, and 3-D particle-fluid coupling behind the same
+method-selection surface.

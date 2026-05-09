@@ -63,6 +63,8 @@ Q = 9
 CS2 = 1.0 / 3.0  # lattice speed of sound squared
 FLUID_METHODS = ("lbm-bgk-guo", "lbm-trt-guo")
 PARTICLE_FLUID_COUPLINGS = ("point_force", "solid_boundary", "immersed_boundary")
+FLUID_ACCELERATORS = ("numpy", "numba", "auto")
+PARTICLE_SEARCH_METHODS = ("cell_list", "all_pairs")
 
 
 if njit is not None:  # pragma: no cover - exercised only when numba is installed
@@ -183,6 +185,93 @@ else:
     _dem_pair_loads_numba = None
 
 
+if njit is not None:  # pragma: no cover - exercised only when numba is installed
+
+    @njit(cache=True)
+    def _lbm_step_numba(
+        f,
+        rho,
+        ux,
+        uy,
+        Fx,
+        Fy,
+        solid,
+        omega,
+        trt_omega_minus,
+        method_id,
+        c_int,
+        w,
+        opposite,
+    ):
+        """Fused D2Q9 collision, streaming, and bounce-back kernel."""
+        q_count, nx, ny = f.shape
+        post = np.empty_like(f)
+        streamed = np.empty_like(f)
+        for q in range(q_count):
+            cx = c_int[q, 0]
+            cy = c_int[q, 1]
+            opp = opposite[q]
+            ox = c_int[opp, 0]
+            oy = c_int[opp, 1]
+            weight = w[q]
+            for x in range(nx):
+                for y in range(ny):
+                    u2 = ux[x, y] * ux[x, y] + uy[x, y] * uy[x, y]
+                    cu = cx * ux[x, y] + cy * uy[x, y]
+                    feq = weight * rho[x, y] * (
+                        1.0
+                        + cu / CS2
+                        + 0.5 * cu * cu / (CS2 * CS2)
+                        - 0.5 * u2 / CS2
+                    )
+                    term_x = (cx - ux[x, y]) / CS2 + cu / (CS2 * CS2) * cx
+                    term_y = (cy - uy[x, y]) / CS2 + cu / (CS2 * CS2) * cy
+                    forcing = (1.0 - 0.5 * omega) * weight * (
+                        term_x * Fx[x, y] + term_y * Fy[x, y]
+                    )
+                    if method_id == 1:
+                        cu_opp = ox * ux[x, y] + oy * uy[x, y]
+                        feq_opp = w[opp] * rho[x, y] * (
+                            1.0
+                            + cu_opp / CS2
+                            + 0.5 * cu_opp * cu_opp / (CS2 * CS2)
+                            - 0.5 * u2 / CS2
+                        )
+                        f_plus = 0.5 * (f[q, x, y] + f[opp, x, y])
+                        f_minus = 0.5 * (f[q, x, y] - f[opp, x, y])
+                        feq_plus = 0.5 * (feq + feq_opp)
+                        feq_minus = 0.5 * (feq - feq_opp)
+                        post[q, x, y] = (
+                            f[q, x, y]
+                            - omega * (f_plus - feq_plus)
+                            - trt_omega_minus * (f_minus - feq_minus)
+                            + forcing
+                        )
+                    else:
+                        post[q, x, y] = f[q, x, y] + omega * (feq - f[q, x, y]) + forcing
+
+        for q in range(q_count):
+            cx = c_int[q, 0]
+            cy = c_int[q, 1]
+            for x in range(nx):
+                xd = (x + cx) % nx
+                for y in range(ny):
+                    yd = (y + cy) % ny
+                    streamed[q, xd, yd] = post[q, x, y]
+
+        out = streamed.copy()
+        for q in range(q_count):
+            opp = opposite[q]
+            for x in range(nx):
+                for y in range(ny):
+                    if solid[x, y]:
+                        out[q, x, y] = streamed[opp, x, y]
+        return out
+
+else:
+    _lbm_step_numba = None
+
+
 # ---------------------------------------------------------------------------
 # LBM helpers
 # ---------------------------------------------------------------------------
@@ -285,6 +374,13 @@ class LBMDEMSolver:
     cylinders         : list[tuple[float, float, float]] | None
                         Fixed solid cylinders as (cx, cy, radius).  Use this
                         to represent multiple pore-scale membrane obstacles.
+    fluid_accelerator : str — ``"numpy"``, ``"numba"``, or ``"auto"``.
+                        ``"numba"`` uses a compiled LBM step when numba is
+                        installed, otherwise it falls back to NumPy with a
+                        clear runtime flag.
+    particle_search   : str — ``"cell_list"`` or ``"all_pairs"``.
+                        ``"cell_list"`` is the scalable DEM neighbourhood
+                        search used for production runs.
     """
 
     @staticmethod
@@ -321,6 +417,9 @@ class LBMDEMSolver:
         fluid_method: str = "lbm-bgk-guo",
         particle_method: str = "dem-hertz",
         particle_fluid_coupling: str = "point_force",
+        fluid_accelerator: str = "numpy",
+        particle_search: str = "cell_list",
+        spatial_dimension: int = 2,
         ibm_stiffness: float = 1.0,
         ibm_marker_spacing: float = 1.0,
         n_particles: int = 20,
@@ -368,6 +467,12 @@ class LBMDEMSolver:
             raise ValueError(f"particle_method must be one of {PARTICLE_METHODS}")
         if particle_fluid_coupling not in PARTICLE_FLUID_COUPLINGS:
             raise ValueError(f"particle_fluid_coupling must be one of {PARTICLE_FLUID_COUPLINGS}")
+        if fluid_accelerator not in FLUID_ACCELERATORS:
+            raise ValueError(f"fluid_accelerator must be one of {FLUID_ACCELERATORS}")
+        if particle_search not in PARTICLE_SEARCH_METHODS:
+            raise ValueError(f"particle_search must be one of {PARTICLE_SEARCH_METHODS}")
+        if spatial_dimension != 2:
+            raise ValueError("only spatial_dimension=2 is currently implemented")
         if ibm_stiffness <= 0.0:
             raise ValueError("ibm_stiffness must be positive")
         if ibm_marker_spacing <= 0.0:
@@ -383,6 +488,13 @@ class LBMDEMSolver:
         self.fluid_method = fluid_method
         self.particle_method = particle_method
         self.particle_fluid_coupling = particle_fluid_coupling
+        self.fluid_accelerator = fluid_accelerator
+        self.particle_search = particle_search
+        self.spatial_dimension = spatial_dimension
+        self.uses_numba_lbm = (
+            fluid_accelerator == "numba"
+            or (fluid_accelerator == "auto" and _lbm_step_numba is not None)
+        ) and _lbm_step_numba is not None
         self.ibm_stiffness = ibm_stiffness
         self.ibm_marker_spacing = ibm_marker_spacing
         self.n_p = n_particles
@@ -422,6 +534,8 @@ class LBMDEMSolver:
         self.omega = 1.0 / self.tau
         self.trt_magic_parameter = 3.0 / 16.0
         self.trt_omega_minus = self._trt_omega_minus()
+        self._c_int = C.astype(np.int64)
+        self._opposite = np.asarray(OPPOSITE, dtype=np.int64)
         # Body force to sustain Poiseuille flow: ∂p/∂x = -8 μ u_max / ny²
         self.F_drive = 8.0 * self.nu * u_max / ny**2
         self.initial_F_drive = self.F_drive
@@ -451,7 +565,12 @@ class LBMDEMSolver:
             f"flow_control={flow_control}"
         )
         print(f"  Fluid method : {fluid_method}")
+        print(
+            f"  LBM accel.   : {fluid_accelerator}"
+            f"{' (numba active)' if self.uses_numba_lbm else ' (numpy path)'}"
+        )
         print(f"  DEM method   : {particle_method}")
+        print(f"  DEM search   : {particle_search}")
         print(f"  Coupling     : {particle_fluid_coupling}")
         if particle_fluid_coupling == "immersed_boundary":
             print(
@@ -916,6 +1035,25 @@ class LBMDEMSolver:
 
     def _lbm_step(self, rho: np.ndarray, ux: np.ndarray, uy: np.ndarray) -> None:
         """One LBM step: collide → stream → bounce-back."""
+        if self.uses_numba_lbm:
+            method_id = 1 if self.fluid_method == "lbm-trt-guo" else 0
+            self.f = _lbm_step_numba(
+                self.f,
+                rho,
+                ux,
+                uy,
+                self.Fx,
+                self.Fy,
+                self.solid,
+                self.omega,
+                self.trt_omega_minus,
+                method_id,
+                self._c_int,
+                W,
+                self._opposite,
+            )
+            return
+
         if self.fluid_method == "lbm-trt-guo":
             self._collide_trt_guo(rho, ux, uy)
         else:
@@ -1243,6 +1381,12 @@ class LBMDEMSolver:
         pairs are generated once without a ``seen`` set.
         """
         if self.n_p < 2:
+            return
+
+        if self.particle_search == "all_pairs":
+            for i in range(self.n_p):
+                for j in range(i + 1, self.n_p):
+                    yield i, j
             return
 
         cell_size = self._particle_cell_size()
@@ -1579,10 +1723,22 @@ def main() -> None:
         help="LBM collision/forcing method (default lbm-bgk-guo)",
     )
     parser.add_argument(
+        "--fluid-accelerator",
+        choices=FLUID_ACCELERATORS,
+        default="numpy",
+        help="LBM execution backend (default numpy)",
+    )
+    parser.add_argument(
         "--particle-method",
         choices=PARTICLE_METHODS,
         default="dem-hertz",
         help="DEM normal contact model (default dem-hertz)",
+    )
+    parser.add_argument(
+        "--particle-search",
+        choices=PARTICLE_SEARCH_METHODS,
+        default="cell_list",
+        help="Particle-pair neighbour search (default cell_list)",
     )
     parser.add_argument(
         "--particle-fluid-coupling",
@@ -1728,7 +1884,9 @@ def main() -> None:
         Re=args.Re,
         u_max=args.u_max,
         fluid_method=args.fluid_method,
+        fluid_accelerator=args.fluid_accelerator,
         particle_method=args.particle_method,
+        particle_search=args.particle_search,
         particle_fluid_coupling=args.particle_fluid_coupling,
         ibm_stiffness=args.ibm_stiffness,
         ibm_marker_spacing=args.ibm_marker_spacing,

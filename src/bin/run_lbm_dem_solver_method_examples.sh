@@ -24,6 +24,7 @@ Examples:
   src/bin/run_lbm_dem_solver_method_examples.sh bgk_hertz
   src/bin/run_lbm_dem_solver_method_examples.sh trt_ibm --ibm-stiffness 0.8
   src/bin/run_lbm_dem_solver_method_examples.sh trt_linear --total-steps 3000 --no-video
+  src/bin/run_lbm_dem_solver_method_examples.sh trt_hertz --fluid-accelerator auto --output-profile analysis
   src/bin/run_lbm_dem_solver_method_examples.sh all --particle-volume-fraction 0.10
 
 Outputs:

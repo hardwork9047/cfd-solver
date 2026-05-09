@@ -58,10 +58,19 @@ parser.add_argument("--fluid-method",
                     choices=["lbm-bgk-guo", "lbm-trt-guo"],
                     default="lbm-bgk-guo",
                     help="LBM collision/forcing method (default: lbm-bgk-guo)")
+parser.add_argument("--fluid-accelerator",
+                    choices=["numpy", "numba", "auto"],
+                    default="numpy",
+                    help="LBM execution backend. 'numba' uses the compiled step "
+                         "when available; default keeps the stable NumPy path")
 parser.add_argument("--particle-method",
                     choices=["dem-hertz", "dem-linear"],
                     default="dem-hertz",
                     help="DEM normal contact model (default: dem-hertz)")
+parser.add_argument("--particle-search",
+                    choices=["cell_list", "all_pairs"],
+                    default="cell_list",
+                    help="Particle-pair neighbour search (default: cell_list)")
 parser.add_argument("--particle-fluid-coupling",
                     choices=["point_force", "solid_boundary", "immersed_boundary"],
                     default="point_force",
@@ -110,8 +119,15 @@ parser.add_argument("--paraview-output", action=argparse.BooleanOptionalAction,
 parser.add_argument("--paraview-every", type=int, default=0,
                     help="Export every Nth recorded snapshot to ParaView VTK. "
                          "0 exports only the final snapshot (default: 0)")
-parser.add_argument("--snapshot-storage", choices=["disk", "memory"], default="disk",
-                    help="Store recorded snapshots on disk or in memory (default: disk)")
+parser.add_argument("--snapshot-storage", choices=["disk", "memory", "none"], default="disk",
+                    help="Store recorded snapshots on disk, in memory, or not at all "
+                         "(default: disk)")
+parser.add_argument("--output-profile",
+                    choices=["full", "analysis", "minimal"],
+                    default="full",
+                    help="Output workload preset: full keeps snapshots/video defaults, "
+                         "analysis keeps CSV/NPZ/final ParaView and skips video, "
+                         "minimal keeps only analysis/final fields (default: full)")
 parser.add_argument("--result-tag", default=None,
                     help="Extra result directory tag to avoid overwriting parameter sweeps")
 parser.add_argument("--rolling-friction", action=argparse.BooleanOptionalAction,
@@ -174,6 +190,18 @@ if args.warmup_steps < 0:
     parser.error("--warmup-steps must be non-negative")
 if args.paraview_every < 0:
     parser.error("--paraview-every must be non-negative")
+
+if args.output_profile == "analysis":
+    args.no_video = True
+    args.snapshot_storage = "none"
+    if args.paraview_every != 0:
+        args.paraview_every = 0
+elif args.output_profile == "minimal":
+    args.no_video = True
+    args.paraview_output = False
+    args.snapshot_storage = "none"
+if args.snapshot_storage == "none" and not args.no_video:
+    parser.error("--snapshot-storage none requires --no-video or an output profile that skips video")
 if args.result_tag is not None and any(ch in args.result_tag for ch in "/\\"):
     parser.error("--result-tag must be a single directory name")
 if args.cylinder_spec is not None:
@@ -342,7 +370,9 @@ def _write_metadata(path: Path, sim: LBMDEMSolver | None = None) -> None:
             "reynolds_length": REYNOLDS_LENGTH,
             "flow_condition": FLOW_CONDITION,
             "fluid_method": args.fluid_method,
+            "fluid_accelerator": args.fluid_accelerator,
             "particle_method": args.particle_method,
+            "particle_search": args.particle_search,
             "particle_fluid_coupling": args.particle_fluid_coupling,
             "ibm_stiffness": args.ibm_stiffness,
             "ibm_marker_spacing": args.ibm_marker_spacing,
@@ -353,6 +383,10 @@ def _write_metadata(path: Path, sim: LBMDEMSolver | None = None) -> None:
             "total_steps": TOTAL_STEPS,
             "snapshot_every": SNAPSHOT_EVERY,
             "warmup_steps": args.warmup_steps,
+            "paraview_output": args.paraview_output,
+            "paraview_every": args.paraview_every,
+            "snapshot_storage": args.snapshot_storage,
+            "output_profile": args.output_profile,
             "particle_volume_fraction": PARTICLE_VOLUME_FRACTION,
             "source_volume_fraction": SOURCE_VOLUME_FRACTION,
             "n_particles_requested": N_PARTICLES,
@@ -365,7 +399,10 @@ def _write_metadata(path: Path, sim: LBMDEMSolver | None = None) -> None:
     if sim is not None:
         metadata["solver"] = {
             "fluid_method": sim.fluid_method,
+            "fluid_accelerator": sim.fluid_accelerator,
+            "uses_numba_lbm": sim.uses_numba_lbm,
             "particle_method": sim.particle_method,
+            "particle_search": sim.particle_search,
             "particle_fluid_coupling": sim.particle_fluid_coupling,
             "ibm_stiffness": sim.ibm_stiffness,
             "ibm_marker_spacing": sim.ibm_marker_spacing,
@@ -678,8 +715,11 @@ print(
     )
 )
 print(f"Fluid method: {args.fluid_method}")
+print(f"Fluid accelerator: {args.fluid_accelerator}")
 print(f"Particle method: {args.particle_method}")
+print(f"Particle search: {args.particle_search}")
 print(f"Particle-fluid coupling: {args.particle_fluid_coupling}")
+print(f"Output profile: {args.output_profile}")
 if PARTICLE_VOLUME_FRACTION is not None:
     if args.particle_source == "left-inlet":
         print(
@@ -709,7 +749,9 @@ sim = FastLBMDEM(
     flow_control="target_max_velocity" if FLOW_CONDITION == "target-max-velocity" else "fixed_pressure",
     flow_control_gain=args.flow_control_gain,
     fluid_method=args.fluid_method,
+    fluid_accelerator=args.fluid_accelerator,
     particle_method=args.particle_method,
+    particle_search=args.particle_search,
     particle_fluid_coupling=args.particle_fluid_coupling,
     ibm_stiffness=args.ibm_stiffness,
     ibm_marker_spacing=args.ibm_marker_spacing,
@@ -768,6 +810,8 @@ snapshot_dir = OUT_DIR / "snapshots"
 if args.snapshot_storage == "disk":
     snapshot_dir.mkdir(parents=True, exist_ok=True)
     print(f"      snapshots: {snapshot_dir} に逐次保存")
+elif args.snapshot_storage == "none":
+    print("      snapshots: 中間NPZ保存なし")
 
 paraview_dir = None
 fluid_entries: list[tuple[int, Path]] = []
@@ -883,7 +927,7 @@ for frame_idx in range(n_frames):
 
     if snapshots is not None:
         snapshots.append(snap)
-    else:
+    elif args.snapshot_storage == "disk":
         snapshot_path = snapshot_dir / f"snapshot_{frame_idx:04d}_step_{sim.step_count:07d}.npz"
         _write_snapshot_npz(snapshot_path, snap)
         snapshot_paths.append(snapshot_path)
@@ -1062,6 +1106,8 @@ ax_anim.set_facecolor("#0a0a0a")
 def _snapshot_at(frame_idx: int) -> dict:
     if snapshots is not None:
         return snapshots[frame_idx]
+    if not snapshot_paths:
+        raise RuntimeError("Snapshots were not stored; rerun without --snapshot-storage none")
     return _load_snapshot_npz(snapshot_paths[frame_idx])
 
 

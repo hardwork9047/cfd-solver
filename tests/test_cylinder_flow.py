@@ -16,6 +16,7 @@ def test_cylinder_flow_uses_fluid_only_fast_solver_path():
         cylinders=[(18.0, 12.0, 3.0)],
         flow_condition="fixed_pressure",
         fluid_method="lbm-trt-guo",
+        fluid_accelerator="numpy",
     )
     assert sim.n_p == 0
     assert sim.fluid_method == "lbm-trt-guo"
@@ -41,6 +42,7 @@ def test_cylinder_flow_runner_writes_outputs(tmp_path: Path):
         flow_condition="fixed_pressure",
         flow_control_gain=0.2,
         fluid_method="lbm-bgk-guo",
+        fluid_accelerator="numpy",
         steps=2,
         report_every=1,
     )
