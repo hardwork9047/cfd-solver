@@ -15,6 +15,7 @@ import platform
 import subprocess
 import sys
 import time
+import traceback
 from datetime import datetime
 from pathlib import Path
 
@@ -351,6 +352,7 @@ run_timestamp = datetime.now().strftime("run_%Y%m%d_%H%M%S_%f")
 out_parts.append(run_timestamp)
 OUT_DIR = program_results_dir(__file__, *out_parts)
 OUT_DIR.mkdir(parents=True, exist_ok=True)
+RUN_STARTED_AT = datetime.now()
 
 
 def _git_value(args_: list[str]) -> str | None:
@@ -366,6 +368,74 @@ def _git_value(args_: list[str]) -> str | None:
     except (OSError, subprocess.CalledProcessError):
         return None
     return completed.stdout.strip()
+
+
+def _write_run_status(
+    status: str,
+    *,
+    error: str | None = None,
+    traceback_text: str | None = None,
+    extra: dict | None = None,
+) -> Path:
+    """Write a small status file so sweeps can be resumed or audited."""
+    now = datetime.now()
+    payload = {
+        "schema_version": 1,
+        "status": status,
+        "created_at": RUN_STARTED_AT.isoformat(timespec="seconds"),
+        "updated_at": now.isoformat(timespec="seconds"),
+        "elapsed_seconds": (now - RUN_STARTED_AT).total_seconds(),
+        "program": str(Path(__file__).resolve()),
+        "command": sys.argv,
+        "output_dir": str(OUT_DIR),
+        "git": {
+            "commit": _git_value(["rev-parse", "HEAD"]),
+            "branch": _git_value(["branch", "--show-current"]),
+        },
+        "configuration": {
+            "nx": NX,
+            "ny": NY,
+            "reynolds_number": RE,
+            "target_u_max": U_MAX,
+            "total_steps": TOTAL_STEPS,
+            "snapshot_every": SNAPSHOT_EVERY,
+            "particle_fluid_coupling": args.particle_fluid_coupling,
+            "fluid_accelerator": args.fluid_accelerator,
+            "compute_accelerator": args.compute_accelerator,
+            "particle_volume_fraction": PARTICLE_VOLUME_FRACTION,
+            "rolling_friction": args.rolling_friction,
+            "particle_attraction": args.particle_attraction,
+            "particle_repulsion": args.particle_repulsion,
+            "cylinders": [
+                {"x": float(cx), "y": float(cy), "radius": float(cr)}
+                for cx, cy, cr in CYLINDERS
+            ],
+        },
+    }
+    if error:
+        payload["error"] = error
+    if traceback_text:
+        payload["traceback"] = traceback_text
+    if extra:
+        payload["extra"] = extra
+    path = OUT_DIR / "run_status.json"
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    return path
+
+
+def _record_uncaught_exception(exc_type, exc_value, exc_tb) -> None:
+    """Persist failed run state before Python prints the original traceback."""
+    try:
+        _write_run_status(
+            "failed",
+            error=f"{exc_type.__name__}: {exc_value}",
+            traceback_text="".join(traceback.format_exception(exc_type, exc_value, exc_tb)),
+        )
+    finally:
+        sys.__excepthook__(exc_type, exc_value, exc_tb)
+
+
+sys.excepthook = _record_uncaught_exception
 
 
 def _write_metadata(path: Path, sim: LBMDEMSolver | None = None) -> None:
@@ -766,6 +836,80 @@ def _write_analysis_outputs(out_dir: Path, rows: list[dict[str, float | int]]) -
     np.savez(npz_path, **arrays)
     return csv_path, npz_path
 
+
+def _write_fouling_summary(
+    out_dir: Path,
+    rows: list[dict[str, float | int]],
+    sim: FastLBMDEM,
+    analysis_csv: Path,
+    analysis_npz: Path,
+) -> tuple[Path, Path]:
+    """Write compact final metrics for comparing large condition sweeps."""
+    summary_dir = out_dir / "analysis"
+    summary_dir.mkdir(parents=True, exist_ok=True)
+    json_path = summary_dir / "summary.json"
+    md_path = summary_dir / "summary.md"
+    if not rows:
+        summary = {"schema_version": 1, "status": "no_rows"}
+    else:
+        final = rows[-1]
+        max_pressure_drop = max(float(row["pressure_drop"]) for row in rows)
+        min_normalized_flux = min(float(row["normalized_permeate_flux"]) for row in rows)
+        max_contacts = max(int(row["total_contacts"]) for row in rows)
+        max_cylinder_contacts = max(int(row["cylinder_contacts"]) for row in rows)
+        summary = {
+            "schema_version": 1,
+            "status": "completed",
+            "analysis_csv": str(analysis_csv),
+            "analysis_npz": str(analysis_npz),
+            "final": final,
+            "extrema": {
+                "max_pressure_drop": max_pressure_drop,
+                "min_normalized_permeate_flux": min_normalized_flux,
+                "max_total_contacts": max_contacts,
+                "max_cylinder_contacts": max_cylinder_contacts,
+            },
+            "fouling_indicators": {
+                "final_retained_particle_ratio": final["retained_particle_ratio"],
+                "final_passed_particle_ratio": final["passed_particle_ratio"],
+                "final_normalized_permeate_flux": final["normalized_permeate_flux"],
+                "final_pressure_drop_ratio": final["pressure_drop_ratio"],
+                "final_fouling_resistance_index": final["fouling_resistance_index"],
+                "final_cylinder_contacts": final["cylinder_contacts"],
+                "max_total_contacts": max_contacts,
+            },
+            "solver": {
+                "fluid_accelerator": sim.fluid_accelerator,
+                "uses_numba_lbm": sim.uses_numba_lbm,
+                "compute_accelerator": sim.compute_accelerator,
+                "uses_numba_compute": sim.uses_numba_compute,
+                "particle_fluid_coupling": sim.particle_fluid_coupling,
+            },
+        }
+    json_path.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
+
+    lines = ["# LBM-DEM Fouling Summary", ""]
+    if rows:
+        indicators = summary["fouling_indicators"]
+        lines.extend(
+            [
+                f"- Final normalized permeate flux: {indicators['final_normalized_permeate_flux']:.6g}",
+                f"- Final pressure drop ratio: {indicators['final_pressure_drop_ratio']:.6g}",
+                f"- Fouling resistance index: {indicators['final_fouling_resistance_index']:.6g}",
+                f"- Retained particle ratio: {indicators['final_retained_particle_ratio']:.6g}",
+                f"- Passed particle ratio: {indicators['final_passed_particle_ratio']:.6g}",
+                f"- Final cylinder contacts: {indicators['final_cylinder_contacts']}",
+                f"- Max total contacts: {indicators['max_total_contacts']}",
+                "",
+                f"Time-series CSV: `{analysis_csv}`",
+                f"Time-series NPZ: `{analysis_npz}`",
+            ]
+        )
+    else:
+        lines.append("No time-series rows were recorded.")
+    md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return json_path, md_path
+
 # ---------------------------------------------------------------------------
 # 初期化
 # ---------------------------------------------------------------------------
@@ -860,6 +1004,7 @@ sim = FastLBMDEM(
 )
 metadata_path = OUT_DIR / "metadata.json"
 _write_metadata(metadata_path, sim)
+_write_run_status("running", extra={"metadata": str(metadata_path)})
 print(f"Metadata saved: {metadata_path}")
 
 # ---------------------------------------------------------------------------
@@ -1057,8 +1202,16 @@ total_time = time.perf_counter() - t1
 print(f"      完了 ({total_time:.1f} s, {TOTAL_STEPS/total_time:.0f} steps/s)")
 
 analysis_csv, analysis_npz = _write_analysis_outputs(OUT_DIR, analysis_rows)
+summary_json, summary_md = _write_fouling_summary(
+    OUT_DIR,
+    analysis_rows,
+    sim,
+    analysis_csv,
+    analysis_npz,
+)
 print(f"\n後解析データ保存: {analysis_csv}")
 print(f"後解析NPZ保存  : {analysis_npz}")
+print(f"サマリ保存      : {summary_json}")
 
 if last is None:
     raise RuntimeError("No snapshots were recorded")
@@ -1210,6 +1363,19 @@ plt.close(fig_stat)
 if args.no_video:
     print("\n[3/3] 動画作成をスキップ (--no-video)")
     _write_metadata(metadata_path, sim)
+    _write_run_status(
+        "completed",
+        extra={
+            "metadata": str(metadata_path),
+            "static_image": str(static_path),
+            "analysis_csv": str(analysis_csv),
+            "analysis_npz": str(analysis_npz),
+            "summary_json": str(summary_json),
+            "summary_md": str(summary_md),
+            "paraview_dir": str(paraview_dir) if paraview_dir is not None else None,
+            "video": None,
+        },
+    )
     print(f"\n出力ファイル:")
     print(f"  静止画: {static_path}")
     print(f"  時系列CSV: {analysis_csv}")
@@ -1367,6 +1533,19 @@ writer = animation.FFMpegWriter(fps=FPS, bitrate=2000,
 ani.save(str(video_path), writer=writer, dpi=150)
 plt.close(fig_anim)
 _write_metadata(metadata_path, sim)
+_write_run_status(
+    "completed",
+    extra={
+        "metadata": str(metadata_path),
+        "static_image": str(static_path),
+        "analysis_csv": str(analysis_csv),
+        "analysis_npz": str(analysis_npz),
+        "summary_json": str(summary_json),
+        "summary_md": str(summary_md),
+        "paraview_dir": str(paraview_dir) if paraview_dir is not None else None,
+        "video": str(video_path),
+    },
+)
 
 print(f"動画保存: {video_path}")
 print(f"\n出力ファイル:")

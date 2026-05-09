@@ -237,6 +237,76 @@ def verify_particle_solid_boundary_reduces_flux(
     )
 
 
+def verify_near_clogged_solid_boundary_suppresses_flux(
+    nx: int,
+    ny: int,
+    steps: int,
+    re: float,
+    u_max: float,
+    max_leakage_ratio: float,
+) -> VerificationResult:
+    """Check flux leakage when a solid-boundary particle spans the channel height."""
+    common = dict(
+        nx=nx,
+        ny=ny,
+        Re=re,
+        u_max=u_max,
+        reynolds_length=float(ny),
+        flow_control="fixed_pressure",
+        n_particles=1,
+        particle_radius=2.0,
+        density_ratio=1e9,
+        gravity=0.0,
+        seed=18,
+    )
+    open_sim = fluid_only(FastLBMDEM(**common))
+    clogged_sim = FastLBMDEM(
+        **common,
+        particle_fluid_coupling="solid_boundary",
+    )
+    radius = 0.65 * ny
+    clogged_sim.radii[:] = radius
+    clogged_sim.masses[:] = 2.0 * np.pi * radius**2 * clogged_sim.density_ratio
+    clogged_sim.inertias[:] = 0.5 * clogged_sim.masses * radius**2
+    clogged_sim.pos[:] = np.array([[0.5 * nx, 0.5 * ny]])
+    clogged_sim.vel[:] = 0.0
+    clogged_sim.omega_p[:] = 0.0
+    clogged_sim._update_particle_solid_mask()
+
+    open_sim.advance(steps)
+    clogged_sim.advance(steps)
+    rho_open, ux_open, _ = open_sim.get_fields()
+    rho_clogged, ux_clogged, _ = clogged_sim.get_fields()
+    outlet = nx - 2
+    inlet = 1
+    q_open = positive_flux(ux_open, open_sim.solid, outlet)
+    q_clogged = positive_flux(ux_clogged, clogged_sim.solid, outlet)
+    leakage_ratio = q_clogged / max(q_open, 1e-12)
+    q_in_clogged = positive_flux(ux_clogged, clogged_sim.solid, inlet)
+    flux_imbalance = abs(q_in_clogged - q_clogged) / max(q_in_clogged, q_clogged, 1e-12)
+    p_open = rho_open / 3.0
+    p_clogged = rho_clogged / 3.0
+    open_dp = float(np.mean(p_open[inlet, ~open_sim.solid[inlet, :]]) - np.mean(p_open[outlet, ~open_sim.solid[outlet, :]]))
+    clogged_dp = float(
+        np.mean(p_clogged[inlet, ~clogged_sim.solid[inlet, :]])
+        - np.mean(p_clogged[outlet, ~clogged_sim.solid[outlet, :]])
+    )
+    return VerificationResult(
+        name="near_clogged_solid_boundary_leakage",
+        passed=leakage_ratio <= max_leakage_ratio,
+        metric=leakage_ratio,
+        tolerance=max_leakage_ratio,
+        details=(
+            "A channel-spanning DEM particle represented as solid_boundary should "
+            "strongly suppress outlet flux. "
+            f"open_outlet_flux={q_open:.6g}, clogged_outlet_flux={q_clogged:.6g}, "
+            f"clogged_inlet_flux={q_in_clogged:.6g}, flux_imbalance={flux_imbalance:.6g}, "
+            f"open_pressure_drop={open_dp:.6g}, clogged_pressure_drop={clogged_dp:.6g}, "
+            f"dynamic_solid_fraction={clogged_sim.dynamic_solid_fraction():.6g}."
+        ),
+    )
+
+
 def verify_immersed_boundary_particle_load(
     nx: int,
     ny: int,
@@ -387,6 +457,7 @@ def run_fluid_verification(
     output_dir: Path,
     porous_min_reduction: float = 0.01,
     cylinder_surface_min_force: float = 1e-6,
+    near_clogged_max_leakage: float = 0.02,
 ) -> list[VerificationResult]:
     """Run the standard fluid-only verification suite."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -401,6 +472,14 @@ def run_fluid_verification(
             re,
             u_max,
             particle_solid_min_reduction,
+        ),
+        verify_near_clogged_solid_boundary_suppresses_flux(
+            nx,
+            ny,
+            max(steps // 3, 1),
+            re,
+            u_max,
+            near_clogged_max_leakage,
         ),
         verify_immersed_boundary_particle_load(
             nx,
