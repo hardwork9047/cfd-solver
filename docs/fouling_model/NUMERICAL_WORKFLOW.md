@@ -100,6 +100,8 @@ The current suite checks:
 - flux balance around a fixed cylinder,
 - target maximum-velocity control,
 - flux reduction when a DEM particle is imposed as a solid boundary.
+- hydrodynamic load generation when a particle is represented by the immersed
+  boundary method.
 
 These are not final validation of membrane fouling, but they catch the most
 important numerical failures before running large sweeps.
@@ -131,7 +133,35 @@ Use JSON configs to keep parameter sweeps reproducible:
 ```bash
 src/bin/run_lbm_dem_config_sweep.py src/bin/lbm_dem_sweep_example.json --dry-run
 src/bin/run_lbm_dem_config_sweep.py src/bin/lbm_dem_sweep_example.json
+src/bin/run_lbm_dem_config_sweep.py src/bin/lbm_dem_factor_sweep_example.json --dry-run
 ```
 
 The runner writes logs and `status.tsv` under
 `src/results/run_lbm_dem/config_sweeps/<timestamp>/`.
+
+Two config styles are supported:
+
+- `cases`: explicitly list named cases.
+- `factors`: define lists of values and let the runner expand the Cartesian
+  product into cases.
+
+After a sweep, summarize all available run directories with:
+
+```bash
+src/bin/summarize_lbm_dem_results.py --root src/results/run_lbm_dem
+```
+
+## 5. Flow Conditions
+
+Use `--flow-condition` to make the intended boundary/control condition explicit.
+
+- `fixed-pressure`: keeps the body force fixed.  This is closest to a fixed
+  pressure-gradient calculation.  If fouling blocks the channel, the permeate
+  flux can decline.
+- `target-max-velocity`: adjusts the body force to keep the maximum fluid speed
+  near `--u-max`.  This is useful for fair geometry comparisons at a controlled
+  velocity scale, but the changing drive force must be interpreted as an
+  imposed control action.
+
+The older `--flow-control` / `--no-flow-control` flags are still accepted for
+backward compatibility, but `--flow-condition` is preferred for new sweeps.

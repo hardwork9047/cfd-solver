@@ -24,6 +24,7 @@ def main() -> int:
     parser.add_argument("--flux-tol", type=float, default=0.05)
     parser.add_argument("--control-tol", type=float, default=0.20)
     parser.add_argument("--particle-solid-min-reduction", type=float, default=0.02)
+    parser.add_argument("--ibm-min-force", type=float, default=1e-8)
     args = parser.parse_args()
 
     output_dir = program_results_dir(__file__, datetime.now().strftime("run_%Y%m%d_%H%M%S"))
@@ -37,6 +38,7 @@ def main() -> int:
         flux_tol=args.flux_tol,
         control_tol=args.control_tol,
         particle_solid_min_reduction=args.particle_solid_min_reduction,
+        ibm_min_force=args.ibm_min_force,
         output_dir=output_dir,
     )
     write_verification_outputs(results, output_dir)

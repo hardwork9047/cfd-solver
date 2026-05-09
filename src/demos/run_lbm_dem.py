@@ -47,6 +47,11 @@ parser.add_argument("--flow-control", action=argparse.BooleanOptionalAction,
                     default=True,
                     help="Adjust drive force to keep max fluid speed near --u-max "
                          "(default: enabled)")
+parser.add_argument("--flow-condition",
+                    choices=["fixed-pressure", "target-max-velocity"],
+                    default=None,
+                    help="Explicit flow boundary/control condition. Overrides "
+                         "--flow-control when set")
 parser.add_argument("--flow-control-gain", type=float, default=0.2,
                     help="Relaxation gain for max-speed flow control (default: 0.2)")
 parser.add_argument("--fluid-method",
@@ -186,6 +191,11 @@ NX              = args.nx    # 格子幅
 NY              = args.ny     # 格子高さ
 RE              = args.reynolds_number  # 粒子径基準 Reynolds 数
 U_MAX           = args.u_max   # 目標最大流速 (格子単位)
+FLOW_CONDITION  = (
+    args.flow_condition
+    if args.flow_condition is not None
+    else ("target-max-velocity" if args.flow_control else "fixed-pressure")
+)
 DEFAULT_N_PARTICLES = 40 # 粒子数 (分率未指定時)
 RADIUS          = args.particle_radius    # 粒子平均半径 (格子単位)
 REYNOLDS_LENGTH = 2.0 * RADIUS  # 代表長さ: 粒子径
@@ -330,6 +340,7 @@ def _write_metadata(path: Path, sim: LBMDEMSolver | None = None) -> None:
             "reynolds_number": RE,
             "target_u_max": U_MAX,
             "reynolds_length": REYNOLDS_LENGTH,
+            "flow_condition": FLOW_CONDITION,
             "fluid_method": args.fluid_method,
             "particle_method": args.particle_method,
             "particle_fluid_coupling": args.particle_fluid_coupling,
@@ -662,7 +673,7 @@ print(
     "Flow control: "
     + (
         f"target max velocity (gain={args.flow_control_gain:.2f})"
-        if args.flow_control
+        if FLOW_CONDITION == "target-max-velocity"
         else "fixed pressure/body force"
     )
 )
@@ -695,7 +706,7 @@ sim = FastLBMDEM(
     nx=NX, ny=NY,
     Re=RE, u_max=U_MAX,
     reynolds_length=REYNOLDS_LENGTH,
-    flow_control="target_max_velocity" if args.flow_control else "fixed_pressure",
+    flow_control="target_max_velocity" if FLOW_CONDITION == "target-max-velocity" else "fixed_pressure",
     flow_control_gain=args.flow_control_gain,
     fluid_method=args.fluid_method,
     particle_method=args.particle_method,

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import subprocess
 import sys
@@ -65,9 +66,42 @@ def _load_config(path: Path) -> dict[str, Any]:
         config = json.load(handle)
     if not isinstance(config, dict):
         raise ValueError("configuration root must be a JSON object")
-    if not isinstance(config.get("cases"), list):
-        raise ValueError("configuration must contain a cases list")
+    if "cases" in config and not isinstance(config.get("cases"), list):
+        raise ValueError("cases must be a list")
+    if "factors" in config and not isinstance(config.get("factors"), dict):
+        raise ValueError("factors must be an object")
+    if "cases" not in config and "factors" not in config:
+        raise ValueError("configuration must contain cases or factors")
     return config
+
+
+def _factor_cases(config: dict[str, Any]) -> list[dict[str, Any]]:
+    factors = config.get("factors", {})
+    if not factors:
+        return []
+    factor_names = list(factors.keys())
+    factor_values: list[list[Any]] = []
+    for name in factor_names:
+        values = factors[name]
+        if not isinstance(values, list) or not values:
+            raise ValueError(f"factor {name!r} must be a non-empty list")
+        factor_values.append(values)
+
+    cases: list[dict[str, Any]] = []
+    for combo in itertools.product(*factor_values):
+        args = dict(zip(factor_names, combo))
+        label_parts = []
+        for name, value in args.items():
+            safe_value = str(value).replace("/", "_").replace(" ", "_").replace(".", "p")
+            label_parts.append(f"{name}_{safe_value}")
+        cases.append({"name": "__".join(label_parts), "args": args})
+    return cases
+
+
+def _all_cases(config: dict[str, Any]) -> list[dict[str, Any]]:
+    cases = list(config.get("cases", []))
+    cases.extend(_factor_cases(config))
+    return cases
 
 
 def _case_command(config: dict[str, Any], case: dict[str, Any]) -> list[str]:
@@ -102,15 +136,19 @@ def main() -> int:
     log_root.mkdir(parents=True, exist_ok=True)
     status_path = log_root / "status.tsv"
 
+    cases = _all_cases(config)
+    if not cases:
+        raise ValueError("configuration expanded to zero cases")
+
     failures = 0
-    for idx, case in enumerate(config["cases"], start=1):
+    for idx, case in enumerate(cases, start=1):
         if not isinstance(case, dict):
             raise ValueError("each case must be a JSON object")
         name = str(case.get("name", f"case_{idx:03d}"))
         command = _case_command(config, case)
         log_file = log_root / f"{idx:03d}_{name}.log"
         quoted = " ".join(subprocess.list2cmdline([part]) for part in command)
-        print(f"[{idx}/{len(config['cases'])}] {name}")
+        print(f"[{idx}/{len(cases)}] {name}")
         print(f"  {quoted}")
         if args.dry_run:
             continue

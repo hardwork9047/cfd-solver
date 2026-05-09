@@ -237,6 +237,47 @@ def verify_particle_solid_boundary_reduces_flux(
     )
 
 
+def verify_immersed_boundary_particle_load(
+    nx: int,
+    ny: int,
+    steps: int,
+    re: float,
+    u_max: float,
+    min_force: float,
+) -> VerificationResult:
+    """Check that IBM produces a hydrodynamic load on a fixed particle."""
+    sim = FastLBMDEM(
+        nx=nx,
+        ny=ny,
+        Re=re,
+        u_max=u_max,
+        reynolds_length=float(ny),
+        flow_control="fixed_pressure",
+        n_particles=1,
+        particle_radius=max(2.0, 0.14 * ny),
+        gravity=0.0,
+        particle_fluid_coupling="immersed_boundary",
+        ibm_stiffness=1.0,
+        ibm_marker_spacing=1.0,
+        seed=15,
+    )
+    sim.pos[:] = np.array([[0.5 * nx, 0.5 * ny]])
+    sim.vel[:] = 0.0
+    sim.omega_p[:] = 0.0
+    sim.advance(steps)
+    force_mag = float(np.linalg.norm(sim.ibm_forces_p[0])) if sim.n_p else 0.0
+    return VerificationResult(
+        name="immersed_boundary_particle_load",
+        passed=force_mag >= min_force,
+        metric=force_mag,
+        tolerance=min_force,
+        details=(
+            "Magnitude of the particle reaction force from direct-forcing IBM "
+            "for a stationary particle in pressure-driven channel flow."
+        ),
+    )
+
+
 def run_fluid_verification(
     *,
     nx: int,
@@ -248,6 +289,7 @@ def run_fluid_verification(
     flux_tol: float,
     control_tol: float,
     particle_solid_min_reduction: float,
+    ibm_min_force: float,
     output_dir: Path,
 ) -> list[VerificationResult]:
     """Run the standard fluid-only verification suite."""
@@ -263,6 +305,14 @@ def run_fluid_verification(
             re,
             u_max,
             particle_solid_min_reduction,
+        ),
+        verify_immersed_boundary_particle_load(
+            nx,
+            ny,
+            max(steps // 3, 1),
+            re,
+            u_max,
+            ibm_min_force,
         ),
     ]
 
