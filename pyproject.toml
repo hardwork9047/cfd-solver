@@ -56,6 +56,7 @@ packages = [
 python = ">=3.11,<4.0"
 numpy = ">=1.26.0"
 matplotlib = ">=3.8.0"
+numba = "^0.65.1"
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=8.0.0"

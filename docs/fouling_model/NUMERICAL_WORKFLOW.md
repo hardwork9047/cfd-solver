@@ -115,6 +115,18 @@ python src/demos/run_lbm_dem.py \
   --output-profile analysis
 ```
 
+To measure the backend speed on the local machine, run:
+
+```bash
+poetry run python src/bin/benchmark_lbm_accelerators.py
+```
+
+On the 180 x 70 fixed-cylinder benchmark run on 2026-05-09, the compiled Numba
+backend reached 1093 median steps/s versus 315 median steps/s for the NumPy
+path after compilation warmup, a 3.47x speedup.  The first Numba call includes
+JIT compilation overhead, so short runs should be interpreted separately from
+long production runs.
+
 ## 2. Verification
 
 Use the production solver path for verification:

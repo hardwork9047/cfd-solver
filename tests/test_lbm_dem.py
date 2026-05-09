@@ -436,3 +436,32 @@ def test_fast_solver_matches_base_solver_fluid_fields_without_particles():
 
     for base_field, fast_field in zip(base_fields, fast_fields):
         np.testing.assert_allclose(fast_field, base_field, rtol=1e-12, atol=1e-12)
+
+
+def test_numba_fluid_accelerator_matches_numpy_when_available():
+    """The compiled LBM path should remain numerically close to the NumPy path."""
+    kwargs = dict(
+        nx=24,
+        ny=16,
+        Re=25.0,
+        u_max=0.02,
+        reynolds_length=6.0,
+        flow_control="fixed_pressure",
+        n_particles=1,
+        particle_radius=1.5,
+        gravity=0.0,
+        cylinders=[(9.0, 8.0, 2.0)],
+        seed=12,
+    )
+    numpy_sim = FastLBMDEM(**kwargs, fluid_accelerator="numpy")
+    numba_sim = FastLBMDEM(**kwargs, fluid_accelerator="numba")
+    if not numba_sim.uses_numba_lbm:
+        return
+    numpy_sim._delete_particles(np.ones(numpy_sim.n_p, dtype=bool))
+    numba_sim._delete_particles(np.ones(numba_sim.n_p, dtype=bool))
+
+    numpy_sim.advance(4)
+    numba_sim.advance(4)
+
+    for numpy_field, numba_field in zip(numpy_sim.get_fields(), numba_sim.get_fields()):
+        np.testing.assert_allclose(numba_field, numpy_field, rtol=1e-12, atol=1e-12)
