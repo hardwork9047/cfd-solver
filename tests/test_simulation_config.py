@@ -39,3 +39,28 @@ def test_simulation_config_writes_effective_arguments(tmp_path):
     assert payload["source"]["_source_path"] == "case.json"
     assert payload["effective_arguments"]["nx"] == 80
     assert payload["effective_arguments"]["ny"] == 20
+
+
+def test_simulation_config_accepts_structured_geometry_block(tmp_path):
+    """Research configs can define pore geometry without CLI-shaped keys."""
+    path = tmp_path / "case.json"
+    path.write_text(
+        json.dumps(
+            {
+                "geometry": {
+                    "cylinders": [
+                        {"x": 34, "y": 13, "radius": 4.0},
+                        {"x": 54, "y": 25, "radius": 4.5},
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = SimulationConfig.from_json(path)
+
+    assert config.argparse_defaults()["cylinder_spec"] == [
+        [34, 13, 4.0],
+        [54, 25, 4.5],
+    ]

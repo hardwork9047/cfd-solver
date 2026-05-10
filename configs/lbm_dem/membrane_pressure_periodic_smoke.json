@@ -13,13 +13,15 @@
   "n_particles": 20,
   "particle_radius": 1.0,
   "radius_variation": 0.05,
-  "cylinder_spec": [
-    [34, 13, 4.0],
-    [34, 37, 4.0],
-    [54, 25, 4.5],
-    [74, 13, 3.8],
-    [74, 37, 3.8]
-  ],
+  "geometry": {
+    "cylinders": [
+      {"x": 34, "y": 13, "radius": 4.0},
+      {"x": 34, "y": 37, "radius": 4.0},
+      {"x": 54, "y": 25, "radius": 4.5},
+      {"x": 74, "y": 13, "radius": 3.8},
+      {"x": 74, "y": 37, "radius": 3.8}
+    ]
+  },
   "particle_fluid_coupling": "point_force",
   "fluid_accelerator": "auto",
   "compute_accelerator": "auto",

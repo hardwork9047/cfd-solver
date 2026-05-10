@@ -27,7 +27,7 @@ import numpy as np
 
 # パッケージを src/ から読み込む
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from cfd_dem_lbm import FastLBMDEM, LBMDEMSolver
+from cfd_dem_lbm import FastLBMDEM, LBMDEMSolver, PoreGeometry
 from cfd_dem_lbm.simulation_config import SimulationConfig
 from cfd.result_paths import program_results_dir
 
@@ -319,6 +319,8 @@ if args.cylinder:
     CYLINDERS.append((CYL_X, CYL_Y, CYL_R))
 if args.cylinder_spec is not None:
     CYLINDERS.extend((float(x), float(y), float(r)) for x, y, r in args.cylinder_spec)
+GEOMETRY = PoreGeometry.from_cylinders(CYLINDERS)
+CYLINDERS = GEOMETRY.as_tuples()
 CYLINDER = CYLINDERS[0] if CYLINDERS else None
 
 def _normalise_fraction(value: float | None) -> float | None:
@@ -330,14 +332,6 @@ def _normalise_fraction(value: float | None) -> float | None:
     if value <= 0.0 or value >= 1.0:
         parser.error("--particle-volume-fraction must be between 0 and 1, or 0 and 100%")
     return value
-
-
-def _water_area(nx: int, ny: int, cylinders: list[tuple[float, float, float]]) -> float:
-    """Approximate available water area in 2-D lattice units."""
-    area = float(nx * (ny - 2))
-    for _, _, radius in cylinders:
-        area -= float(np.pi * radius ** 2)
-    return max(area, 1.0)
 
 
 def _poiseuille_flow_rate(ny: int, u_max: float) -> float:
@@ -371,15 +365,16 @@ else:
     else:
         N_PARTICLES = max(
             1,
-            int(round(PARTICLE_VOLUME_FRACTION * _water_area(NX, NY, CYLINDERS) / expected_particle_area)),
+            int(
+                round(
+                    PARTICLE_VOLUME_FRACTION
+                    * GEOMETRY.water_area(NX, NY, wall_y=args.y_boundary == "wall")
+                    / expected_particle_area
+                )
+            ),
         )
 
-if len(CYLINDERS) > 1:
-    GEOMETRY_MODE = "multi_cylinder"
-elif len(CYLINDERS) == 1:
-    GEOMETRY_MODE = "cylinder"
-else:
-    GEOMETRY_MODE = "channel"
+GEOMETRY_MODE = GEOMETRY.mode_name()
 if args.particle_attraction:
     SURFACE_FORCE_MODE = "with_attraction"
 elif args.particle_repulsion:
@@ -730,33 +725,7 @@ def _write_cylinders_vtk(
     n_segments: int = 96,
 ) -> None:
     """Write fixed cylinders as polygonal discs for ParaView."""
-    points: list[tuple[float, float, float]] = []
-    polygons: list[list[int]] = []
-    for cx, cy, radius in cylinders:
-        start = len(points)
-        polygon = []
-        for seg in range(n_segments):
-            theta = 2.0 * np.pi * seg / n_segments
-            points.append((cx + radius * np.cos(theta), cy + radius * np.sin(theta), 0.0))
-            polygon.append(start + seg)
-        polygons.append(polygon)
-
-    with path.open("w", encoding="utf-8") as handle:
-        handle.write("# vtk DataFile Version 3.0\n")
-        handle.write("LBM-DEM fixed cylinders\n")
-        handle.write("ASCII\n")
-        handle.write("DATASET POLYDATA\n")
-        handle.write(f"POINTS {len(points)} float\n")
-        for x_pos, y_pos, z_pos in points:
-            handle.write(f"{_vtk_float(x_pos)} {_vtk_float(y_pos)} {_vtk_float(z_pos)}\n")
-        handle.write(f"POLYGONS {len(polygons)} {len(polygons) * (n_segments + 1)}\n")
-        for polygon in polygons:
-            handle.write(f"{len(polygon)} {' '.join(str(idx) for idx in polygon)}\n")
-        handle.write(f"CELL_DATA {len(polygons)}\n")
-        handle.write("SCALARS radius float 1\n")
-        handle.write("LOOKUP_TABLE default\n")
-        for _, _, radius in cylinders:
-            handle.write(f"{_vtk_float(radius)}\n")
+    PoreGeometry.from_cylinders(cylinders).write_vtk(path, n_segments=n_segments)
 
 
 def _write_pvd(path: Path, entries: list[tuple[int, Path]]) -> None:
@@ -883,21 +852,7 @@ def _section_mean(field: np.ndarray, solid: np.ndarray, x_idx: int) -> float:
 
 def _pressure_sections(cylinders: list[tuple[float, float, float]]) -> dict[str, int]:
     """Return standard pressure sampling sections for global and pore-local loss."""
-    if cylinders:
-        upstream_edge = min(cx - cr for cx, _, cr in cylinders)
-        downstream_edge = max(cx + cr for cx, _, cr in cylinders)
-        margin = max(2.0, 0.05 * NX)
-        upstream = int(np.floor(upstream_edge - margin))
-        downstream = int(np.ceil(downstream_edge + margin))
-    else:
-        upstream = int(0.25 * NX)
-        downstream = int(0.75 * NX)
-    return {
-        "inlet_x": 1,
-        "outlet_x": NX - 2,
-        "pore_upstream_x": int(np.clip(upstream, 1, NX - 2)),
-        "pore_downstream_x": int(np.clip(downstream, 1, NX - 2)),
-    }
+    return PoreGeometry.from_cylinders(cylinders).pressure_sections(NX)
 
 
 def _instability_reason(
@@ -1177,7 +1132,7 @@ sim = FastLBMDEM(
     repulsion_min_gap=args.repulsion_min_gap,
     porous_resistance=args.porous_resistance,
     porous_resistance_coeff=args.porous_resistance_coeff,
-    cylinders=CYLINDERS,
+    geometry=GEOMETRY,
     particle_source=args.particle_source.replace("-", "_"),
     source_volume_fraction=SOURCE_VOLUME_FRACTION,
 )

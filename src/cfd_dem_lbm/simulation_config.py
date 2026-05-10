@@ -31,6 +31,27 @@ def _normalise_value(value: Any) -> Any:
     return value
 
 
+def _normalise_geometry_cylinders(values: dict[str, Any]) -> dict[str, Any]:
+    """Allow structured geometry blocks while keeping argparse compatibility."""
+    payload = dict(values)
+    geometry = payload.pop("geometry", None)
+    if geometry is None or "cylinder_spec" in payload:
+        return payload
+    if not isinstance(geometry, dict):
+        raise ValueError("geometry must be an object when provided")
+    cylinders = geometry.get("cylinders")
+    if cylinders is None:
+        return payload
+    cylinder_spec = []
+    for item in cylinders:
+        if isinstance(item, dict):
+            cylinder_spec.append([item["x"], item["y"], item["radius"]])
+        else:
+            cylinder_spec.append(item)
+    payload["cylinder_spec"] = cylinder_spec
+    return payload
+
+
 @dataclass(frozen=True)
 class SimulationConfig:
     """A file-backed simulation configuration.
@@ -51,7 +72,8 @@ class SimulationConfig:
         *,
         source_path: str | None = None,
     ) -> "SimulationConfig":
-        return cls(values=_normalise_value(mapping), source_path=source_path)
+        values = _normalise_geometry_cylinders(_normalise_value(mapping))
+        return cls(values=values, source_path=source_path)
 
     @classmethod
     def from_json(cls, path: str | Path) -> "SimulationConfig":

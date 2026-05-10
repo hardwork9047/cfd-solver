@@ -94,6 +94,46 @@ The current architecture intentionally keeps run tracking file-based rather than
 using SQLite.  This keeps each result folder self-contained and easy to move,
 archive, or compare on another machine.
 
+## Maintainable Module Layout
+
+The production path is being moved toward a layered structure:
+
+```text
+configs/lbm_dem/*.json
+  -> SimulationConfig
+  -> run_lbm_dem.py / Runner
+  -> FastLBMDEM / LBMDEMSolver
+  -> DEMSolver, PoreGeometry, coupling and boundary helpers
+  -> Result artifacts under src/results/run_lbm_dem/
+```
+
+The intended responsibility split is:
+
+| Layer | Current module | Responsibility |
+|---|---|---|
+| Case definition | `configs/lbm_dem/` | Reusable geometry, physics, output, and backend settings |
+| Config loading | `src/cfd_dem_lbm/simulation_config.py` | Convert JSON config files into runner arguments |
+| Geometry | `src/cfd_dem_lbm/geometry.py` | Cylinder definitions, pore masks, pressure probe sections, cylinder VTK |
+| Runner | `src/demos/run_lbm_dem.py` | CLI, simulation execution, output orchestration |
+| Coupled solver | `src/cfd_dem_lbm/lbm_dem.py` | LBM-DEM time integration facade |
+| Particle solver | `src/cfd_dem_lbm/dem_solver.py` | DEM contact, wall/cylinder loads, surface interactions |
+| Fast path | `src/cfd_dem_lbm/fast_solver.py` | Cached solver variant used by production runs |
+
+New pore layouts should be implemented in `geometry.py` and referenced from
+JSON configs.  Legacy `--cylinder-spec X Y R` remains supported, but the
+preferred config style is:
+
+```json
+{
+  "geometry": {
+    "cylinders": [
+      {"x": 34, "y": 13, "radius": 4.0},
+      {"x": 54, "y": 25, "radius": 4.5}
+    ]
+  }
+}
+```
+
 Boundary modes:
 
 | Option | Meaning |

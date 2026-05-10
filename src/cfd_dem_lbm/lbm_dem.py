@@ -31,6 +31,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from cfd.result_paths import program_results_dir
 from .dem_solver import DEMSolver, PARTICLE_METHODS
+from .geometry import PoreGeometry
 
 try:  # Optional acceleration. The solver keeps a pure-NumPy/Python fallback.
     from numba import njit
@@ -479,28 +480,6 @@ class LBMDEMSolver:
                         search used for production runs.
     """
 
-    @staticmethod
-    def _normalise_cylinders(
-        cylinder: tuple | None,
-        cylinders: list[tuple[float, float, float]] | tuple[tuple[float, float, float], ...] | None,
-    ) -> list[tuple[float, float, float]]:
-        """Return validated fixed-cylinder definitions."""
-        items: list[tuple[float, float, float]] = []
-        if cylinder is not None:
-            items.append(cylinder)
-        if cylinders is not None:
-            items.extend(cylinders)
-
-        normalised: list[tuple[float, float, float]] = []
-        for item in items:
-            if len(item) != 3:
-                raise ValueError("each cylinder must be (x, y, radius)")
-            cx, cy, cr = (float(item[0]), float(item[1]), float(item[2]))
-            if cr <= 0.0:
-                raise ValueError("cylinder radius must be positive")
-            normalised.append((cx, cy, cr))
-        return normalised
-
     def __init__(
         self,
         nx: int = 200,
@@ -547,6 +526,7 @@ class LBMDEMSolver:
         repulsion_min_gap: float = 0.05,
         porous_resistance: bool = False,
         porous_resistance_coeff: float = 0.0,
+        geometry: PoreGeometry | None = None,
         cylinder: tuple | None = None,
         cylinders: list[tuple[float, float, float]] | tuple[tuple[float, float, float], ...] | None = None,
         particle_source: str = "initial",
@@ -641,7 +621,13 @@ class LBMDEMSolver:
         self.damping = damping
         self.dem_substeps = dem_substeps
         self.step_count = 0
-        self.cylinders = self._normalise_cylinders(cylinder, cylinders)
+        if geometry is not None and (cylinder is not None or cylinders is not None):
+            raise ValueError("geometry cannot be combined with legacy cylinder/cylinders inputs")
+        self.geometry = geometry or PoreGeometry.from_legacy_inputs(
+            cylinder=cylinder,
+            cylinders=cylinders,
+        )
+        self.cylinders = self.geometry.as_tuples()
         self.cylinder = self.cylinders[0] if self.cylinders else None
         self.rolling_friction = rolling_friction
         self.sliding_friction = sliding_friction
@@ -775,16 +761,12 @@ class LBMDEMSolver:
             self.fixed_solid[:, 0] = True
             self.fixed_solid[:, -1] = True
 
-        # Solid nodes: fixed cylinders
-        if self.cylinders:
-            ix = np.arange(nx)
-            iy = np.arange(ny)
-            XX, YY = np.meshgrid(ix, iy, indexing="ij")
-            for cx, cy, cr in self.cylinders:
-                dy = YY - cy
-                if self.y_boundary == "periodic":
-                    dy = dy - self.ny * np.rint(dy / self.ny)
-                self.fixed_solid |= (XX - cx) ** 2 + dy**2 <= cr**2
+        # Solid nodes: fixed pore geometry.
+        self.fixed_solid |= self.geometry.cylinder_solid_mask(
+            nx,
+            ny,
+            y_boundary=self.y_boundary,
+        )
         self.particle_solid = np.zeros((nx, ny), dtype=bool)
         self.solid = self.fixed_solid.copy()
 
