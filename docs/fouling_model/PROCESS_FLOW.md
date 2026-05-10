@@ -5,6 +5,9 @@ simulations.  It focuses on the standard production path using JSON
 configuration files, periodic transverse boundaries, pressure inlet/outlet, and
 fixed-cylinder pore geometry.
 
+For the numerical algorithms executed inside the solver loop, see
+`docs/fouling_model/ALGORITHMS.md`.
+
 ## Standard Entry Point
 
 The recommended command path is:

@@ -4,6 +4,8 @@ This document summarizes the current architecture of the LBM-DEM membrane foulin
 
 For the execution sequence from config file to result artifacts, see
 `docs/fouling_model/PROCESS_FLOW.md`.
+For the numerical algorithms used inside the solver, see
+`docs/fouling_model/ALGORITHMS.md`.
 
 ## Purpose
 
