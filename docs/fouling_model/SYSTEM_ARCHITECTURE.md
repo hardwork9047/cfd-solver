@@ -2,6 +2,9 @@
 
 This document summarizes the current architecture of the LBM-DEM membrane fouling simulation system.
 
+For the execution sequence from config file to result artifacts, see
+`docs/fouling_model/PROCESS_FLOW.md`.
+
 ## Purpose
 
 The current system is designed to evaluate how suspended particles are transported, retained, attached, repelled, or passed through idealized membrane-pore geometries represented by fixed cylinders. The main target is systematic membrane fouling analysis using repeatable simulations, parameter sweeps, time-series metrics, and visualization outputs.
