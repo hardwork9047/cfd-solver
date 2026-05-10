@@ -19,11 +19,13 @@ from .dem_solver import DEMSolver
 from .fast_solver import FastLBMDEM
 from .fluid_verification import VerificationResult, run_fluid_verification, write_verification_outputs
 from .lbm_dem import LBMDEMSolver, plot_fields, plot_particles
+from .simulation_config import SimulationConfig
 
 __all__ = [
     "DEMSolver",
     "FastLBMDEM",
     "LBMDEMSolver",
+    "SimulationConfig",
     "VerificationResult",
     "plot_fields",
     "plot_particles",

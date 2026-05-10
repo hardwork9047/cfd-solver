@@ -28,13 +28,31 @@ import numpy as np
 # パッケージを src/ から読み込む
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from cfd_dem_lbm import FastLBMDEM, LBMDEMSolver
+from cfd_dem_lbm.simulation_config import SimulationConfig
 from cfd.result_paths import program_results_dir
 
 # ---------------------------------------------------------------------------
 # コマンドライン引数
 # ---------------------------------------------------------------------------
 
-parser = argparse.ArgumentParser(description="LBM-DEM coupled simulation runner")
+bootstrap_parser = argparse.ArgumentParser(add_help=False)
+bootstrap_parser.add_argument(
+    "--config",
+    type=str,
+    default=None,
+    help="JSON file with run defaults. Explicit CLI options override config values.",
+)
+bootstrap_args, _ = bootstrap_parser.parse_known_args()
+CONFIG = (
+    SimulationConfig.from_json(bootstrap_args.config)
+    if bootstrap_args.config is not None
+    else SimulationConfig()
+)
+
+parser = argparse.ArgumentParser(
+    description="LBM-DEM coupled simulation runner",
+    parents=[bootstrap_parser],
+)
 parser.add_argument("--nx", type=int, default=180,
                     help="Grid width in lattice nodes (default: 180)")
 parser.add_argument("--ny", type=int, default=70,
@@ -196,6 +214,7 @@ parser.add_argument("--max-stable-speed", type=float, default=1.0,
                     help="Abort and mark run failed if max fluid or particle speed exceeds this value")
 parser.add_argument("--max-stable-pressure", type=float, default=10.0,
                     help="Abort and mark run failed if absolute pressure exceeds this value")
+parser.set_defaults(**CONFIG.argparse_defaults())
 args = parser.parse_args()
 if args.particle_attraction and args.particle_repulsion:
     parser.error("--particle-attraction and --particle-repulsion are mutually exclusive")
@@ -564,6 +583,37 @@ def _write_metadata(path: Path, sim: LBMDEMSolver | None = None) -> None:
             "dimensionless_groups": sim.dimensionless_groups(),
         }
     path.write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _write_standard_run_artifacts(out_dir: Path, sim: LBMDEMSolver | None = None) -> None:
+    """Write small, stable files that identify how this run was produced."""
+    CONFIG.write_effective(out_dir / "config.json", vars(args))
+    git_commit = _git_value(["rev-parse", "HEAD"]) or "unknown"
+    (out_dir / "git_commit.txt").write_text(git_commit + "\n", encoding="utf-8")
+    environment = {
+        "schema_version": 1,
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "python": {
+            "version": sys.version,
+            "executable": sys.executable,
+            "platform": platform.platform(),
+        },
+        "git": {
+            "commit": git_commit,
+            "branch": _git_value(["branch", "--show-current"]),
+            "status_short": _git_value(["status", "--short"]) or "",
+        },
+        "accelerators": {
+            "fluid_accelerator": args.fluid_accelerator,
+            "compute_accelerator": args.compute_accelerator,
+            "uses_numba_lbm": bool(sim.uses_numba_lbm) if sim is not None else None,
+            "uses_numba_compute": bool(sim.uses_numba_compute) if sim is not None else None,
+        },
+    }
+    (out_dir / "environment.json").write_text(
+        json.dumps(environment, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
 
 
 def _vtk_float(value: float) -> str:
@@ -1133,6 +1183,7 @@ sim = FastLBMDEM(
 )
 metadata_path = OUT_DIR / "metadata.json"
 _write_metadata(metadata_path, sim)
+_write_standard_run_artifacts(OUT_DIR, sim)
 _write_run_status("running", extra={"metadata": str(metadata_path)})
 print(f"Metadata saved: {metadata_path}")
 

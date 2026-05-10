@@ -63,6 +63,37 @@ Flow control modes:
 
 The Reynolds number in `run_lbm_dem.py` is defined using particle diameter as representative length and maximum flow velocity as representative velocity.
 
+## Run Configuration And Reproducibility
+
+Simulation cases can be defined either with CLI arguments or with JSON config
+files.  The preferred research workflow is to keep reusable cases under:
+
+```text
+configs/lbm_dem/
+```
+
+For example:
+
+```bash
+poetry run python src/demos/run_lbm_dem.py \
+  --config configs/lbm_dem/membrane_pressure_periodic_smoke.json
+```
+
+Explicit CLI arguments override values loaded from the config file.  Every run
+writes a small reproducibility bundle into its result directory:
+
+| File | Purpose |
+|---|---|
+| `config.json` | Source config plus final effective arguments |
+| `metadata.json` | Solver, physics, output, and command metadata |
+| `environment.json` | Python, platform, git, and accelerator information |
+| `git_commit.txt` | Commit hash used for the run |
+| `run_status.json` | Running/completed/failed state for sweep recovery |
+
+The current architecture intentionally keeps run tracking file-based rather than
+using SQLite.  This keeps each result folder self-contained and easy to move,
+archive, or compare on another machine.
+
 Boundary modes:
 
 | Option | Meaning |

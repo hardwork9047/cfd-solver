@@ -1,0 +1,33 @@
+{
+  "nx": 100,
+  "ny": 50,
+  "total_steps": 200,
+  "snapshot_every": 100,
+  "warmup_steps": 100,
+  "y_boundary": "periodic",
+  "streamwise_boundary": "pressure",
+  "pressure_drop": 1e-5,
+  "rho_out": 1.0,
+  "reynolds_number": 20,
+  "particle_source": "left-inlet",
+  "n_particles": 20,
+  "particle_radius": 1.0,
+  "radius_variation": 0.05,
+  "cylinder_spec": [
+    [34, 13, 4.0],
+    [34, 37, 4.0],
+    [54, 25, 4.5],
+    [74, 13, 3.8],
+    [74, 37, 3.8]
+  ],
+  "particle_fluid_coupling": "point_force",
+  "fluid_accelerator": "auto",
+  "compute_accelerator": "auto",
+  "snapshot_storage": "none",
+  "paraview_output": true,
+  "paraview_every": 0,
+  "no_video": true,
+  "max_stable_speed": 0.5,
+  "max_stable_pressure": 2.0,
+  "result_tag": "membrane_pressure_periodic_config_smoke"
+}
