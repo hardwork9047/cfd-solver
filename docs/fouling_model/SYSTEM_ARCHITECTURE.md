@@ -63,6 +63,23 @@ Flow control modes:
 
 The Reynolds number in `run_lbm_dem.py` is defined using particle diameter as representative length and maximum flow velocity as representative velocity.
 
+Boundary modes:
+
+| Option | Meaning |
+|---|---|
+| `--y-boundary wall` | No-slip top and bottom walls |
+| `--y-boundary periodic` | Periodic transverse boundary for membrane-unit-cell calculations |
+| `--streamwise-boundary periodic-force` | Periodic x streaming with body-force pressure-gradient approximation |
+| `--streamwise-boundary pressure` | Left pressure inlet and right pressure outlet using density boundary conditions |
+
+For pressure inlet/outlet runs, the pressure difference is specified with:
+
+```bash
+--pressure-drop 1e-4 --rho-out 1.0
+```
+
+Internally, `p = cs^2 rho`, so the inlet density is computed from the requested pressure drop. This mode is intended for filtration-style calculations where left and right should represent upstream and downstream reservoirs. The older `periodic-force` mode remains useful for fast periodic-channel verification and screening.
+
 ## DEM Particle Solver
 
 Particle mechanics are handled by the shared DEM solver in:

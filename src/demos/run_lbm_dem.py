@@ -60,6 +60,18 @@ parser.add_argument("--flow-condition",
                          "--flow-control when set")
 parser.add_argument("--flow-control-gain", type=float, default=0.2,
                     help="Relaxation gain for max-speed flow control (default: 0.2)")
+parser.add_argument("--y-boundary",
+                    choices=["wall", "periodic"],
+                    default="wall",
+                    help="Boundary condition in the transverse y direction (default: wall)")
+parser.add_argument("--streamwise-boundary",
+                    choices=["periodic-force", "pressure"],
+                    default="periodic-force",
+                    help="Streamwise x boundary: periodic with body force, or pressure inlet/outlet")
+parser.add_argument("--pressure-drop", type=float, default=1e-4,
+                    help="Pressure drop p_in-p_out for --streamwise-boundary pressure")
+parser.add_argument("--rho-out", type=float, default=1.0,
+                    help="Outlet density for pressure inlet/outlet boundary (default: 1.0)")
 parser.add_argument("--fluid-method",
                     choices=["lbm-bgk-guo", "lbm-trt-guo"],
                     default="lbm-bgk-guo",
@@ -196,6 +208,10 @@ if args.u_max < 0.0:
     parser.error("--u-max must be non-negative")
 if not (0.0 < args.flow_control_gain <= 1.0):
     parser.error("--flow-control-gain must be in the range (0, 1]")
+if args.pressure_drop < 0.0:
+    parser.error("--pressure-drop must be non-negative")
+if args.rho_out <= 0.0:
+    parser.error("--rho-out must be positive")
 if args.ibm_stiffness <= 0.0:
     parser.error("--ibm-stiffness must be positive")
 if args.ibm_marker_spacing <= 0.0:
@@ -407,6 +423,10 @@ def _write_run_status(
             "target_u_max": U_MAX,
             "total_steps": TOTAL_STEPS,
             "snapshot_every": SNAPSHOT_EVERY,
+            "y_boundary": args.y_boundary,
+            "streamwise_boundary": args.streamwise_boundary,
+            "pressure_drop": args.pressure_drop,
+            "rho_out": args.rho_out,
             "particle_fluid_coupling": args.particle_fluid_coupling,
             "fluid_accelerator": args.fluid_accelerator,
             "compute_accelerator": args.compute_accelerator,
@@ -482,6 +502,10 @@ def _write_metadata(path: Path, sim: LBMDEMSolver | None = None) -> None:
             "target_u_max": U_MAX,
             "reynolds_length": REYNOLDS_LENGTH,
             "flow_condition": FLOW_CONDITION,
+            "y_boundary": args.y_boundary,
+            "streamwise_boundary": args.streamwise_boundary,
+            "pressure_drop": args.pressure_drop,
+            "rho_out": args.rho_out,
             "fluid_method": args.fluid_method,
             "fluid_accelerator": args.fluid_accelerator,
             "compute_accelerator": args.compute_accelerator,
@@ -1027,6 +1051,7 @@ print(
     )
 )
 print(f"Fluid method: {args.fluid_method}")
+print(f"Boundary condition: y={args.y_boundary}, x={args.streamwise_boundary}")
 print(f"Fluid accelerator: {args.fluid_accelerator}")
 print(f"Compute accelerator: {args.compute_accelerator}")
 print(f"Particle method: {args.particle_method}")
@@ -1065,6 +1090,10 @@ sim = FastLBMDEM(
     reynolds_length=REYNOLDS_LENGTH,
     flow_control=FLOW_CONTROL_MAP[FLOW_CONDITION],
     flow_control_gain=args.flow_control_gain,
+    y_boundary=args.y_boundary,
+    streamwise_boundary=args.streamwise_boundary.replace("-", "_"),
+    pressure_drop=args.pressure_drop,
+    rho_out=args.rho_out,
     fluid_method=args.fluid_method,
     fluid_accelerator=args.fluid_accelerator,
     compute_accelerator=args.compute_accelerator,

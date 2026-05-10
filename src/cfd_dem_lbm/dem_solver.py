@@ -287,7 +287,11 @@ class DEMSolver:
             for i, j in sim._particle_pair_candidates():
                 self._apply_particle_pair_loads(i, j, forces, torques)
 
-        if sim.uses_numba_compute and _wall_cylinder_loads_numba is not None:
+        if (
+            sim.uses_numba_compute
+            and _wall_cylinder_loads_numba is not None
+            and sim.y_boundary != "periodic"
+        ):
             contact_model_id = 1 if self.contact_model == "dem-linear" else 0
             cylinders = np.asarray(sim.cylinders, dtype=np.float64).reshape((-1, 3))
             _wall_cylinder_loads_numba(
@@ -331,6 +335,7 @@ class DEMSolver:
     ) -> None:
         sim = self.sim
         dp = sim.pos[j] - sim.pos[i]
+        dp[1] = sim._periodic_y_delta(float(dp[1]))
         dist = float(np.linalg.norm(dp))
         min_dist = sim.radii[i] + sim.radii[j]
         if dist <= 1e-10:
@@ -393,6 +398,8 @@ class DEMSolver:
 
     def _apply_wall_loads(self, forces: np.ndarray, torques: np.ndarray) -> None:
         sim = self.sim
+        if sim.y_boundary == "periodic":
+            return
         for i in range(sim.n_p):
             wall_bot = sim.radii[i] + 0.5
             wall_top = sim.ny - 1.5 - sim.radii[i]
@@ -416,7 +423,7 @@ class DEMSolver:
         for cx, cy, cr in sim.cylinders:
             for i in range(sim.n_p):
                 dx = sim.pos[i, 0] - cx
-                dy = sim.pos[i, 1] - cy
+                dy = sim._periodic_y_delta(sim.pos[i, 1] - cy)
                 dist = float(np.hypot(dx, dy))
                 min_dist = cr + sim.radii[i]
                 if dist > 1e-10:

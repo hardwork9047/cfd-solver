@@ -66,6 +66,8 @@ PARTICLE_FLUID_COUPLINGS = ("point_force", "solid_boundary", "immersed_boundary"
 FLUID_ACCELERATORS = ("numpy", "numba", "auto")
 COMPUTE_ACCELERATORS = ("numpy", "numba", "auto")
 PARTICLE_SEARCH_METHODS = ("cell_list", "all_pairs")
+Y_BOUNDARIES = ("wall", "periodic")
+STREAMWISE_BOUNDARIES = ("periodic_force", "pressure")
 
 
 if njit is not None:  # pragma: no cover - exercised only when numba is installed
@@ -509,6 +511,10 @@ class LBMDEMSolver:
         fluid_accelerator: str = "numpy",
         compute_accelerator: str = "auto",
         particle_search: str = "cell_list",
+        y_boundary: str = "wall",
+        streamwise_boundary: str = "periodic_force",
+        pressure_drop: float = 1e-4,
+        rho_out: float = 1.0,
         spatial_dimension: int = 2,
         ibm_stiffness: float = 1.0,
         ibm_marker_spacing: float = 1.0,
@@ -575,6 +581,14 @@ class LBMDEMSolver:
             raise ValueError(f"compute_accelerator must be one of {COMPUTE_ACCELERATORS}")
         if particle_search not in PARTICLE_SEARCH_METHODS:
             raise ValueError(f"particle_search must be one of {PARTICLE_SEARCH_METHODS}")
+        if y_boundary not in Y_BOUNDARIES:
+            raise ValueError(f"y_boundary must be one of {Y_BOUNDARIES}")
+        if streamwise_boundary not in STREAMWISE_BOUNDARIES:
+            raise ValueError(f"streamwise_boundary must be one of {STREAMWISE_BOUNDARIES}")
+        if rho_out <= 0.0:
+            raise ValueError("rho_out must be positive")
+        if pressure_drop < 0.0:
+            raise ValueError("pressure_drop must be non-negative")
         if spatial_dimension != 2:
             raise ValueError("only spatial_dimension=2 is currently implemented")
         if ibm_stiffness <= 0.0:
@@ -597,6 +611,11 @@ class LBMDEMSolver:
         self.fluid_accelerator = fluid_accelerator
         self.compute_accelerator = compute_accelerator
         self.particle_search = particle_search
+        self.y_boundary = y_boundary
+        self.streamwise_boundary = streamwise_boundary
+        self.rho_out = rho_out
+        self.rho_in = rho_out + pressure_drop / CS2
+        self.pressure_drop = pressure_drop
         self.spatial_dimension = spatial_dimension
         self.uses_numba_lbm = (
             fluid_accelerator == "numba"
@@ -651,7 +670,7 @@ class LBMDEMSolver:
         self._c_int = C.astype(np.int64)
         self._opposite = np.asarray(OPPOSITE, dtype=np.int64)
         # Body force to sustain Poiseuille flow: ∂p/∂x = -8 μ u_max / ny²
-        self.F_drive = 8.0 * self.nu * u_max / ny**2
+        self.F_drive = 0.0 if streamwise_boundary == "pressure" else 8.0 * self.nu * u_max / ny**2
         self.initial_F_drive = self.F_drive
 
         # Per-particle radii (uniform ±radius_variation around r_p)
@@ -665,7 +684,7 @@ class LBMDEMSolver:
 
         # Per-particle masses (2-D disc: area × density_ratio)
         self.masses = density_ratio * np.pi * self.radii**2
-        self.mass_p = float(np.mean(self.masses))  # representative scalar (kept for display)
+        self.mass_p = float(np.mean(self.masses)) if n_particles else 0.0  # representative scalar
         self.inertias = 0.5 * self.masses * self.radii**2
 
         print("LBM-DEM Coupled Solver")
@@ -679,6 +698,9 @@ class LBMDEMSolver:
             f"flow_control={flow_control}"
         )
         print(f"  Fluid method : {fluid_method}")
+        print(f"  Boundaries   : y={y_boundary}, x={streamwise_boundary}")
+        if streamwise_boundary == "pressure":
+            print(f"  Pressure BC  : rho_in={self.rho_in:.6g}, rho_out={self.rho_out:.6g}")
         print(
             f"  LBM accel.   : {fluid_accelerator}"
             f"{' (numba active)' if self.uses_numba_lbm else ' (numpy path)'}"
@@ -741,11 +763,12 @@ class LBMDEMSolver:
             for i in range(Q)
         ]
 
-        # Solid nodes: top/bottom walls and fixed cylinders.  Moving particle
+        # Solid nodes: optional top/bottom walls and fixed cylinders.  Moving particle
         # solids are overlaid in solid-boundary coupling mode.
         self.fixed_solid = np.zeros((nx, ny), dtype=bool)
-        self.fixed_solid[:, 0] = True
-        self.fixed_solid[:, -1] = True
+        if self.y_boundary == "wall":
+            self.fixed_solid[:, 0] = True
+            self.fixed_solid[:, -1] = True
 
         # Solid nodes: fixed cylinders
         if self.cylinders:
@@ -753,7 +776,10 @@ class LBMDEMSolver:
             iy = np.arange(ny)
             XX, YY = np.meshgrid(ix, iy, indexing="ij")
             for cx, cy, cr in self.cylinders:
-                self.fixed_solid |= (XX - cx) ** 2 + (YY - cy) ** 2 <= cr**2
+                dy = YY - cy
+                if self.y_boundary == "periodic":
+                    dy = dy - self.ny * np.rint(dy / self.ny)
+                self.fixed_solid |= (XX - cx) ** 2 + dy**2 <= cr**2
         self.particle_solid = np.zeros((nx, ny), dtype=bool)
         self.solid = self.fixed_solid.copy()
 
@@ -779,7 +805,11 @@ class LBMDEMSolver:
         self._rng_inlet = np.random.default_rng(seed + 2027)
         self._init_particles(seed)
         self._update_particle_solid_mask()
-        pair_kernel = _dem_pair_loads_numba if particle_method == "dem-hertz" else None
+        pair_kernel = (
+            _dem_pair_loads_numba
+            if particle_method == "dem-hertz" and self.y_boundary != "periodic"
+            else None
+        )
         self.dem_solver = DEMSolver(
             self,
             pair_kernel=pair_kernel,
@@ -813,7 +843,7 @@ class LBMDEMSolver:
     def _overlaps_cylinder(self, x: float, y: float, radius: float, clearance: float) -> bool:
         """Return whether a particle disc overlaps any fixed cylinder."""
         for cx, cy, cr in self.cylinders:
-            if np.hypot(x - cx, y - cy) < cr + radius * clearance:
+            if np.hypot(x - cx, self._periodic_y_delta(y - cy)) < cr + radius * clearance:
                 return True
         return False
 
@@ -910,6 +940,8 @@ class LBMDEMSolver:
 
     def _inlet_velocity_at_y(self, y: float) -> np.ndarray:
         """Poiseuille-like inlet particle velocity at vertical coordinate ``y``."""
+        if self.y_boundary == "periodic":
+            return np.array([max(self.u_max, 0.0), 0.0])
         channel_height = max(self.ny - 2.0, 1.0)
         eta = float(np.clip((y - 0.5) / channel_height, 0.0, 1.0))
         return np.array([4.0 * self.u_max * eta * (1.0 - eta), 0.0])
@@ -918,11 +950,15 @@ class LBMDEMSolver:
         """Return the positive volumetric flow rate through the left boundary."""
         _, ux, _ = self._macroscopic()
         if radius is None:
-            y_min = 1
-            y_max = self.ny - 2
+            y_min = 0 if self.y_boundary == "periodic" else 1
+            y_max = self.ny - 1 if self.y_boundary == "periodic" else self.ny - 2
         else:
-            y_min = int(np.ceil(radius + 0.5))
-            y_max = int(np.floor(self.ny - 1.5 - radius))
+            if self.y_boundary == "periodic":
+                y_min = 0
+                y_max = self.ny - 1
+            else:
+                y_min = int(np.ceil(radius + 0.5))
+                y_max = int(np.floor(self.ny - 1.5 - radius))
         if y_max < y_min:
             return 0.0
         inlet_speed = np.maximum(ux[0, y_min : y_max + 1], 0.0)
@@ -937,8 +973,12 @@ class LBMDEMSolver:
         If the flow has not developed yet, fall back to a deterministic uniform
         sweep so the source remains well behaved at startup.
         """
-        y_min = int(np.ceil(radius + 0.5))
-        y_max = int(np.floor(self.ny - 1.5 - radius))
+        if self.y_boundary == "periodic":
+            y_min = 0
+            y_max = self.ny - 1
+        else:
+            y_min = int(np.ceil(radius + 0.5))
+            y_max = int(np.floor(self.ny - 1.5 - radius))
         if y_max < y_min:
             return None
 
@@ -953,6 +993,8 @@ class LBMDEMSolver:
             idx = self._inlet_cursor % len(y_nodes)
             self._inlet_cursor += 1
             y = float(y_nodes[idx])
+        if self.y_boundary == "periodic":
+            return float(y % self.ny)
         return float(np.clip(y, radius + 0.5, self.ny - 1.5 - radius))
 
     def _can_place_inlet_particle(
@@ -963,13 +1005,16 @@ class LBMDEMSolver:
         n_existing: int | None = None,
     ) -> bool:
         """Return whether an inlet particle can be placed without overlap."""
-        if y < radius + 0.5 or y > self.ny - 1.5 - radius:
+        if self.y_boundary == "wall" and (y < radius + 0.5 or y > self.ny - 1.5 - radius):
             return False
         if self._overlaps_cylinder(x, y, radius, 1.05):
             return False
         n_check = self.n_p if n_existing is None else n_existing
         if n_check > 0:
-            dists = np.hypot(x - self.pos[:n_check, 0], y - self.pos[:n_check, 1])
+            dy = y - self.pos[:n_check, 1]
+            if self.y_boundary == "periodic":
+                dy = dy - self.ny * np.rint(dy / self.ny)
+            dists = np.hypot(x - self.pos[:n_check, 0], dy)
             if (dists < 1.02 * (self.radii[:n_check] + radius)).any():
                 return False
         return True
@@ -1066,7 +1111,7 @@ class LBMDEMSolver:
         """Return lattice cells covered by DEM particles, excluding fixed solids."""
         if self.n_p == 0:
             return np.zeros_like(self.fixed_solid)
-        if self.uses_numba_compute and _particle_solid_mask_numba is not None:
+        if self.uses_numba_compute and _particle_solid_mask_numba is not None and self.y_boundary != "periodic":
             particle_solid = _particle_solid_mask_numba(
                 self.pos,
                 self.radii,
@@ -1079,15 +1124,22 @@ class LBMDEMSolver:
             for (x_pos, y_pos), radius in zip(self.pos, self.radii):
                 x_min = int(np.floor(x_pos - radius))
                 x_max = int(np.ceil(x_pos + radius))
-                y_min = max(0, int(np.floor(y_pos - radius)))
-                y_max = min(self.ny - 1, int(np.ceil(y_pos + radius)))
+                if self.y_boundary == "periodic":
+                    y_min = int(np.floor(y_pos - radius))
+                    y_max = int(np.ceil(y_pos + radius))
+                else:
+                    y_min = max(0, int(np.floor(y_pos - radius)))
+                    y_max = min(self.ny - 1, int(np.ceil(y_pos + radius)))
                 if y_max < y_min:
                     continue
                 x_indices = np.arange(x_min, x_max + 1)
                 y_indices = np.arange(y_min, y_max + 1)
                 xx = x_indices[:, np.newaxis] % self.nx
-                yy = y_indices[np.newaxis, :]
-                local = (x_indices[:, np.newaxis] - x_pos) ** 2 + (y_indices[np.newaxis, :] - y_pos) ** 2 <= radius**2
+                yy = y_indices[np.newaxis, :] % self.ny
+                dy = y_indices[np.newaxis, :] - y_pos
+                if self.y_boundary == "periodic":
+                    dy = dy - self.ny * np.rint(dy / self.ny)
+                local = (x_indices[:, np.newaxis] - x_pos) ** 2 + dy**2 <= radius**2
                 particle_solid[xx, yy] |= local
             particle_solid &= ~self.fixed_solid
         return particle_solid
@@ -1161,7 +1213,11 @@ class LBMDEMSolver:
 
     def _control_drive_force(self, ux: np.ndarray, uy: np.ndarray) -> None:
         """Adjust the drive force to keep the maximum fluid speed near ``u_max``."""
-        if self.flow_control != "target_max_velocity" or self.u_max <= 0.0:
+        if (
+            self.streamwise_boundary == "pressure"
+            or self.flow_control != "target_max_velocity"
+            or self.u_max <= 0.0
+        ):
             return
         current_max = self._fluid_max_speed(ux, uy)
         if current_max <= 1e-12:
@@ -1172,6 +1228,42 @@ class LBMDEMSolver:
         min_drive = 0.05 * self.initial_F_drive
         if min_drive > 0.0:
             self.F_drive = max(self.F_drive, min_drive)
+
+    def _apply_pressure_boundaries(self) -> None:
+        """Apply Zou-He pressure inlet/outlet on the left/right boundaries."""
+        if self.streamwise_boundary != "pressure":
+            return
+        rho_l = self.rho_in
+        rho_r = self.rho_out
+
+        y_indices = np.arange(self.ny)
+        if self.y_boundary == "wall":
+            y_indices = y_indices[1:-1]
+
+        x = 0
+        f0 = self.f[0, x, y_indices]
+        f2 = self.f[2, x, y_indices]
+        f4 = self.f[4, x, y_indices]
+        f3 = self.f[3, x, y_indices]
+        f6 = self.f[6, x, y_indices]
+        f7 = self.f[7, x, y_indices]
+        ux_l = 1.0 - (f0 + f2 + f4 + 2.0 * (f3 + f6 + f7)) / rho_l
+        self.f[1, x, y_indices] = f3 + (2.0 / 3.0) * rho_l * ux_l
+        self.f[5, x, y_indices] = f7 + 0.5 * (f4 - f2) + (1.0 / 6.0) * rho_l * ux_l
+        self.f[8, x, y_indices] = f6 + 0.5 * (f2 - f4) + (1.0 / 6.0) * rho_l * ux_l
+
+        x = self.nx - 1
+        f0 = self.f[0, x, y_indices]
+        f2 = self.f[2, x, y_indices]
+        f4 = self.f[4, x, y_indices]
+        f1 = self.f[1, x, y_indices]
+        f5 = self.f[5, x, y_indices]
+        f8 = self.f[8, x, y_indices]
+        ux_r = -1.0 + (f0 + f2 + f4 + 2.0 * (f1 + f5 + f8)) / rho_r
+        self.f[3, x, y_indices] = f1 - (2.0 / 3.0) * rho_r * ux_r
+        self.f[7, x, y_indices] = f5 + 0.5 * (f2 - f4) - (1.0 / 6.0) * rho_r * ux_r
+        self.f[6, x, y_indices] = f8 + 0.5 * (f4 - f2) - (1.0 / 6.0) * rho_r * ux_r
+        self._invalidate_macroscopic_cache()
 
     def _trt_omega_minus(self) -> float:
         """Return the odd-mode TRT relaxation rate from the magic parameter."""
@@ -1227,6 +1319,7 @@ class LBMDEMSolver:
                 W,
                 self._opposite,
             )
+            self._apply_pressure_boundaries()
             return
 
         if self.fluid_method == "lbm-trt-guo":
@@ -1244,6 +1337,7 @@ class LBMDEMSolver:
         f_tmp = self.f.copy()
         for i in range(Q):
             self.f[i, self.solid] = f_tmp[OPPOSITE[i], self.solid]
+        self._apply_pressure_boundaries()
 
     # ------------------------------------------------------------------
     # Coupling helpers
@@ -1580,6 +1674,12 @@ class LBMDEMSolver:
         f_damp = -self.damping * v_n * float(np.sqrt(self.k_n * mass))
         return max(f_n + f_damp, 0.0)
 
+    def _periodic_y_delta(self, dy: float) -> float:
+        """Return the minimum-image y displacement when y is periodic."""
+        if self.y_boundary != "periodic":
+            return dy
+        return dy - self.ny * float(np.rint(dy / self.ny))
+
     def _tangential_force_magnitude(
         self,
         v_t: float,
@@ -1630,10 +1730,14 @@ class LBMDEMSolver:
     def _build_particle_cell_list(self, cell_size: float) -> dict[tuple[int, int], list[int]]:
         """Assign particle centres to spatial cells."""
         cells: dict[tuple[int, int], list[int]] = {}
+        ncy = max(1, int(np.ceil(self.ny / cell_size)))
         for i in range(self.n_p):
+            cy = int(np.floor(self.pos[i, 1] / cell_size))
+            if self.y_boundary == "periodic":
+                cy %= ncy
             key = (
                 int(np.floor(self.pos[i, 0] / cell_size)),
-                int(np.floor(self.pos[i, 1] / cell_size)),
+                cy,
             )
             cells.setdefault(key, []).append(i)
         return cells
@@ -1649,7 +1753,7 @@ class LBMDEMSolver:
         if self.n_p < 2:
             return
 
-        if self.particle_search == "all_pairs":
+        if self.particle_search == "all_pairs" or self.y_boundary == "periodic":
             for i in range(self.n_p):
                 for j in range(i + 1, self.n_p):
                     yield i, j
@@ -1657,11 +1761,15 @@ class LBMDEMSolver:
 
         cell_size = self._particle_cell_size()
         cells = self._build_particle_cell_list(cell_size)
+        ncy = max(1, int(np.ceil(self.ny / cell_size)))
         neighbour_offsets = ((0, 0), (1, -1), (1, 0), (1, 1), (0, 1))
 
         for (cx, cy), ids in cells.items():
             for dx, dy in neighbour_offsets:
-                other = cells.get((cx + dx, cy + dy))
+                other_cy = cy + dy
+                if self.y_boundary == "periodic":
+                    other_cy %= ncy
+                other = cells.get((cx + dx, other_cy))
                 if other is None:
                     continue
                 if dx == 0 and dy == 0:
@@ -1702,6 +1810,8 @@ class LBMDEMSolver:
         # Position update.  The historical mode uses x-periodicity; inlet mode
         # lets particles leave the right outlet and deletes them from the DEM set.
         self.pos += dt * self.vel
+        if self.y_boundary == "periodic" and self.n_p:
+            self.pos[:, 1] %= self.ny
         if self.particle_source == "left_inlet":
             self._delete_right_outflow_particles()
             if self.n_p == 0:
@@ -1721,20 +1831,21 @@ class LBMDEMSolver:
         self.omega_p += 0.5 * dt * alpha_new
         # Clamp positions and apply restitution at walls (per-particle radius)
         for i in range(self.n_p):
-            wall_bot = self.radii[i] + 0.5
-            wall_top = self.ny - 1.5 - self.radii[i]
-            if self.pos[i, 1] < wall_bot:
-                self.pos[i, 1] = wall_bot
-                if self.vel[i, 1] < 0:
-                    self.vel[i, 1] *= -0.2
-            if self.pos[i, 1] > wall_top:
-                self.pos[i, 1] = wall_top
-                if self.vel[i, 1] > 0:
-                    self.vel[i, 1] *= -0.2
+            if self.y_boundary == "wall":
+                wall_bot = self.radii[i] + 0.5
+                wall_top = self.ny - 1.5 - self.radii[i]
+                if self.pos[i, 1] < wall_bot:
+                    self.pos[i, 1] = wall_bot
+                    if self.vel[i, 1] < 0:
+                        self.vel[i, 1] *= -0.2
+                if self.pos[i, 1] > wall_top:
+                    self.pos[i, 1] = wall_top
+                    if self.vel[i, 1] > 0:
+                        self.vel[i, 1] *= -0.2
             # Clamp position outside fixed cylinder surfaces
             for cx, cy, cr in self.cylinders:
                 dx = self.pos[i, 0] - cx
-                dy = self.pos[i, 1] - cy
+                dy = self._periodic_y_delta(self.pos[i, 1] - cy)
                 dist = float(np.hypot(dx, dy))
                 min_dist = cr + self.radii[i]
                 if dist < min_dist and dist > 1e-10:
@@ -1742,6 +1853,8 @@ class LBMDEMSolver:
                     ny_ = dy / dist
                     self.pos[i, 0] = cx + min_dist * nx_
                     self.pos[i, 1] = cy + min_dist * ny_
+                    if self.y_boundary == "periodic":
+                        self.pos[i, 1] %= self.ny
                     # Kill inward normal velocity
                     v_n = self.vel[i, 0] * nx_ + self.vel[i, 1] * ny_
                     if v_n < 0:
@@ -2020,6 +2133,14 @@ def main() -> None:
         default="point_force",
         help="Fluid-particle coupling mode (default point_force)",
     )
+    parser.add_argument("--y-boundary", choices=Y_BOUNDARIES, default="wall")
+    parser.add_argument(
+        "--streamwise-boundary",
+        choices=("periodic-force", "pressure"),
+        default="periodic-force",
+    )
+    parser.add_argument("--pressure-drop", type=float, default=1e-4)
+    parser.add_argument("--rho-out", type=float, default=1.0)
     parser.add_argument(
         "--ibm-stiffness",
         type=float,
@@ -2163,6 +2284,10 @@ def main() -> None:
         particle_method=args.particle_method,
         particle_search=args.particle_search,
         particle_fluid_coupling=args.particle_fluid_coupling,
+        y_boundary=args.y_boundary,
+        streamwise_boundary=args.streamwise_boundary.replace("-", "_"),
+        pressure_drop=args.pressure_drop,
+        rho_out=args.rho_out,
         ibm_stiffness=args.ibm_stiffness,
         ibm_marker_spacing=args.ibm_marker_spacing,
         n_particles=args.n_particles,

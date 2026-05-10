@@ -280,6 +280,59 @@ def test_trt_lbm_method_advances_with_finite_fields():
         assert np.all(np.isfinite(field))
 
 
+def test_periodic_y_pressure_boundary_advances_with_open_top_bottom():
+    """Pressure inlet/outlet with y-periodicity should run without top/bottom walls."""
+    sim = FastLBMDEM(
+        nx=48,
+        ny=20,
+        Re=40.0,
+        u_max=0.02,
+        n_particles=0,
+        particle_radius=1.0,
+        gravity=0.0,
+        y_boundary="periodic",
+        streamwise_boundary="pressure",
+        pressure_drop=1e-5,
+        fluid_accelerator="numpy",
+    )
+
+    assert not sim.fixed_solid[:, 0].any()
+    assert not sim.fixed_solid[:, -1].any()
+    assert np.isclose(sim.F_drive, 0.0)
+
+    sim.advance(20)
+    rho, ux, uy = sim.get_fields()
+
+    assert np.all(np.isfinite(rho))
+    assert np.all(np.isfinite(ux))
+    assert np.all(np.isfinite(uy))
+    assert np.mean(ux[1:-1, :]) > 0.0
+    assert np.isclose(np.mean(rho[0, :]), sim.rho_in, rtol=5e-4)
+    assert np.isclose(np.mean(rho[-1, :]), sim.rho_out, rtol=5e-4)
+
+
+def test_periodic_y_particles_wrap_without_wall_restitution():
+    """DEM particles should wrap in y when the transverse boundary is periodic."""
+    sim = FastLBMDEM(
+        nx=40,
+        ny=20,
+        Re=40.0,
+        u_max=0.0,
+        n_particles=1,
+        particle_radius=1.0,
+        gravity=0.0,
+        y_boundary="periodic",
+        streamwise_boundary="pressure",
+        pressure_drop=0.0,
+        fluid_accelerator="numpy",
+    )
+    sim.pos[:] = np.array([[10.0, 19.8]])
+    sim.vel[:] = np.array([[0.0, 2.0]])
+    sim._dem_substep(0.5)
+
+    assert 0.0 <= sim.pos[0, 1] < sim.ny
+
+
 def test_solid_boundary_coupling_overlays_particles_on_solid_mask():
     """Solid-boundary coupling should expose moving particles to the LBM mask."""
     sim = LBMDEMSolver(
