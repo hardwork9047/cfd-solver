@@ -424,6 +424,8 @@ def test_rolling_friction_resists_wall_slip_and_spins_particle():
         density_ratio=2.0,
         gravity=0.0,
         rolling_friction=True,
+        y_boundary="wall",
+        streamwise_boundary="periodic_force",
         sliding_friction=0.5,
         tangential_damping=0.4,
         seed=2,
@@ -477,6 +479,7 @@ def test_left_inlet_mode_generates_particles_from_flux_budget_and_deletes_outflo
         cylinder=(25.0, 15.0, 4.0),
         particle_source="left_inlet",
         source_volume_fraction=0.05,
+        streamwise_boundary="periodic_force",
         seed=3,
     )
 
@@ -527,6 +530,7 @@ def test_target_max_velocity_flow_control_relaxes_drive_force():
         reynolds_length=4.0,
         flow_control="target_max_velocity",
         flow_control_gain=0.5,
+        streamwise_boundary="periodic_force",
         n_particles=1,
         particle_radius=2.0,
         gravity=0.0,

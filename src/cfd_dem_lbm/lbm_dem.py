@@ -408,7 +408,9 @@ class LBMDEMSolver:
     Domain
     ------
     Rectangular channel of size ``nx × ny`` lattice nodes.
-    Periodic boundary conditions in x, no-slip bounce-back walls at y=0 and y=ny-1.
+    The membrane-pore setup uses periodic transverse boundaries in y and
+    pressure inlet/outlet boundaries in x.  A no-slip top/bottom wall mode is
+    still available for channel-style checks.
 
     Parameters (all lattice units)
     ------------------------------
@@ -511,8 +513,8 @@ class LBMDEMSolver:
         fluid_accelerator: str = "numpy",
         compute_accelerator: str = "auto",
         particle_search: str = "cell_list",
-        y_boundary: str = "wall",
-        streamwise_boundary: str = "periodic_force",
+        y_boundary: str = "periodic",
+        streamwise_boundary: str = "pressure",
         pressure_drop: float = 1e-4,
         rho_out: float = 1.0,
         spatial_dimension: int = 2,
@@ -2133,11 +2135,11 @@ def main() -> None:
         default="point_force",
         help="Fluid-particle coupling mode (default point_force)",
     )
-    parser.add_argument("--y-boundary", choices=Y_BOUNDARIES, default="wall")
+    parser.add_argument("--y-boundary", choices=Y_BOUNDARIES, default="periodic")
     parser.add_argument(
         "--streamwise-boundary",
         choices=("periodic-force", "pressure"),
-        default="periodic-force",
+        default="pressure",
     )
     parser.add_argument("--pressure-drop", type=float, default=1e-4)
     parser.add_argument("--rho-out", type=float, default=1.0)

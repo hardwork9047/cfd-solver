@@ -1,7 +1,8 @@
 """
 LBM-DEM 連成シミュレーション 実行スクリプト
 ==============================================
-- 流体: D2Q9 LBM (Poiseuille チャネル流)
+- 流体: D2Q9 LBM
+- 標準境界: 上下周期境界、左圧力入口、右圧力出口
 - 粒子: DEM (Hertz接触 + Stokes抗力)
 - 動画: MP4 (ffmpeg) を出力
 """
@@ -62,12 +63,14 @@ parser.add_argument("--flow-control-gain", type=float, default=0.2,
                     help="Relaxation gain for max-speed flow control (default: 0.2)")
 parser.add_argument("--y-boundary",
                     choices=["wall", "periodic"],
-                    default="wall",
-                    help="Boundary condition in the transverse y direction (default: wall)")
+                    default="periodic",
+                    help="Boundary condition in the transverse y direction "
+                         "(default: periodic for membrane unit-cell calculations)")
 parser.add_argument("--streamwise-boundary",
                     choices=["periodic-force", "pressure"],
-                    default="periodic-force",
-                    help="Streamwise x boundary: periodic with body force, or pressure inlet/outlet")
+                    default="pressure",
+                    help="Streamwise x boundary: pressure inlet/outlet, or periodic with body force "
+                         "(default: pressure)")
 parser.add_argument("--pressure-drop", type=float, default=1e-4,
                     help="Pressure drop p_in-p_out for --streamwise-boundary pressure")
 parser.add_argument("--rho-out", type=float, default=1.0,

@@ -72,13 +72,24 @@ Boundary modes:
 | `--streamwise-boundary periodic-force` | Periodic x streaming with body-force pressure-gradient approximation |
 | `--streamwise-boundary pressure` | Left pressure inlet and right pressure outlet using density boundary conditions |
 
+For the membrane-pore fouling model, the standard boundary setting is:
+
+```bash
+--y-boundary periodic --streamwise-boundary pressure
+```
+
+This represents a periodically repeated transverse unit cell.  The top and
+bottom boundaries are not no-slip walls in this mode.  The pressure drop is
+imposed between the left inlet and right outlet, and the fixed cylinders inside
+the domain create the pore-scale hydraulic resistance and local pressure loss.
+
 For pressure inlet/outlet runs, the pressure difference is specified with:
 
 ```bash
 --pressure-drop 1e-4 --rho-out 1.0
 ```
 
-Internally, `p = cs^2 rho`, so the inlet density is computed from the requested pressure drop. This mode is intended for filtration-style calculations where left and right should represent upstream and downstream reservoirs. The older `periodic-force` mode remains useful for fast periodic-channel verification and screening.
+Internally, `p = cs^2 rho`, so the inlet density is computed from the requested pressure drop. This mode is intended for filtration-style calculations where left and right should represent upstream and downstream reservoirs. The older `periodic-force` mode remains useful for fast periodic-channel verification and screening, but it should not be used as the main interpretation mode for pore-scale pressure-loss studies.
 
 ## DEM Particle Solver
 
