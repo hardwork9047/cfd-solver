@@ -299,7 +299,7 @@ if njit is not None:  # pragma: no cover - exercised only when numba is installe
         return particle_solid
 
     @njit(cache=True)
-    def _ibm_markers_numba(pos, vel, omega_p, radii, marker_spacing, ny):
+    def _ibm_markers_numba(pos, vel, omega_p, radii, marker_spacing, ny, periodic_y):
         total = 0
         for i in range(pos.shape[0]):
             total += max(8, int(np.ceil(2.0 * np.pi * radii[i] / marker_spacing)))
@@ -321,10 +321,13 @@ if njit is not None:  # pragma: no cover - exercised only when numba is installe
                 rx = radius * np.cos(theta)
                 ry = radius * np.sin(theta)
                 y = pos[i, 1] + ry
-                if y < 0.5:
-                    y = 0.5
-                elif y > ny - 1.5:
-                    y = ny - 1.5
+                if periodic_y:
+                    y = y % ny
+                else:
+                    if y < 0.5:
+                        y = 0.5
+                    elif y > ny - 1.5:
+                        y = ny - 1.5
                 marker_x[cursor] = pos[i, 0] + rx
                 marker_y[cursor] = y
                 marker_rx[cursor] = rx
@@ -1365,13 +1368,18 @@ class LBMDEMSolver:
             return np.empty(0), np.empty(0)
 
         x_floor = np.floor(x)
-        y_floor = np.floor(y)
+        y_eval = np.mod(y, self.ny) if self.y_boundary == "periodic" else y
+        y_floor = np.floor(y_eval)
         xi = x_floor.astype(int) % self.nx
-        yi = np.clip(y_floor.astype(int), 0, self.ny - 2)
+        if self.y_boundary == "periodic":
+            yi = y_floor.astype(int) % self.ny
+            yi1 = (yi + 1) % self.ny
+        else:
+            yi = np.clip(y_floor.astype(int), 0, self.ny - 2)
+            yi1 = np.minimum(yi + 1, self.ny - 1)
         xi1 = (xi + 1) % self.nx
-        yi1 = np.minimum(yi + 1, self.ny - 1)
         tx = x - x_floor
-        ty = y - y_floor
+        ty = y_eval - y_floor
 
         w00 = (1.0 - tx) * (1.0 - ty)
         w10 = tx * (1.0 - ty)
@@ -1431,11 +1439,17 @@ class LBMDEMSolver:
         ``radius`` sets the normalisation area (defaults to r_p).
         """
         xi = int(np.floor(x)) % self.nx
-        yi = int(np.clip(np.floor(y), 0, self.ny - 2))
+        y_eval = y % self.ny if self.y_boundary == "periodic" else y
+        y_floor = np.floor(y_eval)
+        if self.y_boundary == "periodic":
+            yi = int(y_floor) % self.ny
+            yi1 = (yi + 1) % self.ny
+        else:
+            yi = int(np.clip(y_floor, 0, self.ny - 2))
+            yi1 = min(yi + 1, self.ny - 1)
         xi1 = (xi + 1) % self.nx
-        yi1 = min(yi + 1, self.ny - 1)
         tx = x - np.floor(x)
-        ty = y - np.floor(y)
+        ty = y_eval - y_floor
         w = [(1 - tx) * (1 - ty), tx * (1 - ty), (1 - tx) * ty, tx * ty]
         nodes = [(xi, yi), (xi1, yi), (xi, yi1), (xi1, yi1)]
         r = radius if radius is not None else self.r_p
@@ -1458,13 +1472,18 @@ class LBMDEMSolver:
             return
 
         x_floor = np.floor(x)
-        y_floor = np.floor(y)
+        y_eval = np.mod(y, self.ny) if self.y_boundary == "periodic" else y
+        y_floor = np.floor(y_eval)
         xi = x_floor.astype(int) % self.nx
-        yi = np.clip(y_floor.astype(int), 0, self.ny - 2)
+        if self.y_boundary == "periodic":
+            yi = y_floor.astype(int) % self.ny
+            yi1 = (yi + 1) % self.ny
+        else:
+            yi = np.clip(y_floor.astype(int), 0, self.ny - 2)
+            yi1 = np.minimum(yi + 1, self.ny - 1)
         xi1 = (xi + 1) % self.nx
-        yi1 = np.minimum(yi + 1, self.ny - 1)
         tx = x - x_floor
-        ty = y - y_floor
+        ty = y_eval - y_floor
         weights = (
             (1.0 - tx) * (1.0 - ty),
             tx * (1.0 - ty),
@@ -1493,13 +1512,18 @@ class LBMDEMSolver:
             return
 
         x_floor = np.floor(x)
-        y_floor = np.floor(y)
+        y_eval = np.mod(y, self.ny) if self.y_boundary == "periodic" else y
+        y_floor = np.floor(y_eval)
         xi = x_floor.astype(int) % self.nx
-        yi = np.clip(y_floor.astype(int), 0, self.ny - 2)
+        if self.y_boundary == "periodic":
+            yi = y_floor.astype(int) % self.ny
+            yi1 = (yi + 1) % self.ny
+        else:
+            yi = np.clip(y_floor.astype(int), 0, self.ny - 2)
+            yi1 = np.minimum(yi + 1, self.ny - 1)
         xi1 = (xi + 1) % self.nx
-        yi1 = np.minimum(yi + 1, self.ny - 1)
         tx = x - x_floor
-        ty = y - y_floor
+        ty = y_eval - y_floor
         weights = (
             (1.0 - tx) * (1.0 - ty),
             tx * (1.0 - ty),
@@ -1537,6 +1561,7 @@ class LBMDEMSolver:
                 self.radii,
                 self.ibm_marker_spacing,
                 self.ny,
+                self.y_boundary == "periodic",
             )
         else:
             marker_x_parts: list[np.ndarray] = []
@@ -1554,7 +1579,10 @@ class LBMDEMSolver:
                 rx = radius * np.cos(theta)
                 ry = radius * np.sin(theta)
                 x = self.pos[i, 0] + rx
-                y = np.clip(self.pos[i, 1] + ry, 0.5, self.ny - 1.5)
+                if self.y_boundary == "periodic":
+                    y = np.mod(self.pos[i, 1] + ry, self.ny)
+                else:
+                    y = np.clip(self.pos[i, 1] + ry, 0.5, self.ny - 1.5)
                 marker_x_parts.append(x)
                 marker_y_parts.append(y)
                 marker_rx_parts.append(rx)
@@ -1621,6 +1649,7 @@ class LBMDEMSolver:
                     self.radii,
                     self.ibm_marker_spacing,
                     self.ny,
+                    self.y_boundary == "periodic",
                 )
             )
             return {
@@ -1646,7 +1675,10 @@ class LBMDEMSolver:
             rx = radius * np.cos(theta)
             ry = radius * np.sin(theta)
             marker_x_parts.append(self.pos[i, 0] + rx)
-            marker_y_parts.append(np.clip(self.pos[i, 1] + ry, 0.5, self.ny - 1.5))
+            if self.y_boundary == "periodic":
+                marker_y_parts.append(np.mod(self.pos[i, 1] + ry, self.ny))
+            else:
+                marker_y_parts.append(np.clip(self.pos[i, 1] + ry, 0.5, self.ny - 1.5))
             marker_rx_parts.append(rx)
             marker_ry_parts.append(ry)
             marker_ds_parts.append(np.full(n_markers, ds))
