@@ -414,7 +414,6 @@ This script is the current bridge from raw simulation outputs toward surrogate m
 Sweep scripts and config-driven sweeps are in `src/bin/`, including:
 
 - `run_lbm_dem_config_sweep.py`
-- `run_lbm_dem_56_condition_sweep.sh`
 - `run_lbm_dem_16_pore_geometry_parallel.sh`
 - `run_lbm_dem_100_design_sweep_parallel.sh`
 

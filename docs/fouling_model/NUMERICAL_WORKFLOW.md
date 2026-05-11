@@ -200,10 +200,8 @@ ParaView fields are still needed before treating a case as physically meaningful
 Use JSON configs to keep parameter sweeps reproducible:
 
 ```bash
-src/bin/run_lbm_dem_config_sweep.py src/bin/lbm_dem_sweep_example.json --dry-run
-src/bin/run_lbm_dem_config_sweep.py src/bin/lbm_dem_sweep_example.json
-src/bin/run_lbm_dem_config_sweep.py src/bin/lbm_dem_factor_sweep_example.json --jobs 4
-src/bin/run_lbm_dem_config_sweep.py src/bin/lbm_dem_factor_sweep_example.json --dry-run
+src/bin/run_lbm_dem_config_sweep.py configs/lbm_dem/<sweep_config>.json --dry-run
+src/bin/run_lbm_dem_config_sweep.py configs/lbm_dem/<sweep_config>.json --jobs 4
 ```
 
 The runner writes logs and `status.tsv` under
