@@ -411,13 +411,14 @@ This script is the current bridge from raw simulation outputs toward surrogate m
 
 ## Sweep Execution
 
-Sweep scripts and config-driven sweeps are in `src/bin/`, including:
+Config-driven sweeps are run through:
 
 - `run_lbm_dem_config_sweep.py`
-- `run_lbm_dem_16_pore_geometry_parallel.sh`
-- `run_lbm_dem_100_design_sweep_parallel.sh`
 
-The current sweep model is script-based. Failed or unstable runs should be identified by reading each run's `run_status.json`.
+Case-specific historical sweep scripts have been removed. New sweeps should be
+defined as JSON configs under `configs/lbm_dem/` and launched with the config
+sweep runner. Failed or unstable runs should be identified by reading each
+run's `run_status.json`.
 
 ## Web Application Boundary
 
