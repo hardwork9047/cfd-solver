@@ -1,9 +1,4 @@
-"""
-cfd_dem_lbm — Coupled LBM (fluid) + DEM (particles) solver.
-
-Combines D2Q9 Lattice-Boltzmann fluid dynamics with Discrete Element
-Method particle simulation via bilinear interpolation coupling.
-"""
+"""Particulate-flow solvers with coupled LBM fluid and DEM particle models."""
 
 from importlib.metadata import PackageNotFoundError, version
 

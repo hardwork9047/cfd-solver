@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from cfd_dem_lbm import DEMSolver, FastLBMDEM, LBMDEMSolver
+from particulate_flow import DEMSolver, FastLBMDEM, LBMDEMSolver
 
 
 def _two_particle_solver(

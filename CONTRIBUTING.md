@@ -20,7 +20,7 @@ poetry install
 poetry run pytest tests/
 
 # Run tests with coverage (all packages)
-poetry run pytest tests/ --cov=cfd --cov=cfd_lbm --cov=dem --cov=cfd_dem_lbm --cov-report=html
+poetry run pytest tests/ --cov=cfd --cov=cfd_lbm --cov=dem --cov=particulate_flow --cov-report=html
 
 # Run specific tests
 poetry run pytest tests/test_cfd.py::TestPlanePoiseuille -v
@@ -80,7 +80,7 @@ src/
 ├── dem/                     # Discrete Element Method
 │   ├── __init__.py
 │   └── particles.py         # DEM particle system (Hertz contact)
-└── cfd_dem_lbm/             # Coupled LBM-DEM solver
+└── particulate_flow/             # Coupled LBM-DEM solver
     ├── __init__.py
     └── lbm_dem.py
 ├── demos/                   # Runnable demonstration scripts

@@ -16,7 +16,7 @@ The current system is designed to evaluate how suspended particles are transport
 ```text
 User command or sweep script
   -> src/runners/run_lbm_dem.py
-  -> cfd_dem_lbm.FastLBMDEM
+  -> particulate_flow.FastLBMDEM
   -> LBM fluid solver + DEM particle solver + particle-fluid coupling
   -> src/results/run_lbm_dem/.../run_TIMESTAMP/
   -> metadata, run_status, analysis CSV/NPZ, summary JSON/MD, images, videos, ParaView data
@@ -29,7 +29,7 @@ The system is currently command-line based. Web UI or job-queue execution can be
 
 | Path | Role |
 |---|---|
-| `src/cfd_dem_lbm/` | Production LBM-DEM solver implementation |
+| `src/particulate_flow/` | Production LBM-DEM solver implementation |
 | `src/runners/run_lbm_dem.py` | Main simulation runner for fouling calculations |
 | `src/bin/` | Reproducible scripts for runs, sweeps, verification, benchmarks, and plotting |
 | `src/results/` | Simulation, verification, benchmark, and plotting outputs |
@@ -41,7 +41,7 @@ The system is currently command-line based. Web UI or job-queue execution can be
 
 ### Fluid Solver
 
-The fluid path is implemented in `src/cfd_dem_lbm/lbm_dem.py` and exposed through `FastLBMDEM`.
+The fluid path is implemented in `src/particulate_flow/lbm_dem.py` and exposed through `FastLBMDEM`.
 
 Supported fluid methods:
 
@@ -132,12 +132,12 @@ The intended responsibility split is:
 | Layer | Current module | Responsibility |
 |---|---|---|
 | Case definition | `configs/lbm_dem/` | Reusable templates, single cases, sweeps, geometry, physics, output, and backend settings |
-| Config loading | `src/cfd_dem_lbm/simulation_config.py` | Convert JSON config files into runner arguments |
-| Geometry | `src/cfd_dem_lbm/geometry.py` | Cylinder definitions, pore masks, pressure probe sections, cylinder VTK |
+| Config loading | `src/particulate_flow/simulation_config.py` | Convert JSON config files into runner arguments |
+| Geometry | `src/particulate_flow/geometry.py` | Cylinder definitions, pore masks, pressure probe sections, cylinder VTK |
 | Runner | `src/runners/run_lbm_dem.py` | CLI, simulation execution, output orchestration |
-| Coupled solver | `src/cfd_dem_lbm/lbm_dem.py` | LBM-DEM time integration facade |
-| Particle solver | `src/cfd_dem_lbm/dem_solver.py` | DEM contact, wall/cylinder loads, surface interactions |
-| Fast path | `src/cfd_dem_lbm/fast_solver.py` | Cached solver variant used by production runs |
+| Coupled solver | `src/particulate_flow/lbm_dem.py` | LBM-DEM time integration facade |
+| Particle solver | `src/particulate_flow/dem_solver.py` | DEM contact, wall/cylinder loads, surface interactions |
+| Fast path | `src/particulate_flow/fast_solver.py` | Cached solver variant used by production runs |
 
 New pore layouts should be implemented in `geometry.py` and referenced from
 JSON configs.  Legacy `--cylinder-spec X Y R` remains supported, but the
@@ -187,7 +187,7 @@ Internally, `p = cs^2 rho`, so the inlet density is computed from the requested 
 Particle mechanics are handled by the shared DEM solver in:
 
 ```text
-src/cfd_dem_lbm/dem_solver.py
+src/particulate_flow/dem_solver.py
 ```
 
 Supported particle contact methods:
@@ -367,7 +367,7 @@ The main verification entry point is:
 poetry run python src/bin/verify_lbm_dem_fluid.py
 ```
 
-It verifies the production solver path `cfd_dem_lbm.FastLBMDEM`, including:
+It verifies the production solver path `particulate_flow.FastLBMDEM`, including:
 
 - plane Poiseuille profile
 - streamwise flux balance

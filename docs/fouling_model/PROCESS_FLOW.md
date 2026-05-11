@@ -74,7 +74,7 @@ material settings.
 
 ### 2. Config Loading
 
-`src/cfd_dem_lbm/simulation_config.py` loads the JSON file through
+`src/particulate_flow/simulation_config.py` loads the JSON file through
 `SimulationConfig`.
 
 Responsibilities:
@@ -105,7 +105,7 @@ remains the orchestration point.
 
 ### 4. Geometry Construction
 
-`src/cfd_dem_lbm/geometry.py` owns pore geometry through `PoreGeometry`.
+`src/particulate_flow/geometry.py` owns pore geometry through `PoreGeometry`.
 
 Responsibilities:
 
@@ -153,7 +153,7 @@ sim.fixed_solid
 
 ### 6. Particle Solver
 
-`src/cfd_dem_lbm/dem_solver.py` owns DEM contact mechanics.
+`src/particulate_flow/dem_solver.py` owns DEM contact mechanics.
 
 It handles:
 
@@ -324,9 +324,9 @@ Still mixed inside `lbm_dem.py`:
 
 ## Recommended Next Refactors
 
-1. Extract metrics from `run_lbm_dem.py` into `src/cfd_dem_lbm/metrics.py`.
-2. Extract output writing into `src/cfd_dem_lbm/result_writer.py`.
-3. Extract stability checks into `src/cfd_dem_lbm/stability.py`.
+1. Extract metrics from `run_lbm_dem.py` into `src/particulate_flow/metrics.py`.
+2. Extract output writing into `src/particulate_flow/result_writer.py`.
+3. Extract stability checks into `src/particulate_flow/stability.py`.
 4. Extract boundary condition logic from `lbm_dem.py` into `boundaries.py`.
 5. Extract coupling implementations into `coupling.py`.
 6. Move run/sweep shell scripts out of `src/bin` into a top-level `scripts/`

@@ -1,23 +1,23 @@
-# LBM-DEM Membrane Fouling Simulator
+# Particulate Flow Simulator
 
-This repository contains a two-dimensional LBM-DEM simulation toolkit for
-studying particle transport, deposition, and pore-scale fouling around
-cylinder-based membrane geometries.
+This repository contains a two-dimensional particulate-flow simulation toolkit
+for studying particle transport, deposition, pore-scale blockage, and fouling
+around configurable solid obstacles.
 
-The active code path is centered on `src/cfd_dem_lbm/` and the production runner
+The active code path is centered on `src/particulate_flow/` and the production runner
 `src/runners/run_lbm_dem.py`.
 
 ## Active Capabilities
 
 | Component | Path | Purpose |
 |---|---|---|
-| Coupled solver | `src/cfd_dem_lbm/lbm_dem.py` | LBM-DEM time integration |
-| Fast solver facade | `src/cfd_dem_lbm/fast_solver.py` | Cached production solver path |
-| DEM solver | `src/cfd_dem_lbm/dem_solver.py` | Particle contact, rolling friction, surface forces |
-| Geometry layer | `src/cfd_dem_lbm/geometry.py` | Cylinder pore layouts and masks |
-| Config loader | `src/cfd_dem_lbm/simulation_config.py` | JSON-based run configuration |
-| Fluid verification | `src/cfd_dem_lbm/fluid_verification.py` | Shared-solver verification problems |
-| Cylinder flow runner | `src/cfd_dem_lbm/cylinder_flow.py` | Fluid-only cylinder calculations through the same solver path |
+| Coupled solver | `src/particulate_flow/lbm_dem.py` | LBM-DEM time integration |
+| Fast solver facade | `src/particulate_flow/fast_solver.py` | Cached production solver path |
+| DEM solver | `src/particulate_flow/dem_solver.py` | Particle contact, rolling friction, surface forces |
+| Geometry layer | `src/particulate_flow/geometry.py` | Cylinder pore layouts and masks |
+| Config loader | `src/particulate_flow/simulation_config.py` | JSON-based run configuration |
+| Fluid verification | `src/particulate_flow/fluid_verification.py` | Shared-solver verification problems |
+| Cylinder flow runner | `src/particulate_flow/cylinder_flow.py` | Fluid-only cylinder calculations through the same solver path |
 | Main runner | `src/runners/run_lbm_dem.py` | Simulation execution and output orchestration |
 
 ## Standard Run
@@ -77,7 +77,7 @@ configs/lbm_dem/      Reusable JSON run configurations
 docs/fouling_model/   Architecture, algorithms, limitations, and workflow notes
 paper/                Manuscript drafts
 src/bin/              Reproducible run, sweep, plotting, and benchmark scripts
-src/cfd_dem_lbm/      Active LBM-DEM solver package
+src/particulate_flow/      Active LBM-DEM solver package
 src/runners/            Main executable runner
 src/results/          Generated outputs grouped by program name
 tests/                pytest suite for the active solver path

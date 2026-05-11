@@ -519,7 +519,7 @@ def write_verification_outputs(results: list[VerificationResult], output_dir: Pa
     report = {
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "passed": all(result.passed for result in results),
-        "solver_path": "cfd_dem_lbm.FastLBMDEM",
+        "solver_path": "particulate_flow.FastLBMDEM",
         "results": [asdict(result) for result in results],
     }
     (output_dir / "fluid_verification_results.json").write_text(
@@ -530,7 +530,7 @@ def write_verification_outputs(results: list[VerificationResult], output_dir: Pa
         "# LBM-DEM Fluid Verification",
         "",
         f"Generated: {report['created_at']}",
-        "Solver path: `cfd_dem_lbm.FastLBMDEM`",
+        "Solver path: `particulate_flow.FastLBMDEM`",
         f"Overall: {'PASS' if report['passed'] else 'FAIL'}",
         "",
     ]

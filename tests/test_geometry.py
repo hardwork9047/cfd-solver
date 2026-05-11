@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from cfd_dem_lbm import PoreGeometry
+from particulate_flow import PoreGeometry
 
 
 def test_pore_geometry_builds_periodic_cylinder_mask_across_y_boundary():

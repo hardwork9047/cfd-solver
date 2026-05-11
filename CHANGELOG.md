@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **DEM particle system** (`dem` package): Discrete Element Method with Hertzian
   normal contact, velocity-Verlet time integration, and spatial-grid collision
   detection for O(N) performance.
-- **Coupled LBM-DEM solver** (`cfd_dem_lbm` package): Bilinear interpolation
+- **Coupled LBM-DEM solver** (`particulate_flow` package): Bilinear interpolation
   (fluid → particles) and 4-point force distribution (particles → fluid) for
   particle-laden flow simulation.
 - **GitHub Actions CI** (`.github/workflows/ci.yml`): Automated tests on Python
@@ -44,7 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CylinderFlow**: Unified advection dispatch via `_advect()` — eliminates
   intermediate `phi_new` allocations in `step()`.
 - **pyproject.toml**: Now exports all 4 packages (`cfd`, `cfd_lbm`, `dem`,
-  `cfd_dem_lbm`).
+  `particulate_flow`).
 - **CONTRIBUTING.md**: Fixed build-backend reference (hatchling → poetry-core),
   updated project structure to reflect all 4 packages, corrected coverage command.
 

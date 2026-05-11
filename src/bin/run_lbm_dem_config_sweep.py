@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from cfd_dem_lbm.simulation_config import SimulationConfig
+from particulate_flow.simulation_config import SimulationConfig
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]

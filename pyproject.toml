@@ -5,7 +5,7 @@ build-backend = "poetry.core.masonry.api"
 [tool.poetry]
 name = "cfd-solver"
 version = "0.3.0"
-description = "LBM-DEM membrane fouling simulation toolkit."
+description = "Particulate-flow simulation toolkit with LBM-DEM coupling."
 readme = "README.md"
 license = "MIT"
 authors = [
@@ -21,6 +21,8 @@ keywords = [
     "DEM",
     "Membrane Fouling",
     "Particle-Laden Flow",
+    "Particulate Flow",
+    "Pore Flow",
     "Numerical Simulation",
     "Computational Physics",
 ]
@@ -42,7 +44,7 @@ homepage = "https://github.com/hardwork9047/cfd-solver"
 documentation = "https://github.com/hardwork9047/cfd-solver#readme"
 repository = "https://github.com/hardwork9047/cfd-solver.git"
 packages = [
-    {include = "cfd_dem_lbm", from = "src"},
+    {include = "particulate_flow", from = "src"},
 ]
 
 [tool.poetry.dependencies]

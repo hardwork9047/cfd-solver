@@ -126,7 +126,7 @@ def write_structured_vtk(path: Path, sim: FastLBMDEM) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
         handle.write("# vtk DataFile Version 3.0\n")
-        handle.write("cfd_dem_lbm cylinder flow\n")
+        handle.write("particulate_flow cylinder flow\n")
         handle.write("ASCII\n")
         handle.write("DATASET STRUCTURED_POINTS\n")
         handle.write(f"DIMENSIONS {sim.nx} {sim.ny} 1\n")
@@ -221,7 +221,7 @@ def run_cylinder_flow(
 
     config = {
         "created_at": datetime.now().isoformat(timespec="seconds"),
-        "solver_path": "cfd_dem_lbm.FastLBMDEM",
+        "solver_path": "particulate_flow.FastLBMDEM",
         "calculation": "fluid_only_cylinder_flow",
         "nx": nx,
         "ny": ny,
@@ -262,7 +262,7 @@ def run_cylinder_flow(
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Fluid-only cylinder-flow calculation using cfd_dem_lbm.FastLBMDEM"
+        description="Fluid-only cylinder-flow calculation using particulate_flow.FastLBMDEM"
     )
     parser.add_argument("--nx", type=int, default=180, help="Grid width in lattice nodes")
     parser.add_argument("--ny", type=int, default=70, help="Grid height in lattice nodes")
@@ -341,7 +341,7 @@ def main(argv: list[str] | None = None) -> None:
     print("")
     print(f"Saved: {output_dir}")
     print(
-        "Solver path: cfd_dem_lbm.FastLBMDEM, "
+        "Solver path: particulate_flow.FastLBMDEM, "
         f"fluid_method={sim.fluid_method}, accelerator={sim.fluid_accelerator}, "
         f"compute={sim.compute_accelerator}"
     )

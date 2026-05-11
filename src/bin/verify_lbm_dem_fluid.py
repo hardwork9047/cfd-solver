@@ -9,8 +9,8 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from cfd_dem_lbm.result_paths import program_results_dir
-from cfd_dem_lbm import run_fluid_verification, write_verification_outputs
+from particulate_flow.result_paths import program_results_dir
+from particulate_flow import run_fluid_verification, write_verification_outputs
 
 
 def main() -> int:
@@ -51,7 +51,7 @@ def main() -> int:
     for result in results:
         status = "PASS" if result.passed else "FAIL"
         print(f"{status} {result.name}: metric={result.metric:.6g}, tol={result.tolerance:.6g}")
-    print("Solver path: cfd_dem_lbm.FastLBMDEM")
+    print("Solver path: particulate_flow.FastLBMDEM")
     print(f"Verification outputs: {output_dir}")
     return 0 if all(result.passed for result in results) else 1
 

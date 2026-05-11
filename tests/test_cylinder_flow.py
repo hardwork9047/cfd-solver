@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from cfd_dem_lbm.cylinder_flow import (
+from particulate_flow.cylinder_flow import (
     build_cylinder_flow_sim,
     compute_cylinder_flow_metrics,
     run_cylinder_flow,

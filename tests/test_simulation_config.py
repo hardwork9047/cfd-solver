@@ -2,7 +2,7 @@
 
 import json
 
-from cfd_dem_lbm.simulation_config import SimulationConfig
+from particulate_flow.simulation_config import SimulationConfig
 
 
 def test_simulation_config_normalises_cli_style_keys(tmp_path):

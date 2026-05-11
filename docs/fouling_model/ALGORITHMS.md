@@ -251,7 +251,7 @@ At a high level, one coupled step performs:
 6. metric and output sampling in the runner
 
 The exact implementation is in `LBMDEMSolver.advance()` and the helper methods
-in `src/cfd_dem_lbm/lbm_dem.py`.
+in `src/particulate_flow/lbm_dem.py`.
 
 ## Metrics And Diagnostics
 
