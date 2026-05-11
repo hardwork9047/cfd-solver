@@ -28,8 +28,8 @@ import numpy as np
 # パッケージを src/ から読み込む
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from cfd_dem_lbm import FastLBMDEM, LBMDEMSolver, PoreGeometry
+from cfd_dem_lbm.result_paths import program_results_dir
 from cfd_dem_lbm.simulation_config import SimulationConfig
-from cfd.result_paths import program_results_dir
 
 # ---------------------------------------------------------------------------
 # コマンドライン引数

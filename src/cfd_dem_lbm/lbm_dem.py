@@ -29,9 +29,9 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-from cfd.result_paths import program_results_dir
 from .dem_solver import DEMSolver, PARTICLE_METHODS
 from .geometry import PoreGeometry
+from .result_paths import program_results_dir
 
 try:  # Optional acceleration. The solver keeps a pure-NumPy/Python fallback.
     from numba import njit

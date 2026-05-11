@@ -18,10 +18,9 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
-from cfd.result_paths import program_results_dir
-
 from .fast_solver import FastLBMDEM
 from .lbm_dem import CS2, COMPUTE_ACCELERATORS, FLUID_ACCELERATORS, FLUID_METHODS
+from .result_paths import program_results_dir
 
 
 @dataclass

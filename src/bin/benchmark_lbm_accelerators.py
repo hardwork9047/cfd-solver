@@ -17,7 +17,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from cfd.result_paths import program_results_dir
+from cfd_dem_lbm.result_paths import program_results_dir
 from cfd_dem_lbm import FastLBMDEM
 
 

@@ -5,7 +5,7 @@ build-backend = "poetry.core.masonry.api"
 [tool.poetry]
 name = "cfd-solver"
 version = "0.3.0"
-description = "Python library for CFD: Navier-Stokes FDM, Lattice-Boltzmann (D2Q9), and Discrete Element Method solvers."
+description = "LBM-DEM membrane fouling simulation toolkit."
 readme = "README.md"
 license = "MIT"
 authors = [
@@ -14,23 +14,19 @@ authors = [
 keywords = [
     "CFD",
     "Fluid Dynamics",
-    "Navier-Stokes",
-    "Poiseuille",
-    "Lid-Driven Cavity",
     "Cylinder Flow",
-    "Karman Vortex",
     "Lattice-Boltzmann",
     "LBM",
     "Discrete Element Method",
     "DEM",
-    "Non-Newtonian",
+    "Membrane Fouling",
+    "Particle-Laden Flow",
     "Numerical Simulation",
     "Computational Physics",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
-    "Intended Audience :: Education",
     "Topic :: Scientific/Engineering :: Physics",
     "Topic :: Scientific/Engineering :: Mathematics",
     "License :: OSI Approved :: MIT License",
@@ -46,9 +42,6 @@ homepage = "https://github.com/hardwork9047/cfd-solver"
 documentation = "https://github.com/hardwork9047/cfd-solver#readme"
 repository = "https://github.com/hardwork9047/cfd-solver.git"
 packages = [
-    {include = "cfd", from = "src"},
-    {include = "cfd_lbm", from = "src"},
-    {include = "dem", from = "src"},
     {include = "cfd_dem_lbm", from = "src"},
 ]
 
@@ -71,7 +64,6 @@ target-version = ["py311", "py312", "py313"]
 extend-exclude = '''
 (
   ^src/demos/
-  | ^tests/verification/
 )
 '''
 
@@ -81,5 +73,4 @@ target-version = "py311"
 lint.select = ["E", "F", "W", "I"]
 extend-exclude = [
     "src/demos",
-    "tests/verification",
 ]

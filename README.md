@@ -1,151 +1,96 @@
-# CFD Solver Library
+# LBM-DEM Membrane Fouling Simulator
 
-[![CI](https://img.shields.io/github/actions/workflow/status/hardwork9047/cfd-solver/ci.yml?branch=main&label=CI)](https://github.com/hardwork9047/cfd-solver/actions/workflows/ci.yml)
-[![PyPI - Version](https://img.shields.io/pypi/v/cfd-solver.svg)](https://pypi.org/project/cfd-solver/)
-[![Python](https://img.shields.io/pypi/pyversions/cfd-solver)](https://pypi.org/project/cfd-solver/)
-[![License](https://img.shields.io/github/license/hardwork9047/cfd-solver)](LICENSE)
+This repository contains a two-dimensional LBM-DEM simulation toolkit for
+studying particle transport, deposition, and pore-scale fouling around
+cylinder-based membrane geometries.
 
-A Python library for Computational Fluid Dynamics covering Navier-Stokes
-finite-difference solvers, the Lattice-Boltzmann Method (D2Q9), and the
-Discrete Element Method — designed for education and research.
+The active code path is centered on `src/cfd_dem_lbm/` and the production runner
+`src/demos/run_lbm_dem.py`.
 
-## Solvers at a glance
+## Active Capabilities
 
-| Class | Package | Method | Physics | Reference |
-|-------|---------|--------|---------|-----------|
-| `PlanePoiseuille` | `cfd` | FDM + SOR | Pressure-driven channel flow | Analytical |
-| `CircularPoiseuille` | `cfd` | FDM + SOR | Hagen-Poiseuille pipe flow | Analytical |
-| `PowerLawPlanePoiseuille` | `cfd` | FDM iterative | Power-law non-Newtonian flow | Analytical |
-| `CavityFlow` | `cfd` | NS projection | Lid-driven cavity | Ghia et al. (1982) |
-| `CylinderFlow` | `cfd` | NS projection + upwind2 | Flow past cylinder / Kármán vortex | Williamson (1988) |
-| `LBM` | `cfd_lbm` | D2Q9 BGK | Lid-driven cavity (mesoscopic) | Zou & He (1997) |
-| `PoiseuilleFlow` | `cfd_lbm` | D2Q9 BGK | Channel flow (lattice units) | — |
-| `ParticleSystem` | `dem` | DEM Hertz contact | Granular particle dynamics | — |
-| `LBMDEMSolver` | `cfd_dem_lbm` | LBM + DEM coupled | Particle-laden flow | — |
+| Component | Path | Purpose |
+|---|---|---|
+| Coupled solver | `src/cfd_dem_lbm/lbm_dem.py` | LBM-DEM time integration |
+| Fast solver facade | `src/cfd_dem_lbm/fast_solver.py` | Cached production solver path |
+| DEM solver | `src/cfd_dem_lbm/dem_solver.py` | Particle contact, rolling friction, surface forces |
+| Geometry layer | `src/cfd_dem_lbm/geometry.py` | Cylinder pore layouts and masks |
+| Config loader | `src/cfd_dem_lbm/simulation_config.py` | JSON-based run configuration |
+| Fluid verification | `src/cfd_dem_lbm/fluid_verification.py` | Shared-solver verification problems |
+| Cylinder flow runner | `src/cfd_dem_lbm/cylinder_flow.py` | Fluid-only cylinder calculations through the same solver path |
+| Main runner | `src/demos/run_lbm_dem.py` | Simulation execution and output orchestration |
 
-## Installation
+## Standard Run
 
 ```bash
-pip install cfd-solver
+poetry run python src/demos/run_lbm_dem.py \
+  --config configs/lbm_dem/membrane_pressure_periodic_smoke.json
 ```
 
-Development install:
+The recommended membrane-pore boundary setting is:
 
 ```bash
-git clone https://github.com/hardwork9047/cfd-solver.git
-cd cfd-solver
+--y-boundary periodic --streamwise-boundary pressure
+```
+
+This represents a periodically repeated transverse unit cell with a pressure
+inlet on the left, a pressure outlet on the right, and fixed cylinders creating
+the pore-scale hydraulic resistance.
+
+## Outputs
+
+Runs write timestamped result folders under:
+
+```text
+src/results/run_lbm_dem/
+```
+
+Typical outputs include:
+
+- reproducibility metadata
+- time-series CSV/NPZ data
+- pressure and velocity fields
+- particle and cylinder ParaView VTK files
+- snapshots and videos when enabled
+- summary JSON/Markdown reports
+
+## Documentation
+
+The current model is documented under:
+
+```text
+docs/fouling_model/
+```
+
+Key files:
+
+- `SYSTEM_ARCHITECTURE.md`
+- `PROCESS_FLOW.md`
+- `ALGORITHMS.md`
+- `NUMERICAL_WORKFLOW.md`
+- `LBM_DEM_COUPLING_LIMITATIONS.md`
+
+## Project Structure
+
+```text
+configs/lbm_dem/      Reusable JSON run configurations
+docs/fouling_model/   Architecture, algorithms, limitations, and workflow notes
+paper/                Manuscript drafts
+src/bin/              Reproducible run, sweep, plotting, and benchmark scripts
+src/cfd_dem_lbm/      Active LBM-DEM solver package
+src/demos/            Main executable runner
+src/results/          Generated outputs grouped by program name
+tests/                pytest suite for the active solver path
+```
+
+## Development
+
+```bash
 poetry install
+poetry run python -m pytest tests
 ```
 
-## Quick start
+The repository intentionally keeps simulation outputs file-based and
+self-contained. Result directories can be moved or archived without requiring a
+database.
 
-### Poiseuille flow (analytical vs. numerical)
-
-```python
-from cfd import PlanePoiseuille
-
-flow = PlanePoiseuille(L=0.01, dp_dx=-100, mu=1e-3, ny=51)
-u_exact = flow.analytical_solution()
-u_num   = flow.numerical_solution()
-print(f"Max velocity: {flow.get_max_velocity():.4f} m/s")
-```
-
-### Lid-driven cavity (Navier-Stokes projection)
-
-```python
-from cfd import CavityFlow
-
-flow = CavityFlow(L=1.0, rho=1.0, mu=0.01)          # Re = 100
-flow.solve_steady_state(max_iterations=2000)
-fig = flow.plot_velocity_field()
-fig.savefig("cavity_Re100.png")
-```
-
-### Kármán vortex shedding (Re = 200)
-
-```python
-from cfd import CylinderFlow
-
-flow = CylinderFlow(
-    L=4.0, H=2.0, D=0.2, U_inf=1.0, rho=1.0, mu=0.005,  # Re = 200
-    nx=160, ny=80, advection_scheme="upwind2",
-)
-flow.run(t_end=20.0, output_interval=200)
-fig = flow.plot_velocity_field()
-```
-
-### LBM cavity (D2Q9 Lattice-Boltzmann)
-
-```python
-from cfd_lbm import LBM
-
-sim = LBM(nx=128, ny=128, Re=400.0, u_lid=0.1)
-sim.advance(50_000)
-rho, ux, uy = sim.get_fields()
-```
-
-### DEM granular simulation
-
-```python
-from dem import ParticleSystem
-
-ps = ParticleSystem(n_particles=200, domain_size=(10.0, 10.0),
-                    particle_radius=0.2, gravity=9.81, seed=42)
-ps.run(t_end=5.0)
-```
-
-## Numerical methods
-
-| Method | Where used | Key property |
-|--------|-----------|--------------|
-| FDM central difference (2nd order) | diffusion terms | accurate, simple |
-| 1st-order upwind | CavityFlow default | diffusive, always stable |
-| 2nd-order linear-upwind | CylinderFlow default | low numerical diffusion, Re_eff ≈ Re |
-| SOR pressure Poisson | all Navier-Stokes solvers | converges with ω = 1.4–1.5 |
-| D2Q9 BGK collision | LBM | lattice-scale, parallelisable |
-| Zou-He velocity BC | LBM moving lid | momentum-conserving |
-| Velocity Verlet | DEM | 2nd-order symplectic integration |
-| Hertzian contact | DEM | physical overlap force model |
-
-## Known limitations
-
-- All solvers are 2-D and single-threaded.
-- `CylinderFlow` Kármán shedding requires `advection_scheme="upwind2"`; the
-  default 1st-order upwind damps vortices on coarse grids.
-- `CavityFlow` remains stable up to approximately Re ≈ 1000 at default
-  resolution (65×65). Higher Re requires finer grids.
-- LBM is stable for `u_lid < 0.3` (lattice units) to satisfy the low-Mach
-  assumption.
-- No unstructured mesh support; domains must be rectangular.
-- No turbulence modelling; only laminar flows are represented.
-
-## Project structure
-
-```
-src/
-├── cfd/            Navier-Stokes FDM solvers
-├── cfd_lbm/        Lattice-Boltzmann Method (D2Q9)
-├── dem/            Discrete Element Method
-├── cfd_dem_lbm/    Coupled LBM-DEM solver
-├── demos/          Runnable demonstration scripts
-├── bin/            Maintenance scripts
-└── results/        Generated outputs grouped by program name
-docs/               Project notes, tutorials, and verification reports
-tests/              pytest test suite (44 tests)
-tests/verification/ Manual benchmark and historical-comparison programs
-paper/              Manuscript drafts and paper assets
-.github/workflows/  CI (tests on Python 3.11–3.13)
-```
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md). Please report bugs and request features
-via [GitHub Issues](https://github.com/hardwork9047/cfd-solver/issues).
-
-## Security
-
-See [SECURITY.md](SECURITY.md) for vulnerability disclosure policy.
-
-## License
-
-MIT — see [LICENSE](LICENSE).
