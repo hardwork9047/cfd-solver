@@ -12,6 +12,24 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+META_KEYS = {
+    "schema_version",
+    "name",
+    "description",
+    "case_type",
+    "notes",
+}
+SECTION_KEYS = {
+    "domain",
+    "flow",
+    "numerics",
+    "particles",
+    "physics",
+    "runtime",
+    "outputs",
+    "stability",
+}
+
 
 def _normalise_key(key: str) -> str:
     """Map JSON-friendly keys to argparse destination names."""
@@ -29,6 +47,79 @@ def _normalise_value(value: Any) -> Any:
     if isinstance(value, dict):
         return {_normalise_key(str(key)): _normalise_value(item) for key, item in value.items()}
     return value
+
+
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """Recursively merge two dictionaries without mutating either input."""
+    merged = dict(base)
+    for key, value in override.items():
+        if (
+            key in merged
+            and isinstance(merged[key], dict)
+            and isinstance(value, dict)
+        ):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _load_json_object(path: Path) -> dict[str, Any]:
+    """Load a JSON object from disk."""
+    with path.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if not isinstance(payload, dict):
+        raise ValueError("simulation config JSON must contain an object at the top level")
+    return payload
+
+
+def _resolve_relative_path(value: str | Path, *, base_dir: Path) -> Path:
+    """Resolve config references relative to the including file."""
+    path = Path(value)
+    if not path.is_absolute():
+        path = base_dir / path
+    return path
+
+
+def _load_with_extends(path: Path, seen: set[Path] | None = None) -> dict[str, Any]:
+    """Load a config and recursively merge any ``extends`` parents."""
+    resolved = path.resolve()
+    seen = set() if seen is None else set(seen)
+    if resolved in seen:
+        raise ValueError(f"cyclic config extends detected at {path}")
+    seen.add(resolved)
+
+    payload = _load_json_object(path)
+    parents = payload.pop("extends", None)
+    if parents is None:
+        return payload
+    if isinstance(parents, (str, Path)):
+        parent_list = [parents]
+    elif isinstance(parents, list):
+        parent_list = parents
+    else:
+        raise ValueError("extends must be a string or list of strings")
+
+    merged: dict[str, Any] = {}
+    for parent in parent_list:
+        parent_path = _resolve_relative_path(parent, base_dir=path.parent)
+        merged = _deep_merge(merged, _load_with_extends(parent_path, seen))
+    return _deep_merge(merged, payload)
+
+
+def _flatten_sections(values: dict[str, Any]) -> dict[str, Any]:
+    """Flatten research-friendly config sections into runner argument keys."""
+    payload: dict[str, Any] = {}
+    for key, value in values.items():
+        if key in META_KEYS:
+            continue
+        if key in SECTION_KEYS:
+            if not isinstance(value, dict):
+                raise ValueError(f"{key} must be an object when provided")
+            payload = _deep_merge(payload, value)
+        else:
+            payload[key] = value
+    return payload
 
 
 def _normalise_geometry_cylinders(values: dict[str, Any]) -> dict[str, Any]:
@@ -52,6 +143,13 @@ def _normalise_geometry_cylinders(values: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def _prepare_values(mapping: dict[str, Any]) -> dict[str, Any]:
+    """Normalize, flatten, and adapt a user-facing config mapping."""
+    values = _normalise_value(mapping)
+    values = _flatten_sections(values)
+    return _normalise_geometry_cylinders(values)
+
+
 @dataclass(frozen=True)
 class SimulationConfig:
     """A file-backed simulation configuration.
@@ -72,16 +170,13 @@ class SimulationConfig:
         *,
         source_path: str | None = None,
     ) -> "SimulationConfig":
-        values = _normalise_geometry_cylinders(_normalise_value(mapping))
+        values = _prepare_values(mapping)
         return cls(values=values, source_path=source_path)
 
     @classmethod
     def from_json(cls, path: str | Path) -> "SimulationConfig":
         config_path = Path(path)
-        with config_path.open("r", encoding="utf-8") as handle:
-            payload = json.load(handle)
-        if not isinstance(payload, dict):
-            raise ValueError("simulation config JSON must contain an object at the top level")
+        payload = _load_with_extends(config_path)
         return cls.from_mapping(payload, source_path=str(config_path))
 
     def argparse_defaults(self) -> dict[str, Any]:

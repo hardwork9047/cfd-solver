@@ -1,0 +1,18 @@
+{
+  "extends": "../templates/cylinder_flow.json",
+  "name": "cylinder_flow_single",
+  "description": "Single fixed-cylinder fluid-only smoke case.",
+  "geometry": {
+    "cylinders": [
+      {"x": 55, "y": 35, "radius": 6.0}
+    ]
+  },
+  "runtime": {
+    "total_steps": 300,
+    "warmup_steps": 100,
+    "snapshot_every": 100
+  },
+  "outputs": {
+    "result_tag": "cylinder_flow_single_config"
+  }
+}

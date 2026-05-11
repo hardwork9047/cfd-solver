@@ -64,3 +64,58 @@ def test_simulation_config_accepts_structured_geometry_block(tmp_path):
         [34, 13, 4.0],
         [54, 25, 4.5],
     ]
+
+
+def test_simulation_config_flattens_research_sections():
+    """Configs can group settings by purpose while still feeding argparse."""
+    config = SimulationConfig.from_mapping(
+        {
+            "case_type": "fouling_supply",
+            "domain": {"nx": 100, "ny": 50},
+            "flow": {"streamwise-boundary": "pressure"},
+            "particles": {"n_particles": 0, "particle_radius": 1.5},
+            "outputs": {"no_video": True},
+        }
+    )
+
+    defaults = config.argparse_defaults()
+
+    assert defaults["nx"] == 100
+    assert defaults["ny"] == 50
+    assert defaults["streamwise_boundary"] == "pressure"
+    assert defaults["n_particles"] == 0
+    assert defaults["particle_radius"] == 1.5
+    assert defaults["no_video"] is True
+    assert "case_type" not in defaults
+
+
+def test_simulation_config_extends_parent_configs(tmp_path):
+    """Case files can extend reusable templates."""
+    parent = tmp_path / "template.json"
+    parent.write_text(
+        json.dumps(
+            {
+                "domain": {"nx": 80, "ny": 40},
+                "outputs": {"no_video": True, "paraview_output": False},
+            }
+        ),
+        encoding="utf-8",
+    )
+    child = tmp_path / "case.json"
+    child.write_text(
+        json.dumps(
+            {
+                "extends": "template.json",
+                "domain": {"nx": 120},
+                "outputs": {"paraview_output": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    defaults = SimulationConfig.from_json(child).argparse_defaults()
+
+    assert defaults["nx"] == 120
+    assert defaults["ny"] == 40
+    assert defaults["no_video"] is True
+    assert defaults["paraview_output"] is True

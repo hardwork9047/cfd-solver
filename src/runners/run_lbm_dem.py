@@ -146,6 +146,12 @@ parser.add_argument("--particle-radius", type=float, default=3.0,
                     help="Mean particle radius in lattice nodes (default: 3.0)")
 parser.add_argument("--radius-variation", type=float, default=0.15,
                     help="Uniform particle radius variation fraction (default: 0.15)")
+parser.add_argument("--density-ratio", type=float, default=2.0,
+                    help="Particle/fluid density ratio (default: 2.0)")
+parser.add_argument("--gravity", type=float, default=3e-5,
+                    help="Gravity acceleration in lattice units (default: 3e-5)")
+parser.add_argument("--dem-substeps", type=int, default=4,
+                    help="DEM substeps per LBM step (default: 4)")
 parser.add_argument("--particle-volume-fraction", "--particle-area-fraction",
                     type=float, default=None,
                     help="Target 2-D particle area fraction relative to water area. "
@@ -218,8 +224,8 @@ parser.set_defaults(**CONFIG.argparse_defaults())
 args = parser.parse_args()
 if args.particle_attraction and args.particle_repulsion:
     parser.error("--particle-attraction and --particle-repulsion are mutually exclusive")
-if args.n_particles is not None and args.n_particles <= 0:
-    parser.error("--n-particles must be positive")
+if args.n_particles is not None and args.n_particles < 0:
+    parser.error("--n-particles must be non-negative")
 if args.nx <= 2:
     parser.error("--nx must be greater than 2")
 if args.ny <= 2:
@@ -242,6 +248,10 @@ if args.particle_radius <= 0.0:
     parser.error("--particle-radius must be positive")
 if args.radius_variation < 0.0:
     parser.error("--radius-variation must be non-negative")
+if args.density_ratio <= 0.0:
+    parser.error("--density-ratio must be positive")
+if args.dem_substeps <= 0:
+    parser.error("--dem-substeps must be positive")
 if args.particle_volume_fraction is not None and args.particle_volume_fraction <= 0.0:
     parser.error("--particle-volume-fraction must be positive")
 if args.total_steps <= 0:
@@ -302,8 +312,8 @@ DEFAULT_N_PARTICLES = 40 # 粒子数 (分率未指定時)
 RADIUS          = args.particle_radius    # 粒子平均半径 (格子単位)
 REYNOLDS_LENGTH = 2.0 * RADIUS  # 代表長さ: 粒子径
 RADIUS_VARIATION = args.radius_variation  # 粒子径バリエーション
-DENSITY_RATIO   = 2.0    # ρ_p / ρ_f
-GRAVITY         = 3e-5   # 重力加速度 (格子単位)
+DENSITY_RATIO   = args.density_ratio    # ρ_p / ρ_f
+GRAVITY         = args.gravity   # 重力加速度 (格子単位)
 TOTAL_STEPS  = args.total_steps  # 総 LBM ステップ数
 SNAPSHOT_EVERY = args.snapshot_every   # 何ステップごとにスナップショット取得
 FPS          = 24     # 動画フレームレート
@@ -1115,7 +1125,7 @@ sim = FastLBMDEM(
     radius_variation=RADIUS_VARIATION,
     density_ratio=DENSITY_RATIO,
     gravity=GRAVITY,
-    dem_substeps=4,
+    dem_substeps=args.dem_substeps,
     seed=42,
     rolling_friction=args.rolling_friction,
     sliding_friction=args.sliding_friction,

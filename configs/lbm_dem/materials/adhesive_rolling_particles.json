@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "name": "adhesive_rolling_particles",
+  "description": "Particle interaction settings with Hamaker-like attraction and rolling friction.",
+  "physics": {
+    "particle_attraction": true,
+    "particle_repulsion": false,
+    "attraction_strength": 0.002,
+    "attraction_cutoff": 3.0,
+    "attraction_min_gap": 0.05,
+    "rolling_friction": true,
+    "rolling_friction_coeff": 0.15,
+    "sliding_friction": 0.5
+  }
+}

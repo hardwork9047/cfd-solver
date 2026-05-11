@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "name": "four_cylinder_staggered",
+  "description": "Four staggered cylinders used as a simple membrane-pore geometry.",
+  "geometry": {
+    "cylinders": [
+      {"x": 75, "y": 25, "radius": 6.0},
+      {"x": 75, "y": 45, "radius": 6.0},
+      {"x": 105, "y": 25, "radius": 6.0},
+      {"x": 105, "y": 45, "radius": 6.0}
+    ]
+  }
+}

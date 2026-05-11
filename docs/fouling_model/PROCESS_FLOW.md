@@ -14,7 +14,7 @@ The recommended command path is:
 
 ```bash
 poetry run python src/runners/run_lbm_dem.py \
-  --config configs/lbm_dem/membrane_pressure_periodic_smoke.json
+  --config configs/lbm_dem/cases/fouling_four_cylinder_supply.json
 ```
 
 Additional CLI arguments may be added after `--config`.  Explicit CLI arguments
@@ -45,6 +45,16 @@ Reusable cases live in:
 configs/lbm_dem/
 ```
 
+Use this layout for new studies:
+
+```text
+templates/   calculation-type defaults
+cases/       named single-run studies
+sweeps/      factor sweeps and case lists
+geometries/  reusable cylinder layouts
+materials/   reusable particle interaction settings
+```
+
 The preferred geometry format is:
 
 ```json
@@ -59,6 +69,8 @@ The preferred geometry format is:
 ```
 
 The older CLI-style `cylinder_spec` format is still accepted for compatibility.
+Case files can also use `extends` to reuse templates, geometry snippets, and
+material settings.
 
 ### 2. Config Loading
 

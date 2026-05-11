@@ -13,6 +13,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from cfd_dem_lbm.simulation_config import SimulationConfig
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RUNNER = REPO_ROOT / "src" / "runners" / "run_lbm_dem.py"
@@ -110,7 +113,7 @@ def _case_command(config: dict[str, Any], case: dict[str, Any]) -> list[str]:
     case_args = case.get("args", {})
     if not isinstance(defaults, dict) or not isinstance(case_args, dict):
         raise ValueError("defaults and each case args must be JSON objects")
-    merged = {**defaults, **case_args}
+    merged = SimulationConfig.from_mapping({**defaults, **case_args}).argparse_defaults()
     name = str(case.get("name", "case"))
     merged.setdefault("result_tag", name)
     return [sys.executable, "-u", str(RUNNER), *_args_from_mapping(merged)]

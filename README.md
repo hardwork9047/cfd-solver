@@ -24,7 +24,7 @@ The active code path is centered on `src/cfd_dem_lbm/` and the production runner
 
 ```bash
 poetry run python src/runners/run_lbm_dem.py \
-  --config configs/lbm_dem/membrane_pressure_periodic_smoke.json
+  --config configs/lbm_dem/cases/fouling_four_cylinder_supply.json
 ```
 
 The recommended membrane-pore boundary setting is:
@@ -93,4 +93,3 @@ poetry run python -m pytest tests
 The repository intentionally keeps simulation outputs file-based and
 self-contained. Result directories can be moved or archived without requiring a
 database.
-

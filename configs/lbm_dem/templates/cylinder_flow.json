@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "name": "cylinder_flow",
+  "case_type": "cylinder_flow",
+  "description": "Fluid-only pressure-driven flow around fixed cylinders using the production LBM path.",
+  "domain": {
+    "nx": 140,
+    "ny": 70
+  },
+  "flow": {
+    "y_boundary": "periodic",
+    "streamwise_boundary": "pressure",
+    "pressure_drop": 1e-5,
+    "rho_out": 1.0,
+    "reynolds_number": 20,
+    "u_max": 0.04,
+    "flow_condition": "fixed-pressure"
+  },
+  "numerics": {
+    "fluid_method": "lbm-trt-guo",
+    "fluid_accelerator": "auto",
+    "compute_accelerator": "auto",
+    "particle_fluid_coupling": "point_force"
+  },
+  "particles": {
+    "n_particles": 0,
+    "particle_source": "initial",
+    "particle_radius": 1.0,
+    "radius_variation": 0.0
+  },
+  "runtime": {
+    "total_steps": 1000,
+    "warmup_steps": 200,
+    "snapshot_every": 200
+  },
+  "outputs": {
+    "output_profile": "analysis",
+    "paraview_output": true,
+    "paraview_every": 0,
+    "snapshot_storage": "none",
+    "no_video": true
+  },
+  "stability": {
+    "max_stable_speed": 0.5,
+    "max_stable_pressure": 2.0
+  }
+}

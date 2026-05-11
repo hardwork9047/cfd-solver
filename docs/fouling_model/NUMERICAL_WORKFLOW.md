@@ -200,8 +200,8 @@ ParaView fields are still needed before treating a case as physically meaningful
 Use JSON configs to keep parameter sweeps reproducible:
 
 ```bash
-src/bin/run_lbm_dem_config_sweep.py configs/lbm_dem/<sweep_config>.json --dry-run
-src/bin/run_lbm_dem_config_sweep.py configs/lbm_dem/<sweep_config>.json --jobs 4
+src/bin/run_lbm_dem_config_sweep.py configs/lbm_dem/sweeps/fouling_screening_example.json --dry-run
+src/bin/run_lbm_dem_config_sweep.py configs/lbm_dem/sweeps/fouling_screening_example.json --jobs 4
 ```
 
 The runner writes logs and `status.tsv` under
@@ -212,8 +212,13 @@ Two config styles are supported:
 - `cases`: explicitly list named cases.
 - `factors`: define lists of values and let the runner expand the Cartesian
   product into cases.
+- `defaults.config`: point each generated case at a reusable template under
+  `configs/lbm_dem/templates/`.
 - `--jobs N`: run up to `N` cases in parallel.  Use this for independent
   sweeps, choosing `N` so memory and CPU usage remain comfortable.
+
+Single-run cases should live in `configs/lbm_dem/cases/` and may use `extends`
+to reuse templates, geometry snippets, and material snippets.
 
 After a sweep, summarize all available run directories with:
 

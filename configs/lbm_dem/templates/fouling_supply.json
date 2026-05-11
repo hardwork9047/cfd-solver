@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "name": "fouling_supply",
+  "case_type": "fouling_supply",
+  "description": "Pressure-driven membrane-pore fouling calculation with particles supplied from the left inlet.",
+  "domain": {
+    "nx": 180,
+    "ny": 70
+  },
+  "flow": {
+    "y_boundary": "periodic",
+    "streamwise_boundary": "pressure",
+    "pressure_drop": 1e-4,
+    "rho_out": 1.0,
+    "reynolds_number": 50,
+    "u_max": 0.05,
+    "flow_condition": "fixed-pressure"
+  },
+  "numerics": {
+    "fluid_method": "lbm-trt-guo",
+    "fluid_accelerator": "auto",
+    "compute_accelerator": "auto",
+    "particle_method": "dem-hertz",
+    "particle_search": "cell_list",
+    "particle_fluid_coupling": "immersed_boundary",
+    "ibm_marker_spacing": 2.0
+  },
+  "particles": {
+    "particle_source": "left-inlet",
+    "particle_volume_fraction": 0.10,
+    "particle_radius": 3.0,
+    "radius_variation": 0.10,
+    "density_ratio": 2.0,
+    "gravity": 0.00003,
+    "dem_substeps": 4
+  },
+  "physics": {
+    "rolling_friction": true,
+    "rolling_friction_coeff": 0.05,
+    "sliding_friction": 0.5,
+    "particle_attraction": false,
+    "particle_repulsion": false,
+    "attraction_strength": 0.001,
+    "repulsion_strength": 0.001
+  },
+  "runtime": {
+    "total_steps": 5000,
+    "warmup_steps": 500,
+    "snapshot_every": 100
+  },
+  "outputs": {
+    "output_profile": "analysis",
+    "paraview_output": true,
+    "paraview_every": 0,
+    "snapshot_storage": "none",
+    "no_video": true
+  },
+  "stability": {
+    "max_stable_speed": 1.0,
+    "max_stable_pressure": 5.0
+  }
+}

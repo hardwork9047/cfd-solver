@@ -1,0 +1,8 @@
+{
+  "extends": "../templates/dem_settling_pack.json",
+  "name": "dem_settling_200",
+  "description": "Two hundred particles settling and packing under gravity.",
+  "outputs": {
+    "result_tag": "dem_settling_200_config"
+  }
+}

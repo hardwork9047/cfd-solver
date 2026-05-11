@@ -77,11 +77,21 @@ files.  The preferred research workflow is to keep reusable cases under:
 configs/lbm_dem/
 ```
 
+The config tree is organized by intent:
+
+| Path | Role |
+|---|---|
+| `configs/lbm_dem/templates/` | Reusable defaults for calculation types |
+| `configs/lbm_dem/cases/` | Named single-run studies |
+| `configs/lbm_dem/sweeps/` | Multi-case or factor-sweep definitions |
+| `configs/lbm_dem/geometries/` | Reusable cylinder layouts for copy/reference |
+| `configs/lbm_dem/materials/` | Reusable particle and surface-interaction settings |
+
 For example:
 
 ```bash
 poetry run python src/runners/run_lbm_dem.py \
-  --config configs/lbm_dem/membrane_pressure_periodic_smoke.json
+  --config configs/lbm_dem/cases/fouling_four_cylinder_supply.json
 ```
 
 Explicit CLI arguments override values loaded from the config file.  Every run
@@ -99,12 +109,17 @@ The current architecture intentionally keeps run tracking file-based rather than
 using SQLite.  This keeps each result folder self-contained and easy to move,
 archive, or compare on another machine.
 
+Config files may be grouped into research-friendly sections such as `domain`,
+`flow`, `numerics`, `particles`, `physics`, `runtime`, `outputs`, and
+`stability`.  `SimulationConfig` flattens these sections into runner arguments.
+Case files can reuse templates or reusable snippets through `extends`.
+
 ## Maintainable Module Layout
 
 The production path is being moved toward a layered structure:
 
 ```text
-configs/lbm_dem/*.json
+configs/lbm_dem/templates, cases, sweeps
   -> SimulationConfig
   -> run_lbm_dem.py / Runner
   -> FastLBMDEM / LBMDEMSolver
@@ -116,7 +131,7 @@ The intended responsibility split is:
 
 | Layer | Current module | Responsibility |
 |---|---|---|
-| Case definition | `configs/lbm_dem/` | Reusable geometry, physics, output, and backend settings |
+| Case definition | `configs/lbm_dem/` | Reusable templates, single cases, sweeps, geometry, physics, output, and backend settings |
 | Config loading | `src/cfd_dem_lbm/simulation_config.py` | Convert JSON config files into runner arguments |
 | Geometry | `src/cfd_dem_lbm/geometry.py` | Cylinder definitions, pore masks, pressure probe sections, cylinder VTK |
 | Runner | `src/runners/run_lbm_dem.py` | CLI, simulation execution, output orchestration |

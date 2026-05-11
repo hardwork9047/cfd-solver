@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "name": "dem_settling_pack",
+  "case_type": "dem_settling_pack",
+  "description": "DEM-heavy settling/packing calculation with weak or zero imposed flow.",
+  "domain": {
+    "nx": 120,
+    "ny": 80
+  },
+  "flow": {
+    "y_boundary": "wall",
+    "streamwise_boundary": "periodic-force",
+    "pressure_drop": 0.0,
+    "reynolds_number": 10,
+    "u_max": 0.0,
+    "flow_condition": "fixed-pressure"
+  },
+  "numerics": {
+    "fluid_method": "lbm-bgk-guo",
+    "fluid_accelerator": "auto",
+    "compute_accelerator": "auto",
+    "particle_method": "dem-hertz",
+    "particle_search": "cell_list",
+    "particle_fluid_coupling": "point_force"
+  },
+  "particles": {
+    "n_particles": 200,
+    "particle_source": "initial",
+    "particle_radius": 2.0,
+    "radius_variation": 0.10,
+    "density_ratio": 2.0,
+    "gravity": 0.0001,
+    "dem_substeps": 8
+  },
+  "physics": {
+    "rolling_friction": true,
+    "rolling_friction_coeff": 0.10,
+    "sliding_friction": 0.5
+  },
+  "runtime": {
+    "total_steps": 3000,
+    "warmup_steps": 0,
+    "snapshot_every": 100
+  },
+  "outputs": {
+    "output_profile": "analysis",
+    "paraview_output": true,
+    "paraview_every": 0,
+    "snapshot_storage": "none",
+    "no_video": true
+  },
+  "stability": {
+    "max_stable_speed": 1.0,
+    "max_stable_pressure": 5.0
+  }
+}
