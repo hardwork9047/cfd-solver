@@ -13,7 +13,7 @@ For the numerical algorithms executed inside the solver loop, see
 The recommended command path is:
 
 ```bash
-poetry run python src/demos/run_lbm_dem.py \
+poetry run python src/runners/run_lbm_dem.py \
   --config configs/lbm_dem/membrane_pressure_periodic_smoke.json
 ```
 
@@ -26,7 +26,7 @@ override values loaded from the JSON file.
 User command
   -> JSON config in configs/lbm_dem/
   -> SimulationConfig
-  -> src/demos/run_lbm_dem.py
+  -> src/runners/run_lbm_dem.py
   -> PoreGeometry
   -> FastLBMDEM / LBMDEMSolver
   -> DEMSolver
@@ -74,7 +74,7 @@ Responsibilities:
 
 ### 3. Runner Setup
 
-`src/demos/run_lbm_dem.py` is the current production runner.
+`src/runners/run_lbm_dem.py` is the current production runner.
 
 It handles:
 

@@ -63,7 +63,7 @@ line-length = 100
 target-version = ["py311", "py312", "py313"]
 extend-exclude = '''
 (
-  ^src/demos/
+  ^src/runners/
 )
 '''
 
@@ -72,5 +72,5 @@ line-length = 100
 target-version = "py311"
 lint.select = ["E", "F", "W", "I"]
 extend-exclude = [
-    "src/demos",
+    "src/runners",
 ]

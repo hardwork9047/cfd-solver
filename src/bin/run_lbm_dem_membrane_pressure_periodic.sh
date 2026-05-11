@@ -6,7 +6,7 @@ set -euo pipefail
 # - streamwise x boundary: pressure inlet/outlet
 # - fixed cylinders create the pore-scale pressure loss
 
-poetry run python src/demos/run_lbm_dem.py \
+poetry run python src/runners/run_lbm_dem.py \
   --nx 100 \
   --ny 50 \
   --total-steps 3000 \

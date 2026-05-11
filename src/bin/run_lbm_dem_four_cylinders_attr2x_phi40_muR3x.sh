@@ -13,7 +13,7 @@ LOG_FILE="${LOG_DIR}/${TAG}.log"
 mkdir -p "$LOG_DIR"
 
 cmd=(
-  python -u src/demos/run_lbm_dem.py
+  python -u src/runners/run_lbm_dem.py
   --cylinder-spec 75 25 6
   --cylinder-spec 75 45 6
   --cylinder-spec 105 25 6

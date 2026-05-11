@@ -63,7 +63,7 @@ run_case() {
 
   local log_file="${LOG_ROOT}/${tag}.log"
   local cmd=(
-    python -u src/demos/run_lbm_dem.py
+    python -u src/runners/run_lbm_dem.py
     --nx "$NX"
     --ny "$NY"
     --particle-radius "$PARTICLE_RADIUS"

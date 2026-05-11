@@ -82,7 +82,7 @@ force vs solid-boundary coupling on a small set of representative geometries.
 Example:
 
 ```bash
-python src/demos/run_lbm_dem.py \
+python src/runners/run_lbm_dem.py \
   --particle-fluid-coupling solid_boundary \
   --fluid-method lbm-trt-guo \
   --particle-method dem-hertz
@@ -110,7 +110,7 @@ Use `--particle-search` to choose the DEM pair search.
 For large fouling sweeps, prefer:
 
 ```bash
-python src/demos/run_lbm_dem.py \
+python src/runners/run_lbm_dem.py \
   --fluid-method lbm-trt-guo \
   --fluid-accelerator auto \
   --compute-accelerator auto \
@@ -246,7 +246,7 @@ Particle-particle and particle-cylinder surface forces are controlled by the
 same options:
 
 ```bash
-python src/demos/run_lbm_dem.py \
+python src/runners/run_lbm_dem.py \
   --particle-source left-inlet \
   --particle-volume-fraction 0.10 \
   --particle-attraction \
@@ -264,7 +264,7 @@ parameter as the particle-particle force.  The corresponding
 Cake-layer hydraulic resistance can be added with:
 
 ```bash
-python src/demos/run_lbm_dem.py \
+python src/runners/run_lbm_dem.py \
   --particle-source left-inlet \
   --porous-resistance \
   --porous-resistance-coeff 0.02

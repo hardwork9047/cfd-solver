@@ -5,7 +5,7 @@ studying particle transport, deposition, and pore-scale fouling around
 cylinder-based membrane geometries.
 
 The active code path is centered on `src/cfd_dem_lbm/` and the production runner
-`src/demos/run_lbm_dem.py`.
+`src/runners/run_lbm_dem.py`.
 
 ## Active Capabilities
 
@@ -18,12 +18,12 @@ The active code path is centered on `src/cfd_dem_lbm/` and the production runner
 | Config loader | `src/cfd_dem_lbm/simulation_config.py` | JSON-based run configuration |
 | Fluid verification | `src/cfd_dem_lbm/fluid_verification.py` | Shared-solver verification problems |
 | Cylinder flow runner | `src/cfd_dem_lbm/cylinder_flow.py` | Fluid-only cylinder calculations through the same solver path |
-| Main runner | `src/demos/run_lbm_dem.py` | Simulation execution and output orchestration |
+| Main runner | `src/runners/run_lbm_dem.py` | Simulation execution and output orchestration |
 
 ## Standard Run
 
 ```bash
-poetry run python src/demos/run_lbm_dem.py \
+poetry run python src/runners/run_lbm_dem.py \
   --config configs/lbm_dem/membrane_pressure_periodic_smoke.json
 ```
 
@@ -78,7 +78,7 @@ docs/fouling_model/   Architecture, algorithms, limitations, and workflow notes
 paper/                Manuscript drafts
 src/bin/              Reproducible run, sweep, plotting, and benchmark scripts
 src/cfd_dem_lbm/      Active LBM-DEM solver package
-src/demos/            Main executable runner
+src/runners/            Main executable runner
 src/results/          Generated outputs grouped by program name
 tests/                pytest suite for the active solver path
 ```

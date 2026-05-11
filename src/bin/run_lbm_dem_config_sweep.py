@@ -15,7 +15,7 @@ from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-RUNNER = REPO_ROOT / "src" / "demos" / "run_lbm_dem.py"
+RUNNER = REPO_ROOT / "src" / "runners" / "run_lbm_dem.py"
 STATUS_HEADER = ["case", "status", "exit_code", "log_file", "command"]
 NEGATABLE_OPTIONS = {
     "flow-control",

@@ -52,7 +52,7 @@ run_case() {
   mkdir -p "$log_dir"
 
   local cmd=(
-    python -u src/demos/run_lbm_dem.py
+    python -u src/runners/run_lbm_dem.py
     --fluid-method "$fluid_method"
     --particle-method "$particle_method"
     --particle-fluid-coupling "$coupling_method"

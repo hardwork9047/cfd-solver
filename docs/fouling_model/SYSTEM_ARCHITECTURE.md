@@ -15,7 +15,7 @@ The current system is designed to evaluate how suspended particles are transport
 
 ```text
 User command or sweep script
-  -> src/demos/run_lbm_dem.py
+  -> src/runners/run_lbm_dem.py
   -> cfd_dem_lbm.FastLBMDEM
   -> LBM fluid solver + DEM particle solver + particle-fluid coupling
   -> src/results/run_lbm_dem/.../run_TIMESTAMP/
@@ -30,7 +30,7 @@ The system is currently command-line based. Web UI or job-queue execution can be
 | Path | Role |
 |---|---|
 | `src/cfd_dem_lbm/` | Production LBM-DEM solver implementation |
-| `src/demos/run_lbm_dem.py` | Main simulation runner for fouling calculations |
+| `src/runners/run_lbm_dem.py` | Main simulation runner for fouling calculations |
 | `src/bin/` | Reproducible scripts for runs, sweeps, verification, benchmarks, and plotting |
 | `src/results/` | Simulation, verification, benchmark, and plotting outputs |
 | `tests/` | Unit and regression tests |
@@ -80,7 +80,7 @@ configs/lbm_dem/
 For example:
 
 ```bash
-poetry run python src/demos/run_lbm_dem.py \
+poetry run python src/runners/run_lbm_dem.py \
   --config configs/lbm_dem/membrane_pressure_periodic_smoke.json
 ```
 
@@ -119,7 +119,7 @@ The intended responsibility split is:
 | Case definition | `configs/lbm_dem/` | Reusable geometry, physics, output, and backend settings |
 | Config loading | `src/cfd_dem_lbm/simulation_config.py` | Convert JSON config files into runner arguments |
 | Geometry | `src/cfd_dem_lbm/geometry.py` | Cylinder definitions, pore masks, pressure probe sections, cylinder VTK |
-| Runner | `src/demos/run_lbm_dem.py` | CLI, simulation execution, output orchestration |
+| Runner | `src/runners/run_lbm_dem.py` | CLI, simulation execution, output orchestration |
 | Coupled solver | `src/cfd_dem_lbm/lbm_dem.py` | LBM-DEM time integration facade |
 | Particle solver | `src/cfd_dem_lbm/dem_solver.py` | DEM contact, wall/cylinder loads, surface interactions |
 | Fast path | `src/cfd_dem_lbm/fast_solver.py` | Cached solver variant used by production runs |
@@ -268,7 +268,7 @@ This makes it possible to verify whether the injected particle concentration mat
 The primary entry point is:
 
 ```bash
-poetry run python src/demos/run_lbm_dem.py [options]
+poetry run python src/runners/run_lbm_dem.py [options]
 ```
 
 This runner handles:
@@ -427,7 +427,7 @@ A future Web app should not run heavy simulations inside the web request process
 Web UI
   -> create job configuration
   -> launch worker/subprocess
-  -> worker runs src/demos/run_lbm_dem.py
+  -> worker runs src/runners/run_lbm_dem.py
   -> results are written under src/results/
   -> Web UI reads run_status.json, summary.json, time_series.csv, images, and videos
 ```
