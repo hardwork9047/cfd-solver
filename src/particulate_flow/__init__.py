@@ -11,6 +11,7 @@ __author__ = "hardwork9047"
 __license__ = "MIT"
 
 from .dem_solver import DEMSolver
+from .dem_packing import DEMPackingSimulation, PackingMetrics
 from .fast_solver import FastLBMDEM
 from .fluid_verification import VerificationResult, run_fluid_verification, write_verification_outputs
 from .geometry import Cylinder, PoreGeometry
@@ -20,9 +21,11 @@ from .simulation_config import SimulationConfig
 __all__ = [
     "Cylinder",
     "DEMSolver",
+    "DEMPackingSimulation",
     "FastLBMDEM",
     "LBMDEMSolver",
     "PoreGeometry",
+    "PackingMetrics",
     "SimulationConfig",
     "VerificationResult",
     "plot_fields",
