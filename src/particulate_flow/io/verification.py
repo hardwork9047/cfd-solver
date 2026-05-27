@@ -11,7 +11,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
-from .fast_solver import FastLBMDEM
+from ..fast_solver import FastLBMDEM
 
 
 @dataclass

@@ -1,6 +1,6 @@
 import numpy as np
 
-from particulate_flow.dem_packing import DEMPackingSimulation, write_metrics_csv, write_particles_vtk
+from particulate_flow.dem.packing import DEMPackingSimulation, write_metrics_csv, write_particles_vtk
 
 
 def test_dem_packing_runs_and_keeps_particles_in_domain(tmp_path):
