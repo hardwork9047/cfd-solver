@@ -55,19 +55,19 @@ class TestSolverSection:
     def test_solver_section_accepted(self):
         from particulate_flow.io.config import SimulationConfig
         cfg = SimulationConfig.from_mapping({"solver": {"fluid_method": "lbm-bgk-guo"}})
-        assert cfg.fluid_method == "lbm-bgk-guo"
+        assert cfg.values["fluid_method"] == "lbm-bgk-guo"
 
     def test_solver_particle_method(self):
         from particulate_flow.io.config import SimulationConfig
         cfg = SimulationConfig.from_mapping({"solver": {"particle_method": "dem-hertz"}})
-        assert cfg.particle_method == "dem-hertz"
+        assert cfg.values["particle_method"] == "dem-hertz"
 
     def test_solver_particle_fluid_coupling(self):
         from particulate_flow.io.config import SimulationConfig
         cfg = SimulationConfig.from_mapping({
             "solver": {"particle_fluid_coupling": "immersed_boundary"}
         })
-        assert cfg.particle_fluid_coupling == "immersed_boundary"
+        assert cfg.values["particle_fluid_coupling"] == "immersed_boundary"
 
     def test_solver_section_in_section_keys(self):
         from particulate_flow.io.config import SECTION_KEYS
@@ -82,18 +82,18 @@ class TestAcceleratorSection:
     def test_accelerator_fluid_maps_to_fluid_accelerator(self):
         from particulate_flow.io.config import SimulationConfig
         cfg = SimulationConfig.from_mapping({"accelerator": {"fluid": "numpy"}})
-        assert cfg.fluid_accelerator == "numpy"
+        assert cfg.values["fluid_accelerator"] == "numpy"
 
     def test_accelerator_compute_maps_to_compute_accelerator(self):
         from particulate_flow.io.config import SimulationConfig
         cfg = SimulationConfig.from_mapping({"accelerator": {"compute": "numpy"}})
-        assert cfg.compute_accelerator == "numpy"
+        assert cfg.values["compute_accelerator"] == "numpy"
 
     def test_accelerator_auto(self):
         from particulate_flow.io.config import SimulationConfig
         cfg = SimulationConfig.from_mapping({"accelerator": {"fluid": "auto", "compute": "auto"}})
-        assert cfg.fluid_accelerator == "auto"
-        assert cfg.compute_accelerator == "auto"
+        assert cfg.values["fluid_accelerator"] == "auto"
+        assert cfg.values["compute_accelerator"] == "auto"
 
     def test_accelerator_section_in_section_keys(self):
         from particulate_flow.io.config import SECTION_KEYS
@@ -103,12 +103,12 @@ class TestAcceleratorSection:
         """fluid_method in numerics section still works."""
         from particulate_flow.io.config import SimulationConfig
         cfg = SimulationConfig.from_mapping({"numerics": {"fluid_method": "lbm-trt-guo"}})
-        assert cfg.fluid_method == "lbm-trt-guo"
+        assert cfg.values["fluid_method"] == "lbm-trt-guo"
 
     def test_numerics_backward_compat_fluid_accelerator(self):
         from particulate_flow.io.config import SimulationConfig
         cfg = SimulationConfig.from_mapping({"numerics": {"fluid_accelerator": "numba"}})
-        assert cfg.fluid_accelerator == "numba"
+        assert cfg.values["fluid_accelerator"] == "numba"
 
 
 # ---------------------------------------------------------------------------

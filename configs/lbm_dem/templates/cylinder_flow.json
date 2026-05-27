@@ -16,11 +16,13 @@
     "u_max": 0.04,
     "flow_condition": "fixed-pressure"
   },
-  "numerics": {
+  "solver": {
     "fluid_method": "lbm-trt-guo",
-    "fluid_accelerator": "auto",
-    "compute_accelerator": "auto",
     "particle_fluid_coupling": "point_force"
+  },
+  "accelerator": {
+    "fluid": "auto",
+    "compute": "auto"
   },
   "particles": {
     "n_particles": 0,

@@ -15,8 +15,8 @@ import numpy as np
 if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from particulate_flow.builder import build_dem_packing_solver
 from particulate_flow.dem.packing import (
-    DEMPackingSimulation,
     write_metrics_csv,
     write_particles_vtk,
     write_pvd,
@@ -155,36 +155,7 @@ def main() -> None:
         encoding="utf-8",
     )
 
-    sim = DEMPackingSimulation(
-        nx=config["nx"],
-        ny=config["ny"],
-        n_particles=config["n_particles"],
-        particle_radius=config["particle_radius"],
-        radius_variation=config["radius_variation"],
-        density_ratio=config["density_ratio"],
-        gravity=config["gravity"],
-        k_n=config["k_n"],
-        damping=config["damping"],
-        linear_damping=config["linear_damping"],
-        dem_substeps=config["dem_substeps"],
-        seed=config["seed"],
-        rolling_friction=config["rolling_friction"],
-        sliding_friction=config["sliding_friction"],
-        tangential_damping=config["tangential_damping"],
-        rolling_friction_coeff=config["rolling_friction_coeff"],
-        rolling_damping=config["rolling_damping"],
-        particle_attraction=config["particle_attraction"],
-        particle_repulsion=config["particle_repulsion"],
-        attraction_strength=config["attraction_strength"],
-        repulsion_strength=config["repulsion_strength"],
-        attraction_cutoff=config["attraction_cutoff"],
-        repulsion_cutoff=config["repulsion_cutoff"],
-        attraction_min_gap=config["attraction_min_gap"],
-        repulsion_min_gap=config["repulsion_min_gap"],
-        cylinders=config["cylinders"],
-        particle_method=config["particle_method"],
-        particle_search=config["particle_search"],
-    )
+    sim = build_dem_packing_solver(argparse.Namespace(**config))
 
     print("DEM gravity packing")
     print(f"  Particles : {config['n_particles']}")

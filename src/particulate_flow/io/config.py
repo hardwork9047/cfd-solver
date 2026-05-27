@@ -28,6 +28,9 @@ SECTION_KEYS = {
     "runtime",
     "outputs",
     "stability",
+    # Phase 2 additions — solver separates physical model choice; accelerator separates backend choice.
+    "solver",
+    "accelerator",
 }
 
 
@@ -107,6 +110,13 @@ def _load_with_extends(path: Path, seen: set[Path] | None = None) -> dict[str, A
     return _deep_merge(merged, payload)
 
 
+# Keys in the ``accelerator`` section use short names; map to argparse destinations.
+_ACCELERATOR_KEY_MAP = {
+    "fluid": "fluid_accelerator",
+    "compute": "compute_accelerator",
+}
+
+
 def _flatten_sections(values: dict[str, Any]) -> dict[str, Any]:
     """Flatten research-friendly config sections into runner argument keys."""
     payload: dict[str, Any] = {}
@@ -116,6 +126,9 @@ def _flatten_sections(values: dict[str, Any]) -> dict[str, Any]:
         if key in SECTION_KEYS:
             if not isinstance(value, dict):
                 raise ValueError(f"{key} must be an object when provided")
+            if key == "accelerator":
+                # Remap short keys (fluid, compute) to argparse destinations.
+                value = {_ACCELERATOR_KEY_MAP.get(k, k): v for k, v in value.items()}
             payload = _deep_merge(payload, value)
         else:
             payload[key] = value
