@@ -10,6 +10,8 @@ except PackageNotFoundError:
 __author__ = "hardwork9047"
 __license__ = "MIT"
 
+from . import builder
+from .builder import build_dem_packing_solver, build_lbm_dem_solver
 from .dem.packing import DEMPackingSimulation, PackingMetrics
 from .dem.solver import DEMSolver
 from .fast_solver import FastLBMDEM
@@ -28,6 +30,9 @@ __all__ = [
     "PackingMetrics",
     "SimulationConfig",
     "VerificationResult",
+    "build_dem_packing_solver",
+    "build_lbm_dem_solver",
+    "builder",
     "plot_fields",
     "plot_particles",
     "run_fluid_verification",

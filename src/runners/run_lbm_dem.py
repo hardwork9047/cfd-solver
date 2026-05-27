@@ -28,6 +28,7 @@ import numpy as np
 # パッケージを src/ から読み込む
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from particulate_flow import FastLBMDEM, LBMDEMSolver, PoreGeometry
+from particulate_flow.builder import build_lbm_dem_solver
 from particulate_flow.io.paths import program_results_dir
 from particulate_flow.io.config import SimulationConfig
 
@@ -1102,50 +1103,10 @@ if CYLINDERS:
     for idx, (cx, cy, cr) in enumerate(CYLINDERS, start=1):
         print(f"  #{idx}: x={cx:.1f}, y={cy:.1f}, r={cr:.1f}")
 
-sim = FastLBMDEM(
-    nx=NX, ny=NY,
-    Re=RE, u_max=U_MAX,
-    reynolds_length=REYNOLDS_LENGTH,
-    flow_control=FLOW_CONTROL_MAP[FLOW_CONDITION],
-    flow_control_gain=args.flow_control_gain,
-    y_boundary=args.y_boundary,
-    streamwise_boundary=args.streamwise_boundary.replace("-", "_"),
-    pressure_drop=args.pressure_drop,
-    rho_out=args.rho_out,
-    fluid_method=args.fluid_method,
-    fluid_accelerator=args.fluid_accelerator,
-    compute_accelerator=args.compute_accelerator,
-    particle_method=args.particle_method,
-    particle_search=args.particle_search,
-    particle_fluid_coupling=args.particle_fluid_coupling,
-    ibm_stiffness=args.ibm_stiffness,
-    ibm_marker_spacing=args.ibm_marker_spacing,
-    n_particles=N_PARTICLES,
-    particle_radius=RADIUS,
-    radius_variation=RADIUS_VARIATION,
-    density_ratio=DENSITY_RATIO,
-    gravity=GRAVITY,
-    dem_substeps=args.dem_substeps,
-    seed=42,
-    rolling_friction=args.rolling_friction,
-    sliding_friction=args.sliding_friction,
-    tangential_damping=args.tangential_damping,
-    rolling_friction_coeff=args.rolling_friction_coeff,
-    rolling_damping=args.rolling_damping,
-    particle_attraction=args.particle_attraction,
-    particle_repulsion=args.particle_repulsion,
-    attraction_strength=args.attraction_strength,
-    repulsion_strength=args.repulsion_strength,
-    attraction_cutoff=args.attraction_cutoff,
-    repulsion_cutoff=args.repulsion_cutoff,
-    attraction_min_gap=args.attraction_min_gap,
-    repulsion_min_gap=args.repulsion_min_gap,
-    porous_resistance=args.porous_resistance,
-    porous_resistance_coeff=args.porous_resistance_coeff,
-    geometry=GEOMETRY,
-    particle_source=args.particle_source.replace("-", "_"),
-    source_volume_fraction=SOURCE_VOLUME_FRACTION,
-)
+sim = build_lbm_dem_solver(args)
+# Sync derived values with what the builder actually computed to avoid divergence.
+N_PARTICLES = sim.n_p
+SOURCE_VOLUME_FRACTION = sim.source_volume_fraction
 metadata_path = OUT_DIR / "metadata.json"
 _write_metadata(metadata_path, sim)
 _write_standard_run_artifacts(OUT_DIR, sim)
