@@ -69,6 +69,9 @@ extend-exclude = '''
 )
 '''
 
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib"
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
