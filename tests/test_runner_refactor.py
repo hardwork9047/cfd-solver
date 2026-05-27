@@ -12,7 +12,6 @@ Acceptance scenarios:
 from __future__ import annotations
 
 import argparse
-import ast
 from pathlib import Path
 
 import pytest

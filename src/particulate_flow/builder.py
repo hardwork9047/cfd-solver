@@ -13,7 +13,7 @@ import numpy as np
 from particulate_flow.dem.packing import DEMPackingSimulation
 from particulate_flow.fast_solver import FastLBMDEM
 from particulate_flow.geometry.pore import PoreGeometry
-from particulate_flow.lbm.constants import FLUID_METHODS, FLUID_ACCELERATORS
+from particulate_flow.lbm.constants import FLUID_ACCELERATORS, FLUID_METHODS
 
 # ---------------------------------------------------------------------------
 # Flow-control mapping (shared between runner and builder)
@@ -90,7 +90,6 @@ def build_lbm_dem_solver(args: argparse.Namespace) -> FastLBMDEM:
     flow_control = FLOW_CONTROL_MAP[flow_condition]
 
     geometry = _build_geometry(args, nx)
-    cylinders = geometry.as_tuples()
 
     # Derive particle count from volume fraction if given.
     particle_volume_fraction = getattr(args, "particle_volume_fraction", None)
@@ -120,7 +119,8 @@ def build_lbm_dem_solver(args: argparse.Namespace) -> FastLBMDEM:
             expected_flow_area = _poiseuille_flow_rate(ny, u_max) * (warmup_steps + total_steps)
             n_particles = max(
                 1,
-                int(np.ceil(1.25 * particle_volume_fraction * expected_flow_area / expected_particle_area)),
+                int(np.ceil(1.25 * particle_volume_fraction * expected_flow_area  # noqa: E501
+                    / expected_particle_area)),
             )
         else:
             n_particles = max(
