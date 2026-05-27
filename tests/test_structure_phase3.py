@@ -11,9 +11,7 @@ Acceptance scenarios:
 
 from __future__ import annotations
 
-import ast
 import py_compile
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -49,7 +47,8 @@ class TestToolsCompile:
     def test_tools_dir_exists(self):
         assert (_SRC / "tools").is_dir(), "src/tools/ does not exist"
 
-    @pytest.mark.parametrize("script", list((_SRC / "tools").glob("*.py")) if (_SRC / "tools").is_dir() else [])
+    _tool_scripts = list((_SRC / "tools").glob("*.py")) if (_SRC / "tools").is_dir() else []
+    @pytest.mark.parametrize("script", _tool_scripts)
     def test_script_compiles(self, script: Path):
         """Each script in src/tools/ must compile without syntax errors."""
         py_compile.compile(str(script), doraise=True)
@@ -58,7 +57,8 @@ class TestToolsCompile:
         tools_dir = _SRC / "tools"
         scripts = list(tools_dir.glob("*.py"))
         assert len(scripts) >= 5, (
-            f"Expected at least 5 scripts in src/tools/, found {len(scripts)}: {[s.name for s in scripts]}"
+            f"Expected at least 5 scripts in src/tools/, "
+            f"found {len(scripts)}: {[s.name for s in scripts]}"
         )
 
 
