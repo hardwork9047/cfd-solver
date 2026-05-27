@@ -1553,7 +1553,6 @@ class LBMDEMSolver:
             _, ux_ctrl, uy_ctrl = self._macroscopic()
             self._control_drive_force(ux_ctrl, uy_ctrl)
 
-            # --- Reset body force to driving force only ---
             self.Fx[:] = self.F_drive
             self.Fy[:] = 0.0
             self._invalidate_macroscopic_cache()
@@ -1562,11 +1561,9 @@ class LBMDEMSolver:
                 _, ux_res, uy_res = self._macroscopic()
                 self._apply_porous_resistance(ux_res, uy_res)
 
-            # --- Particle → fluid back-reaction (per-particle radius) ---
             if self.n_p and self.particle_fluid_coupling == "point_force":
                 _, ux_drag, uy_drag = self._macroscopic()
                 drag = self._particle_drag_forces(ux=ux_drag, uy=uy_drag)
-                # Newton 3rd law: -drag acts on the fluid
                 self._distribute_forces_many(
                     self.pos[:, 0],
                     self.pos[:, 1],
@@ -1580,11 +1577,9 @@ class LBMDEMSolver:
                 self._apply_immersed_boundary_forces(ux_ibm, uy_ibm)
                 self._invalidate_macroscopic_cache()
 
-            # --- LBM step ---
             rho, ux, uy = self._macroscopic()
             self._lbm_step(rho, ux, uy)
 
-            # --- DEM sub-steps ---
             for _ in range(self.dem_substeps):
                 self._dem_substep(dt_sub)
             self._update_particle_solid_mask()
