@@ -2,5 +2,5 @@ skill: implement
 package: particulate_flow
 issue: 1
 plan-review-preference: review
-step: 4 (plan — awaiting review)
-next: wait for user to approve plan, then proceed to step 5 (write tests)
+step: 9 (push and PR)
+next: push branch, create PR, delete workflow_state.md
