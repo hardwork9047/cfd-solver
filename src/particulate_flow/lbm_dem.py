@@ -28,24 +28,34 @@ import argparse
 from pathlib import Path
 
 import numpy as np
-from .dem.solver import DEMSolver, PARTICLE_METHODS
-from .geometry.pore import PoreGeometry
-from .io.paths import program_results_dir
-from .lbm.constants import (
-    C, W, OPPOSITE, Q, CS2,
-    FLUID_METHODS, PARTICLE_FLUID_COUPLINGS,
-    FLUID_ACCELERATORS, COMPUTE_ACCELERATORS,
-    PARTICLE_SEARCH_METHODS, Y_BOUNDARIES, STREAMWISE_BOUNDARIES,
-)
-from .lbm.operators import equilibrium as _equilibrium, guo_forcing as _guo_forcing
-from .lbm.kernels import _lbm_step_numba
+
 from .dem.kernels import _dem_pair_loads_numba
+from .dem.solver import PARTICLE_METHODS, DEMSolver
+from .geometry.pore import PoreGeometry
 from .ibm.kernels import (
-    _particle_solid_mask_numba,
     _ibm_markers_numba,
     _ibm_particle_reaction_numba,
+    _particle_solid_mask_numba,
 )
+from .io.paths import program_results_dir
 from .io.visualization import plot_fields, plot_particles
+from .lbm.constants import (
+    COMPUTE_ACCELERATORS,
+    CS2,
+    FLUID_ACCELERATORS,
+    FLUID_METHODS,
+    OPPOSITE,
+    PARTICLE_FLUID_COUPLINGS,
+    PARTICLE_SEARCH_METHODS,
+    STREAMWISE_BOUNDARIES,
+    Y_BOUNDARIES,
+    C,
+    Q,
+    W,
+)
+from .lbm.kernels import _lbm_step_numba
+from .lbm.operators import equilibrium as _equilibrium
+from .lbm.operators import guo_forcing as _guo_forcing
 
 # D2Q9 constants and solver enumerations are defined in lbm/constants.py
 # and re-imported above.

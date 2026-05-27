@@ -148,6 +148,6 @@ class TestAcceleratorConstants:
         assert "auto" in FLUID_ACCELERATORS
 
     def test_compute_accelerators_defined(self):
-        from particulate_flow.dem.kernels import COMPUTE_ACCELERATORS
+        from particulate_flow.lbm.constants import COMPUTE_ACCELERATORS
         assert "numpy" in COMPUTE_ACCELERATORS
         assert "numba" in COMPUTE_ACCELERATORS

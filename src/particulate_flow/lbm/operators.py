@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .constants import C, W, Q, CS2
+from .constants import CS2, C, Q, W
 
 
 def equilibrium(rho: np.ndarray, ux: np.ndarray, uy: np.ndarray) -> np.ndarray:

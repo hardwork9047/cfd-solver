@@ -1,5 +1,5 @@
 """Immersed Boundary Method subpackage."""
 
-from . import kernels, coupling
+from . import coupling, kernels
 
 __all__ = ["kernels", "coupling"]

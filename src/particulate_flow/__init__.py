@@ -5,18 +5,18 @@ from importlib.metadata import PackageNotFoundError, version
 try:
     __version__ = version("cfd-solver")
 except PackageNotFoundError:
-    __version__ = "0.3.0"
+    __version__ = "0.4.0"
 
 __author__ = "hardwork9047"
 __license__ = "MIT"
 
-from .dem.solver import DEMSolver
 from .dem.packing import DEMPackingSimulation, PackingMetrics
+from .dem.solver import DEMSolver
 from .fast_solver import FastLBMDEM
-from .io.verification import VerificationResult, run_fluid_verification, write_verification_outputs
 from .geometry.pore import Cylinder, PoreGeometry
-from .lbm_dem import LBMDEMSolver, plot_fields, plot_particles
 from .io.config import SimulationConfig
+from .io.verification import VerificationResult, run_fluid_verification, write_verification_outputs
+from .lbm_dem import LBMDEMSolver, plot_fields, plot_particles
 
 __all__ = [
     "Cylinder",

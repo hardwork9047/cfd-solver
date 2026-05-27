@@ -4,7 +4,7 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
 name = "cfd-solver"
-version = "0.3.0"
+version = "0.4.0"
 description = "Particulate-flow simulation toolkit with LBM-DEM coupling."
 readme = "README.md"
 license = "MIT"

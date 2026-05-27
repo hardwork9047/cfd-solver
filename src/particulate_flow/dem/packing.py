@@ -10,8 +10,8 @@ from typing import Iterable
 
 import numpy as np
 
-from .solver import DEMSolver
 from ..geometry.pore import PoreGeometry
+from .solver import DEMSolver
 
 
 def _vtk_float(value: float) -> str:

@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from ..fast_solver import FastLBMDEM
-from ..lbm_dem import CS2, COMPUTE_ACCELERATORS, FLUID_ACCELERATORS, FLUID_METHODS
+from ..lbm_dem import COMPUTE_ACCELERATORS, CS2, FLUID_ACCELERATORS, FLUID_METHODS
 from .paths import program_results_dir
 
 

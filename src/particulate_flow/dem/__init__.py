@@ -1,8 +1,8 @@
 """DEM particle solver subpackage."""
 
-from .solver import DEMSolver
+from . import contact, kernels, particle_manager
 from .packing import DEMPackingSimulation, PackingMetrics
-from . import kernels, contact, particle_manager
+from .solver import DEMSolver
 
 __all__ = [
     "DEMSolver", "DEMPackingSimulation", "PackingMetrics",

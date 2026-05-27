@@ -73,7 +73,10 @@ if njit is not None:  # pragma: no cover - exercised only when numba is installe
                 marker_ubx[cursor] = vel[i, 0] - omega_p[i] * ry
                 marker_uby[cursor] = vel[i, 1] + omega_p[i] * rx
                 cursor += 1
-        return marker_x, marker_y, marker_rx, marker_ry, marker_ds, marker_owner, marker_ubx, marker_uby
+        return (
+            marker_x, marker_y, marker_rx, marker_ry,
+            marker_ds, marker_owner, marker_ubx, marker_uby,
+        )
 
     @njit(cache=True)
     def _ibm_particle_reaction_numba(

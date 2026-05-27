@@ -1,13 +1,21 @@
 """LBM fluid solver subpackage."""
 
+from . import boundary, collision, kernels, macroscopic
 from .constants import (
-    C, W, OPPOSITE, Q, CS2,
-    FLUID_METHODS, FLUID_ACCELERATORS, COMPUTE_ACCELERATORS,
-    PARTICLE_FLUID_COUPLINGS, PARTICLE_SEARCH_METHODS,
-    Y_BOUNDARIES, STREAMWISE_BOUNDARIES,
+    COMPUTE_ACCELERATORS,
+    CS2,
+    FLUID_ACCELERATORS,
+    FLUID_METHODS,
+    OPPOSITE,
+    PARTICLE_FLUID_COUPLINGS,
+    PARTICLE_SEARCH_METHODS,
+    STREAMWISE_BOUNDARIES,
+    Y_BOUNDARIES,
+    C,
+    Q,
+    W,
 )
 from .operators import equilibrium, guo_forcing
-from . import kernels, collision, boundary, macroscopic
 
 __all__ = [
     "C", "W", "OPPOSITE", "Q", "CS2",

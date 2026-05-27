@@ -8,9 +8,9 @@ subpackage; full extraction is deferred to Phase 2.
 from __future__ import annotations
 
 from .kernels import (
-    _particle_solid_mask_numba,
     _ibm_markers_numba,
     _ibm_particle_reaction_numba,
+    _particle_solid_mask_numba,
 )
 
 __all__ = [

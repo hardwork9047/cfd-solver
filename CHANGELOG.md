@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.4.0] - 2026-05-27
+
+### Changed
+
+- Restructured `particulate_flow` into subpackages: `lbm/`, `dem/`, `ibm/`, `geometry/`, `io/` for token-efficient AI navigation, see PR #4.
+- Extracted D2Q9 constants and Numba kernels into dedicated modules (`lbm/constants.py`, `lbm/kernels.py`, `dem/kernels.py`, `ibm/kernels.py`).
+- Moved visualization helpers to `io/visualization.py`; `plot_fields` / `plot_particles` remain importable from the top-level package.
+- Migrated tests to mirror the subpackage structure (`tests/lbm/`, `tests/dem/`, `tests/ibm/`, `tests/geometry/`, `tests/io/`).
+- Added `pytest.ini_options` with `importmode=importlib` to avoid stdlib name collisions in test subdirectories.
+
+---
+
 ## [0.3.0] - 2026-03-03
 
 ### Added

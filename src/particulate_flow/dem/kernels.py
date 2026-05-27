@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-import numpy as np
-
-from ..lbm.constants import COMPUTE_ACCELERATORS  # shared accelerator enum
-
 try:
     from numba import njit
 except ImportError:
@@ -90,10 +86,14 @@ if njit is not None:  # pragma: no cover - exercised only when numba is installe
                     torques[i] -= radii[i] * f_t
                     torques[j] -= radii[j] * f_t
 
-                    trial_i = -rolling_damping * (k_n * masses[i]) ** 0.5 * radii[i] ** 2 * omega_p[i]
+                    trial_i = (
+                        -rolling_damping * (k_n * masses[i]) ** 0.5 * radii[i] ** 2 * omega_p[i]
+                    )
                     limit_i = rolling_friction_coeff * f_mag * radii[i]
                     torques[i] += min(max(trial_i, -limit_i), limit_i)
-                    trial_j = -rolling_damping * (k_n * masses[j]) ** 0.5 * radii[j] ** 2 * omega_p[j]
+                    trial_j = (
+                        -rolling_damping * (k_n * masses[j]) ** 0.5 * radii[j] ** 2 * omega_p[j]
+                    )
                     limit_j = rolling_friction_coeff * f_mag * radii[j]
                     torques[j] += min(max(trial_j, -limit_j), limit_j)
 
