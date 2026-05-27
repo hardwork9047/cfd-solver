@@ -2,5 +2,5 @@ skill: implement
 package: particulate_flow
 issue: 2
 plan-review-preference: proceed
-step: 7 (clean up)
-next: check dead code in touched files, bump version, update CHANGELOG
+step: 8 (self-review)
+next: run code-reviewer agent, fix blocking items, run doc-parrot, write findings file

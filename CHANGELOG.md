@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.5.0] - 2026-05-27
+
+### Added
+
+- `particulate_flow/builder.py`: `build_lbm_dem_solver()` and `build_dem_packing_solver()` centralise solver construction previously inline in runners, see PR #5.
+- `SimulationConfig` now accepts `solver` and `accelerator` JSON sections. `accelerator.fluid` maps to `fluid_accelerator`; `accelerator.compute` maps to `compute_accelerator`. The `numerics` section remains supported for backward compatibility.
+
+### Changed
+
+- `run_lbm_dem.py` and `run_dem_packing.py` are now thin entry-points: solver construction is delegated to the builder functions.
+- Template configs (`fouling_supply`, `cylinder_flow`, `dem_settling_pack`) updated to use `solver`/`accelerator` sections.
+
+---
+
 ## [0.4.0] - 2026-05-27
 
 ### Changed
