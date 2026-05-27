@@ -1104,6 +1104,9 @@ if CYLINDERS:
         print(f"  #{idx}: x={cx:.1f}, y={cy:.1f}, r={cr:.1f}")
 
 sim = build_lbm_dem_solver(args)
+# Sync derived values with what the builder actually computed to avoid divergence.
+N_PARTICLES = sim.n_p
+SOURCE_VOLUME_FRACTION = sim.source_volume_fraction
 metadata_path = OUT_DIR / "metadata.json"
 _write_metadata(metadata_path, sim)
 _write_standard_run_artifacts(OUT_DIR, sim)

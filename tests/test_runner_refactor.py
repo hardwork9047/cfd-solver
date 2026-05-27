@@ -17,6 +17,9 @@ from pathlib import Path
 
 import pytest
 
+# Repo root — tests may be run from any directory.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+
 
 # ---------------------------------------------------------------------------
 # Acceptance Scenario 1 & 6: builder module and subpackage imports
@@ -37,12 +40,12 @@ class TestBuilderImport:
 
     def test_builder_uses_subpackage_lbm(self):
         """builder.py must import from particulate_flow.lbm or subpackages."""
-        builder_path = Path("src/particulate_flow/builder.py")
+        builder_path = _REPO_ROOT / "src/particulate_flow/builder.py"
         source = builder_path.read_text()
         assert "particulate_flow.lbm" in source or "from .lbm" in source or "from ..lbm" in source
 
     def test_builder_uses_subpackage_dem(self):
-        builder_path = Path("src/particulate_flow/builder.py")
+        builder_path = _REPO_ROOT / "src/particulate_flow/builder.py"
         source = builder_path.read_text()
         assert "particulate_flow.dem" in source or "from .dem" in source or "from ..dem" in source
 
@@ -124,16 +127,36 @@ class TestBuildDEMPackingSolver:
             nx=50, ny=50,
             n_particles=5,
             particle_radius=2.0,
-            particle_density=1.0,
-            gravity=9.81,
-            e_n=0.5, e_t=0.3, mu_friction=0.3,
-            k_n=1000.0, k_t=500.0,
-            packing_steps=10,
-            packing_dt=1e-4,
+            radius_variation=0.1,
+            density_ratio=2.0,
+            gravity=1e-3,
+            k_n=120.0,
+            damping=0.8,
+            linear_damping=0.06,
+            dem_substeps=5,
+            seed=42,
+            rolling_friction=True,
+            sliding_friction=0.5,
+            tangential_damping=0.5,
+            rolling_friction_coeff=0.1,
+            rolling_damping=0.35,
+            particle_attraction=False,
+            particle_repulsion=False,
+            attraction_strength=1e-3,
+            repulsion_strength=1e-3,
+            attraction_cutoff=3.0,
+            repulsion_cutoff=3.0,
+            attraction_min_gap=0.05,
+            repulsion_min_gap=0.05,
+            particle_method="dem-hertz",
+            particle_search="cell_list",
             cylinders=None,
         )
         sim = build_dem_packing_solver(args)
         assert isinstance(sim, DEMPackingSimulation)
+        # Verify forwarding: n_particles and particle_radius are actually set
+        assert sim.n_p == 5
+        assert sim.r_p == pytest.approx(2.0, rel=0.5)  # mean radius approximately 2.0
 
 
 # ---------------------------------------------------------------------------
@@ -143,7 +166,7 @@ class TestBuildDEMPackingSolver:
 class TestRunnerEntryPointOnly:
     def test_run_lbm_dem_no_inline_fastlbmdem_construction(self):
         """run_lbm_dem.py must not contain FastLBMDEM(nx= ... ) inline construction."""
-        runner_path = Path("src/runners/run_lbm_dem.py")
+        runner_path = _REPO_ROOT / "src/runners/run_lbm_dem.py"
         source = runner_path.read_text()
         # The inline construction pattern is FastLBMDEM(nx=
         assert "FastLBMDEM(nx=" not in source, (
@@ -152,18 +175,18 @@ class TestRunnerEntryPointOnly:
         )
 
     def test_run_lbm_dem_calls_builder(self):
-        runner_path = Path("src/runners/run_lbm_dem.py")
+        runner_path = _REPO_ROOT / "src/runners/run_lbm_dem.py"
         source = runner_path.read_text()
         assert "build_lbm_dem_solver" in source
 
     def test_run_dem_packing_no_inline_construction(self):
-        runner_path = Path("src/runners/run_dem_packing.py")
+        runner_path = _REPO_ROOT / "src/runners/run_dem_packing.py"
         source = runner_path.read_text()
         assert "DEMPackingSimulation(" not in source, (
             "run_dem_packing.py still contains inline DEMPackingSimulation construction"
         )
 
     def test_run_dem_packing_calls_builder(self):
-        runner_path = Path("src/runners/run_dem_packing.py")
+        runner_path = _REPO_ROOT / "src/runners/run_dem_packing.py"
         source = runner_path.read_text()
         assert "build_dem_packing_solver" in source

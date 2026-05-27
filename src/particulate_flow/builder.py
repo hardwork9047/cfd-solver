@@ -13,7 +13,7 @@ import numpy as np
 from particulate_flow.dem.packing import DEMPackingSimulation
 from particulate_flow.fast_solver import FastLBMDEM
 from particulate_flow.geometry.pore import PoreGeometry
-from particulate_flow.lbm.constants import FLUID_METHODS
+from particulate_flow.lbm.constants import FLUID_METHODS, FLUID_ACCELERATORS
 
 # ---------------------------------------------------------------------------
 # Flow-control mapping (shared between runner and builder)
@@ -25,7 +25,6 @@ FLOW_CONTROL_MAP: dict[str, str] = {
     "target-max-velocity": "target_max_velocity",
     "constant-flux": "constant_flux",
 }
-
 
 
 def _poiseuille_flow_rate(ny: int, u_max: float) -> float:
@@ -74,6 +73,15 @@ def build_lbm_dem_solver(args: argparse.Namespace) -> FastLBMDEM:
     density_ratio: float = args.density_ratio
     gravity: float = args.gravity
 
+    fluid_method: str = getattr(args, "fluid_method", "lbm-trt-guo")
+    if fluid_method not in FLUID_METHODS:
+        raise ValueError(f"Unknown fluid_method {fluid_method!r}. Valid: {sorted(FLUID_METHODS)}")
+    fluid_accelerator: str = getattr(args, "fluid_accelerator", "auto")
+    if fluid_accelerator not in FLUID_ACCELERATORS:
+        raise ValueError(
+            f"Unknown fluid_accelerator {fluid_accelerator!r}. Valid: {sorted(FLUID_ACCELERATORS)}"
+        )
+
     flow_condition = (
         args.flow_condition
         if args.flow_condition is not None
@@ -98,7 +106,7 @@ def build_lbm_dem_solver(args: argparse.Namespace) -> FastLBMDEM:
     if particle_volume_fraction is None:
         default_n = 40
         n_particles: int = args.n_particles if args.n_particles is not None else default_n
-        if args.particle_source == "left-inlet":
+        if particle_source == "left_inlet":
             expected_flow_area = _poiseuille_flow_rate(ny, u_max) * (warmup_steps + total_steps)
             source_volume_fraction: float | None = min(
                 0.95,
@@ -108,7 +116,7 @@ def build_lbm_dem_solver(args: argparse.Namespace) -> FastLBMDEM:
             source_volume_fraction = None
     else:
         source_volume_fraction = particle_volume_fraction
-        if args.particle_source == "left-inlet":
+        if particle_source == "left_inlet":
             expected_flow_area = _poiseuille_flow_rate(ny, u_max) * (warmup_steps + total_steps)
             n_particles = max(
                 1,
@@ -134,8 +142,8 @@ def build_lbm_dem_solver(args: argparse.Namespace) -> FastLBMDEM:
         streamwise_boundary=getattr(args, "streamwise_boundary", "periodic").replace("-", "_"),
         pressure_drop=getattr(args, "pressure_drop", None),
         rho_out=getattr(args, "rho_out", 1.0),
-        fluid_method=getattr(args, "fluid_method", "lbm-trt-guo"),
-        fluid_accelerator=getattr(args, "fluid_accelerator", "auto"),
+        fluid_method=fluid_method,
+        fluid_accelerator=fluid_accelerator,
         compute_accelerator=getattr(args, "compute_accelerator", "auto"),
         particle_method=getattr(args, "particle_method", "dem-hertz"),
         particle_search=getattr(args, "particle_search", "cell_list"),
