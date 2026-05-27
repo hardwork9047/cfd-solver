@@ -30,6 +30,16 @@ poetry run python src/runners/run_lbm_dem.py \
 # Run DEM packing
 poetry run python src/runners/run_dem_packing.py \
   --config configs/dem_packing/<config>.json
+
+# Run a parameter sweep
+poetry run python src/runners/run_lbm_dem_sweep.py \
+  --sweep configs/lbm_dem/sweeps/fouling_screening_example.json
+
+# Analyse sweep results
+poetry run python src/tools/analyze_lbm_dem_design_sweeps.py <results_dir>
+
+# Benchmark accelerator backends
+poetry run python src/tools/benchmark_lbm_accelerators.py
 ```
 
 ## Architecture
@@ -55,7 +65,20 @@ FastLBMDEM (src/particulate_flow/fast_solver.py)
 
 ### Configuration System
 
-JSON configs in `configs/lbm_dem/cases/` support `"extends"` inheritance. `SimulationConfig` (`src/particulate_flow/simulation_config.py`) loads and flattens sections (domain, flow, numerics, particles, physics, runtime, outputs, stability) and binds them to CLI argument parsers. CLI flags override config values.
+JSON configs in `configs/lbm_dem/cases/` support `"extends"` inheritance. `SimulationConfig` (`src/particulate_flow/io/config.py`) loads and flattens sections (domain, flow, solver, accelerator, numerics, particles, physics, runtime, outputs, stability) and binds them to CLI argument parsers. CLI flags override config values.
+
+Config directory layout:
+```
+configs/
+  lbm_dem/
+    cases/       — runnable case configs (may use extends)
+    geometries/  — geometry fragments (cylinder arrays)
+    materials/   — material property fragments
+    templates/   — base templates for common setups
+    sweeps/      — parameter sweep definitions
+  dem_packing/
+    cases/       — DEM-only packing cases
+```
 
 ### Numba Acceleration
 

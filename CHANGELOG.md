@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.6.0] - 2026-05-27
+
+### Added
+
+- `src/tools/`: 8 analysis and benchmark scripts moved from the abolished `src/bin/`, see PR #6.
+- `src/runners/run_lbm_dem_sweep.py`: sweep runner promoted from `src/bin/`.
+
+### Changed
+
+- `src/bin/` abolished — all scripts redistributed to `src/runners/` (sweep runner) and `src/tools/` (analysis/benchmark).
+- `configs/lbm_dem/cases/membrane_pressure_periodic_smoke.json` moved from `configs/lbm_dem/` root.
+- `CLAUDE.md`: updated paths, added config directory layout reference, added sweep/analysis command examples.
+
+---
+
 ## [0.5.0] - 2026-05-27
 
 ### Added
