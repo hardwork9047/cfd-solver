@@ -123,3 +123,14 @@ class TestSweepRunner:
         runner = _SRC / "runners" / "run_lbm_dem_sweep.py"
         if runner.exists():
             py_compile.compile(str(runner), doraise=True)
+
+    def test_sweep_runner_points_to_existing_lbm_dem_runner(self):
+        """The RUNNER constant in run_lbm_dem_sweep.py must point to an existing file."""
+        import importlib.util
+        sweep_path = _SRC / "runners" / "run_lbm_dem_sweep.py"
+        if not sweep_path.exists():
+            pytest.skip("sweep runner not found")
+        spec = importlib.util.spec_from_file_location("run_lbm_dem_sweep", sweep_path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        assert mod.RUNNER.exists(), f"RUNNER path {mod.RUNNER} does not exist"
