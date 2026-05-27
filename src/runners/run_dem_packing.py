@@ -15,15 +15,15 @@ import numpy as np
 if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from particulate_flow.dem_packing import (
+from particulate_flow.dem.packing import (
     DEMPackingSimulation,
     write_metrics_csv,
     write_particles_vtk,
     write_pvd,
     write_summary,
 )
-from particulate_flow.geometry import PoreGeometry
-from particulate_flow.result_paths import program_results_dir
+from particulate_flow.geometry.pore import PoreGeometry
+from particulate_flow.io.paths import program_results_dir
 
 
 DEFAULTS = {

@@ -28,8 +28,8 @@ import numpy as np
 # パッケージを src/ から読み込む
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from particulate_flow import FastLBMDEM, LBMDEMSolver, PoreGeometry
-from particulate_flow.result_paths import program_results_dir
-from particulate_flow.simulation_config import SimulationConfig
+from particulate_flow.io.paths import program_results_dir
+from particulate_flow.io.config import SimulationConfig
 
 # ---------------------------------------------------------------------------
 # コマンドライン引数
