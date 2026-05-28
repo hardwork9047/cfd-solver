@@ -131,7 +131,11 @@ def test_le_particle_wrapping_position():
     ny = 20
     sim = _le_sim(nx=40, ny=ny, shear_rate=shear_rate, n_particles=1)
 
-    # Place particle near top boundary, moving upward
+    # Pre-set a known non-zero le_shift so we can verify the x displacement
+    known_shift = 5.0
+    sim._le_shift = known_shift
+
+    # Place particle near top boundary, moving upward fast enough to cross
     sim.pos[:] = np.array([[20.0, float(ny) - 0.5]])
     sim.vel[:] = np.array([[0.0, 2.0]])
 
@@ -144,13 +148,10 @@ def test_le_particle_wrapping_position():
     # Particle should have wrapped in y
     assert y_after < ny / 2.0, "Particle should have wrapped in y"
 
-    # x should include the LE shift displacement (le_shift may be tiny but sign correct)
-    # The shift applied when crossing top boundary is -le_shift
-    expected_x_shift = -sim._le_shift
-    # Allow small tolerance since DEM dt is small
-    assert abs((x_after - x_before) - expected_x_shift) < 0.5, (
-        f"x shift {x_after - x_before:.4f} does not match expected LE shift "
-        f"{expected_x_shift:.4f}"
+    # x should be shifted by -known_shift (mod nx) when crossing top boundary
+    expected_x = (x_before - known_shift) % sim.nx
+    assert abs(x_after - expected_x) < 0.5, (
+        f"x_after={x_after:.4f} expected≈{expected_x:.4f} (shift={known_shift})"
     )
 
 
@@ -167,13 +168,15 @@ def test_le_particle_wrapping_velocity():
     sim._dem_substep(1.0)
     y_after = float(sim.pos[0, 1])
 
-    if y_after < ny / 2.0:
-        # Crossed top boundary: vx should decrease by shear_rate * ny
-        expected_correction = -shear_rate * ny
-        actual_correction = float(sim.vel[0, 0]) - vx_before
-        # Tolerance is loose because DEM drag modifies velocity during the same substep
-        # and the test uses dt=1 (coarse). Sign and rough magnitude are what matter.
-        assert abs(actual_correction - expected_correction) < 2.0 * abs(expected_correction)
+    # Particle must have wrapped — assert rather than skip silently
+    assert y_after < ny / 2.0, "Particle should have crossed top boundary and wrapped"
+
+    # Crossed top boundary: vx should decrease by shear_rate * ny
+    expected_correction = -shear_rate * ny
+    actual_correction = float(sim.vel[0, 0]) - vx_before
+    # Tolerance is loose because DEM drag modifies velocity during the same substep
+    # and the test uses dt=1 (coarse). Sign and rough magnitude are what matter.
+    assert abs(actual_correction - expected_correction) < 2.0 * abs(expected_correction)
 
 
 # ---------------------------------------------------------------------------

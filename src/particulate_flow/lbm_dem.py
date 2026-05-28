@@ -930,18 +930,18 @@ class LBMDEMSolver:
         int_shift = int(np.floor(shift)) % nx
         frac = shift - np.floor(shift)
         rolled = np.roll(row, int_shift)
-        if self.le_interpolation_order == 1 or abs(frac) < 1e-12:
-            if abs(frac) < 1e-12:
-                return rolled
-            # Linear interpolation between integer positions
+        if abs(frac) < 1e-12:
+            return rolled
+        if self.le_interpolation_order == 1:
             return (1.0 - frac) * rolled + frac * np.roll(rolled, -1)
-        # Cubic (monotone) interpolation via np.interp with wrap-around
-        x_src = np.arange(nx, dtype=float)
-        x_dst = (x_src - frac) % nx
-        # Extend with periodic copies for cubic spline
-        extended = np.concatenate([rolled, rolled, rolled])
-        x_ext = np.arange(-nx, 2 * nx, dtype=float)
-        return np.interp(x_dst, x_ext, extended)
+        # Third-order cubic interpolation with periodic boundary via scipy
+        try:
+            from scipy.ndimage import map_coordinates
+            x_dst = (np.arange(nx, dtype=float) - frac) % nx
+            return map_coordinates(rolled, [x_dst], order=3, mode="wrap")
+        except ImportError:
+            # Fall back to linear if scipy unavailable
+            return (1.0 - frac) * rolled + frac * np.roll(rolled, -1)
 
     def _apply_le_particle_wrap(self) -> None:
         """Wrap particles that cross LE y boundaries, shifting x and vx accordingly."""
@@ -1124,6 +1124,25 @@ class LBMDEMSolver:
         coeff = 3.0 * np.pi * self.nu * 2.0 * radii
         return coeff * (uf_x - vel[:, 0]), coeff * (uf_y - vel[:, 1])
 
+    def _interp_velocity_cubic(
+        self,
+        x: np.ndarray,
+        y: np.ndarray,
+        ux: np.ndarray,
+        uy: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Cubic (third-order) periodic velocity interpolation for iSP coupling."""
+        try:
+            from scipy.ndimage import map_coordinates
+        except ImportError:
+            return self._interp_velocity_many(x, y, ux=ux, uy=uy)
+        y_eval = np.mod(y, self.ny)
+        coords = np.vstack([x % self.nx, y_eval])
+        mode = "wrap" if self.y_boundary in ("periodic", "lees_edwards") else "nearest"
+        uf_x = map_coordinates(ux, coords, order=3, mode=mode)
+        uf_y = map_coordinates(uy, coords, order=3, mode=mode)
+        return uf_x, uf_y
+
     def _particle_drag_forces(
         self,
         ux: np.ndarray | None = None,
@@ -1132,7 +1151,12 @@ class LBMDEMSolver:
         """Return Stokes drag forces for all active particles."""
         if self.n_p == 0:
             return np.zeros((0, 2))
-        uf_x, uf_y = self._interp_velocity_many(self.pos[:, 0], self.pos[:, 1], ux=ux, uy=uy)
+        if self.particle_fluid_coupling == "isp":
+            if ux is None or uy is None:
+                _, ux, uy = self._macroscopic()
+            uf_x, uf_y = self._interp_velocity_cubic(self.pos[:, 0], self.pos[:, 1], ux, uy)
+        else:
+            uf_x, uf_y = self._interp_velocity_many(self.pos[:, 0], self.pos[:, 1], ux=ux, uy=uy)
         fd_x, fd_y = self._stokes_drag_many(uf_x, uf_y, self.vel, self.radii)
         return np.column_stack((fd_x, fd_y))
 
@@ -1653,11 +1677,11 @@ class LBMDEMSolver:
                 self._apply_immersed_boundary_forces(ux_ibm, uy_ibm)
                 self._invalidate_macroscopic_cache()
 
-            rho, ux, uy = self._macroscopic()
-            self._lbm_step(rho, ux, uy)
-
             if self.y_boundary == "lees_edwards":
                 self._le_shift = (self._le_shift + self.le_shear_rate * self.ny) % self.nx
+
+            rho, ux, uy = self._macroscopic()
+            self._lbm_step(rho, ux, uy)
 
             for _ in range(self.dem_substeps):
                 self._dem_substep(dt_sub)
