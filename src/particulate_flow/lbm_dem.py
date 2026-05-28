@@ -197,6 +197,7 @@ class LBMDEMSolver:
         le_shear_axis: int = 0,
         le_boundary_axis: int = 1,
         le_interpolation_order: int = 3,
+        surface_roughness: float = 0.0,
     ):
         if particle_attraction and particle_repulsion:
             raise ValueError("particle_attraction and particle_repulsion are mutually exclusive")
@@ -319,6 +320,7 @@ class LBMDEMSolver:
         self.le_boundary_axis = le_boundary_axis
         self.le_interpolation_order = le_interpolation_order
         self._le_shift: float = 0.0  # accumulated fractional x-shift [lattice units]
+        self.surface_roughness = surface_roughness
         self.injected_particle_area = 0.0
         self.inlet_particle_area_budget = 0.0
         self.last_inlet_flow_rate = 0.0
