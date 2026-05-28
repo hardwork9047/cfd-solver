@@ -5,8 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from particulate_flow import FastLBMDEM, LBMDEMSolver
-
+from particulate_flow import FastLBMDEM
 
 # ---------------------------------------------------------------------------
 # Helpers
