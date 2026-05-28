@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.7.0] - 2026-05-28
+
+### Added
+
+- Lees-Edwards (LE) boundary conditions (`y_boundary="lees_edwards"`) for wall-less shear flow, see PR #7.
+- `isp` particle-fluid coupling mode (interpolated Stokes point-force), complementing existing `point_force` and `immersed_boundary`.
+- `le_shear_rate`, `le_shear_axis`, `le_boundary_axis`, `le_interpolation_order` parameters on `LBMDEMSolver`.
+- `solver.lees_edwards` JSON config sub-section; `enabled: true` automatically sets `y_boundary` and `streamwise_boundary`.
+- Example config `configs/lbm_dem/cases/lees_edwards_shear_flow.json`.
+
+### Changed
+
+- `Y_BOUNDARIES` extended with `"lees_edwards"`; `PARTICLE_FLUID_COUPLINGS` extended with `"isp"`.
+- `_flatten_sections` now expands `solver.lees_edwards` sub-dict into flat `le_*` argparse keys.
+
+---
+
 ## [0.6.0] - 2026-05-27
 
 ### Added
