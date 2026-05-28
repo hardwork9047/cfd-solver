@@ -50,19 +50,49 @@ def _build_geometry(args: argparse.Namespace, nx: int) -> PoreGeometry:
     return PoreGeometry.from_cylinders(cylinders)
 
 
-def build_lbm_dem_solver(args: argparse.Namespace) -> FastLBMDEM:
-    """Assemble a FastLBMDEM from argparse Namespace values.
+def _build_lbm3d_solver(args: argparse.Namespace):
+    """Assemble an LBMDEMSolver3D from argparse Namespace values.
 
-    Extracts geometry construction and particle-count derivation from the
-    runner, so the runner only needs to call this function and handle I/O.
+    Args:
+        args: Parsed namespace with at least ``nx``, ``ny``, ``nz``,
+              ``reynolds_number``, ``u_max``, ``le_shear_rate``,
+              ``le_shear_axis``, ``le_boundary_axis``, and
+              ``le_interpolation_order``.
+
+    Returns:
+        Fully initialised LBMDEMSolver3D ready for time-stepping.
+    """
+    from particulate_flow.lbm3d import LBMDEMSolver3D
+
+    return LBMDEMSolver3D(
+        nx=args.nx,
+        ny=args.ny,
+        nz=getattr(args, "nz", 1),
+        Re=getattr(args, "reynolds_number", 10.0),
+        u_max=getattr(args, "u_max", 0.0),
+        le_shear_rate=getattr(args, "le_shear_rate", 0.0),
+        le_shear_axis=getattr(args, "le_shear_axis", 0),
+        le_boundary_axis=getattr(args, "le_boundary_axis", 1),
+        le_interpolation_order=getattr(args, "le_interpolation_order", 3),
+    )
+
+
+def build_lbm_dem_solver(args: argparse.Namespace):
+    """Assemble an LBM-DEM solver from argparse Namespace values.
+
+    Dispatches to the 3-D solver (``LBMDEMSolver3D``) when
+    ``args.dimensions == 3``, otherwise returns a ``FastLBMDEM`` (2-D).
 
     Args:
         args: Parsed namespace from the LBM-DEM runner's ArgumentParser,
               after config defaults have been applied.
 
     Returns:
-        Fully initialised FastLBMDEM ready for time-stepping.
+        Fully initialised solver (FastLBMDEM or LBMDEMSolver3D).
     """
+    if getattr(args, "dimensions", 2) == 3:
+        return _build_lbm3d_solver(args)
+
     nx: int = args.nx
     ny: int = args.ny
     re: float = args.reynolds_number

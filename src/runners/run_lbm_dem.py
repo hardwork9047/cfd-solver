@@ -55,10 +55,14 @@ parser = argparse.ArgumentParser(
     description="LBM-DEM coupled simulation runner",
     parents=[bootstrap_parser],
 )
+parser.add_argument("--dimensions", type=int, default=2, choices=[2, 3],
+                    help="Solver dimensionality: 2 for 2-D D2Q9, 3 for 3-D D3Q15 (default: 2)")
 parser.add_argument("--nx", type=int, default=180,
                     help="Grid width in lattice nodes (default: 180)")
 parser.add_argument("--ny", type=int, default=70,
                     help="Grid height in lattice nodes (default: 70)")
+parser.add_argument("--nz", type=int, default=1,
+                    help="Grid depth in lattice nodes; only used when --dimensions=3 (default: 1)")
 parser.add_argument("--reynolds-number", "--Re", dest="reynolds_number",
                     type=float, default=100.0,
                     help="Particle-diameter Reynolds number based on max flow speed "
