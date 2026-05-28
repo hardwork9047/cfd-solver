@@ -149,6 +149,28 @@ def _expand_solver_section(solver: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+_VISCOSITY_EVAL_KEY_MAP = {
+    "enabled": "viscosity_eval_enabled",
+    "start_step": "viscosity_eval_start_step",
+    "viscosity_interval": "viscosity_eval_interval",
+    "average_steps": "viscosity_eval_average_steps",
+}
+
+
+def _expand_runtime_section(runtime: dict[str, Any]) -> dict[str, Any]:
+    """Expand ``runtime.viscosity_eval`` sub-dict into flat ``viscosity_eval_*`` keys."""
+    result = dict(runtime)
+    ve_config = result.pop("viscosity_eval", None)
+    if ve_config is None:
+        return result
+    if not isinstance(ve_config, dict):
+        raise ValueError("runtime.viscosity_eval must be an object when provided")
+    for k, v in ve_config.items():
+        dest = _VISCOSITY_EVAL_KEY_MAP.get(k, f"viscosity_eval_{k}")
+        result[dest] = v
+    return result
+
+
 def _flatten_sections(values: dict[str, Any]) -> dict[str, Any]:
     """Flatten research-friendly config sections into runner argument keys."""
     payload: dict[str, Any] = {}
@@ -163,6 +185,8 @@ def _flatten_sections(values: dict[str, Any]) -> dict[str, Any]:
                 value = {_ACCELERATOR_KEY_MAP.get(k, k): v for k, v in value.items()}
             elif key == "solver":
                 value = _expand_solver_section(value)
+            elif key == "runtime":
+                value = _expand_runtime_section(value)
             payload = _deep_merge(payload, value)
         else:
             payload[key] = value

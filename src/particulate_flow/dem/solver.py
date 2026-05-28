@@ -279,6 +279,7 @@ class DEMSolver:
                 sim.repulsion_cutoff,
                 sim.attraction_min_gap,
                 sim.repulsion_min_gap,
+                getattr(sim, "surface_roughness", 0.0),
                 forces,
                 torques,
             )
@@ -337,7 +338,9 @@ class DEMSolver:
         dp = sim.pos[j] - sim.pos[i]
         dp[1] = sim._periodic_y_delta(float(dp[1]))
         dist = float(np.linalg.norm(dp))
-        min_dist = sim.radii[i] + sim.radii[j]
+        geom_min_dist = sim.radii[i] + sim.radii[j]
+        h_r = getattr(sim, "surface_roughness", 0.0)
+        min_dist = geom_min_dist + h_r
         if dist <= 1e-10:
             return
 
@@ -368,7 +371,7 @@ class DEMSolver:
                 sim.omega_p[j], f_mag, sim.radii[j], sim.masses[j]
             )
 
-        self._apply_surface_force(i, j, dist, min_dist, n, forces)
+        self._apply_surface_force(i, j, dist, geom_min_dist, n, forces)
 
     def _apply_surface_force(
         self,

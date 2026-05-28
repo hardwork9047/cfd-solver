@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.8.0] - 2026-05-28
+
+### Added
+
+- DEM surface roughness (`physics.surface_roughness` / `--surface-roughness`): extends particle-particle contact threshold by h_r lattice units while keeping geometry-based surface-force gaps unchanged, see PR #8.
+- Apparent viscosity evaluation (`runtime.viscosity_eval.enabled`): `ViscosityEvaluator` in `particulate_flow/rheology.py` computes η^H (hydrodynamic) and η^C (collisional) contributions per interval, writes `viscosity_timeseries.csv`, and records time-averaged η_s in `summary.json`, see PR #8.
+
+---
+
 ## [0.7.0] - 2026-05-28
 
 ### Added

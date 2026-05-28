@@ -33,6 +33,7 @@ if njit is not None:  # pragma: no cover - exercised only when numba is installe
         repulsion_cutoff,
         attraction_min_gap,
         repulsion_min_gap,
+        surface_roughness,
         forces,
         torques,
     ):
@@ -43,7 +44,8 @@ if njit is not None:  # pragma: no cover - exercised only when numba is installe
             dx = pos[j, 0] - pos[i, 0]
             dy = pos[j, 1] - pos[i, 1]
             dist = (dx * dx + dy * dy) ** 0.5
-            min_dist = radii[i] + radii[j]
+            geom_min_dist = radii[i] + radii[j]
+            min_dist = geom_min_dist + surface_roughness
             if dist <= 1e-10:
                 continue
 
@@ -97,7 +99,7 @@ if njit is not None:  # pragma: no cover - exercised only when numba is installe
                     limit_j = rolling_friction_coeff * f_mag * radii[j]
                     torques[j] += min(max(trial_j, -limit_j), limit_j)
 
-            surface_gap = dist - min_dist
+            surface_gap = dist - geom_min_dist
             if particle_attraction and attraction_strength > 0.0:
                 if surface_gap <= attraction_cutoff:
                     h = surface_gap
@@ -105,7 +107,7 @@ if njit is not None:  # pragma: no cover - exercised only when numba is installe
                         h = attraction_min_gap
                     if h < 1e-12:
                         h = 1e-12
-                    r_eff = radii[i] * radii[j] / min_dist
+                    r_eff = radii[i] * radii[j] / geom_min_dist
                     f_attr = attraction_strength * r_eff / (6.0 * h**2)
                     forces[i, 0] += f_attr * nx_
                     forces[i, 1] += f_attr * ny_
@@ -118,7 +120,7 @@ if njit is not None:  # pragma: no cover - exercised only when numba is installe
                         h = repulsion_min_gap
                     if h < 1e-12:
                         h = 1e-12
-                    r_eff = radii[i] * radii[j] / min_dist
+                    r_eff = radii[i] * radii[j] / geom_min_dist
                     f_rep = repulsion_strength * r_eff / (6.0 * h**2)
                     forces[i, 0] -= f_rep * nx_
                     forces[i, 1] -= f_rep * ny_

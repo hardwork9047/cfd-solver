@@ -107,7 +107,7 @@ class TestViscosityEvaluator:
         sim = _shear_sim()
         # step a few times
         for _ in range(5):
-            sim.step()
+            sim.advance()
         # no viscosity attribute should exist (or it should be None/disabled)
         ve = getattr(sim, "viscosity_evaluator", None)
         assert ve is None or not getattr(ve, "enabled", False)
@@ -125,7 +125,7 @@ class TestViscosityEvaluator:
             out_dir=tmp_path,
         )
         for step in range(6):
-            sim.step()
+            sim.advance()
             ve.record(step)
 
         csv_path = tmp_path / "viscosity_timeseries.csv"
@@ -151,7 +151,7 @@ class TestViscosityEvaluator:
             out_dir=tmp_path,
         )
         for step in range(10):
-            sim.step()
+            sim.advance()
             ve.record(step)
 
         result = ve.finalize()
@@ -176,7 +176,7 @@ class TestViscosityEvaluator:
             out_dir=tmp_path,
         )
         for step in range(10):
-            sim.step()
+            sim.advance()
             ve.record(step)
 
         result = ve.finalize()
@@ -204,7 +204,7 @@ class TestViscosityEvaluator:
                 enabled=False,
             )
             for step in range(5):
-                sim.step()
+                sim.advance()
                 ve.record(step)  # should not raise or write
             assert not (out_dir / "viscosity_timeseries.csv").exists()
 

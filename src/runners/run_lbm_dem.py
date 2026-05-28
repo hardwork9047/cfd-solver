@@ -29,6 +29,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from particulate_flow import FastLBMDEM, LBMDEMSolver, PoreGeometry
 from particulate_flow.builder import build_lbm_dem_solver
+from particulate_flow.rheology import ViscosityEvaluator
 from particulate_flow.io.paths import program_results_dir
 from particulate_flow.io.config import SimulationConfig
 
@@ -212,6 +213,17 @@ parser.add_argument("--attraction-min-gap", type=float, default=0.05,
                     help="Minimum surface gap for attraction regularisation (default: 0.05)")
 parser.add_argument("--repulsion-min-gap", type=float, default=0.05,
                     help="Minimum surface gap for repulsion regularisation (default: 0.05)")
+parser.add_argument("--surface-roughness", type=float, default=0.0,
+                    help="DEM surface roughness h_r; extends contact threshold by h_r [lattice] (default: 0.0)")
+parser.add_argument("--viscosity-eval-enabled", action=argparse.BooleanOptionalAction,
+                    default=False,
+                    help="Enable apparent viscosity evaluation (requires LE shear BC)")
+parser.add_argument("--viscosity-eval-start-step", type=int, default=0,
+                    help="Step at which to start viscosity accumulation (default: 0)")
+parser.add_argument("--viscosity-eval-interval", type=int, default=100,
+                    help="Write viscosity CSV row every N steps (default: 100)")
+parser.add_argument("--viscosity-eval-average-steps", type=int, default=1000,
+                    help="Number of trailing rows for time-averaged η_s (default: 1000)")
 parser.add_argument("--porous-resistance", action=argparse.BooleanOptionalAction,
                     default=False,
                     help="Apply Brinkman-like drag in particle-occupied cake cells")
@@ -975,6 +987,8 @@ def _write_fouling_summary(
     sim: FastLBMDEM,
     analysis_csv: Path,
     analysis_npz: Path,
+    *,
+    apparent_viscosity: dict | None = None,
 ) -> tuple[Path, Path]:
     """Write compact final metrics for comparing large condition sweeps."""
     summary_dir = out_dir / "analysis"
@@ -1023,6 +1037,8 @@ def _write_fouling_summary(
                 "particle_fluid_coupling": sim.particle_fluid_coupling,
             },
         }
+    if apparent_viscosity is not None:
+        summary["apparent_viscosity"] = apparent_viscosity
     json_path.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
 
     lines = ["# LBM-DEM Fouling Summary", ""]
@@ -1104,6 +1120,14 @@ if CYLINDERS:
         print(f"  #{idx}: x={cx:.1f}, y={cy:.1f}, r={cr:.1f}")
 
 sim = build_lbm_dem_solver(args)
+viscosity_evaluator = ViscosityEvaluator(
+    sim,
+    start_step=getattr(args, "viscosity_eval_start_step", 0),
+    viscosity_interval=getattr(args, "viscosity_eval_interval", 100),
+    average_steps=getattr(args, "viscosity_eval_average_steps", 1000),
+    out_dir=OUT_DIR,
+    enabled=getattr(args, "viscosity_eval_enabled", False),
+)
 # Sync derived values with what the builder actually computed to avoid divergence.
 N_PARTICLES = sim.n_p
 SOURCE_VOLUME_FRACTION = sim.source_volume_fraction
@@ -1166,6 +1190,7 @@ pressure_sections = _pressure_sections(CYLINDERS)
 t1 = time.perf_counter()
 for frame_idx in range(n_frames):
     sim.advance(SNAPSHOT_EVERY)
+    viscosity_evaluator.record(sim.step_count)
 
     rho, ux, uy = sim.get_fields()
 
@@ -1363,12 +1388,14 @@ total_time = time.perf_counter() - t1
 print(f"      完了 ({total_time:.1f} s, {TOTAL_STEPS/total_time:.0f} steps/s)")
 
 analysis_csv, analysis_npz = _write_analysis_outputs(OUT_DIR, analysis_rows)
+viscosity_result = viscosity_evaluator.finalize()
 summary_json, summary_md = _write_fouling_summary(
     OUT_DIR,
     analysis_rows,
     sim,
     analysis_csv,
     analysis_npz,
+    apparent_viscosity=viscosity_result if getattr(args, "viscosity_eval_enabled", False) else None,
 )
 print(f"\n後解析データ保存: {analysis_csv}")
 print(f"後解析NPZ保存  : {analysis_npz}")
