@@ -27,8 +27,9 @@ def _fluid_stress_xy(sim: "LBMDEMSolver") -> float:
         σ_xy = -(1 - 1/(2τ)) Σ_α c_αx c_αy (f_α - f_α^eq)
 
     Args:
-        sim: An LBMDEMSolver instance with attributes ``f``, ``rho``,
-             ``ux``, ``uy``, ``tau``.
+        sim: An LBMDEMSolver instance with attributes ``f`` (shape
+             ``(9, nx, ny)``) and ``tau``.  ``rho``, ``ux``, and ``uy``
+             are derived internally from ``f`` and are not read from ``sim``.
 
     Returns:
         Volume-averaged σ_xy [lattice units].
@@ -59,6 +60,10 @@ def _fluid_stress_xy(sim: "LBMDEMSolver") -> float:
     cx_cy = C[:, 0] * C[:, 1]  # (9,)
     prefactor = -(1.0 - 1.0 / (2.0 * tau))
     sigma_xy_field = prefactor * np.einsum("k,kij->ij", cx_cy, f_neq)
+    solid = getattr(sim, "solid", None)
+    if solid is not None and solid.any():
+        fluid_mask = ~solid
+        return float(np.mean(sigma_xy_field[fluid_mask]))
     return float(np.mean(sigma_xy_field))
 
 
@@ -94,6 +99,7 @@ class ViscosityEvaluator:
         self._rows: list[dict[str, float]] = []
         self._contact_stress_acc: float = 0.0
         self._contact_acc_count: int = 0
+        self._next_flush_step: int = start_step
         self._csv_path: Path = self.out_dir / "viscosity_timeseries.csv"
         self._csv_handle = None
         self._csv_writer = None
@@ -102,28 +108,33 @@ class ViscosityEvaluator:
     # Public API
     # ------------------------------------------------------------------
 
-    def record(self, step: int, contact_stress_xy: float = 0.0) -> None:
+    def record(self, step: int) -> None:
         """Record one time step.
 
-        Call this once per simulation step. When disabled this is a
-        cheap no-op.
+        Can be called once per step or once per frame (coarse-grained).
+        Flushes a CSV row when the step first reaches or passes the next
+        scheduled flush point (``start_step + N * viscosity_interval``).
 
         Args:
-            step: Current simulation step index.
-            contact_stress_xy: Optional pre-computed collisional σ_xy
-                contribution from particle contact forces this step.
+            step: Current simulation step index (e.g. ``sim.step_count``).
+
+        Note:
+            Internally calls ``sim.dem_solver.compute_contact_stress_xy()``
+            to accumulate collisional stress.  ``sim`` must therefore have a
+            ``dem_solver`` attribute (all ``LBMDEMSolver`` instances do).
         """
         if not self.enabled:
             return
         if step < self.start_step:
             return
 
-        self._contact_stress_acc += contact_stress_xy
+        sigma_xy_C = self.sim.dem_solver.compute_contact_stress_xy()
+        self._contact_stress_acc += sigma_xy_C
         self._contact_acc_count += 1
 
-        steps_since = step - self.start_step
-        if steps_since % self.viscosity_interval != 0:
+        if step < self._next_flush_step:
             return
+        self._next_flush_step = step + self.viscosity_interval
 
         shear_rate = getattr(self.sim, "le_shear_rate", 0.0)
         sigma_xy_H = _fluid_stress_xy(self.sim)

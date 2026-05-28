@@ -491,3 +491,40 @@ class DEMSolver:
         torques[i] += self.rolling_resistance_torque(
             sim.omega_p[i], normal_force, sim.radii[i], sim.masses[i]
         )
+
+    def compute_contact_stress_xy(self) -> float:
+        """Return the domain-averaged collisional off-diagonal stress σ_xy^C.
+
+        Uses the Irving-Kirkwood formula: σ_xy^C = (1/V) Σ_{pairs} F_x r_y,
+        where F is the **normal** contact force on particle j and
+        r = pos_j - pos_i.  Tangential (friction) contributions are excluded.
+
+        Only particle-particle contacts contribute; wall and cylinder contacts
+        are excluded as they involve fixed objects.
+
+        Returns:
+            Collisional σ_xy^C in lattice units. Zero when no contacts exist.
+        """
+        sim = self.sim
+        if sim.n_p < 2:
+            return 0.0
+        volume = float(sim.nx * sim.ny)
+        stress_xy = 0.0
+        h_r = getattr(sim, "surface_roughness", 0.0)
+        for i, j in sim._particle_pair_candidates():
+            dp = sim.pos[j] - sim.pos[i]
+            dp[1] = sim._periodic_y_delta(float(dp[1]))
+            dist = float(np.linalg.norm(dp))
+            geom_min_dist = sim.radii[i] + sim.radii[j]
+            min_dist = geom_min_dist + h_r
+            if dist <= 1e-10 or dist >= min_dist:
+                continue
+            n = dp / dist
+            overlap = min_dist - dist
+            v_n = float(np.dot(sim.vel[j] - sim.vel[i], n))
+            avg_m = (sim.masses[i] + sim.masses[j]) / 2.0
+            f_mag = self.normal_contact_magnitude(overlap, v_n, avg_m)
+            f_vec = f_mag * n  # force on j from i
+            # Irving-Kirkwood: F_x * r_y where r = pos_j - pos_i
+            stress_xy += float(f_vec[0] * dp[1])
+        return stress_xy / volume
