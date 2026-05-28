@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "name": "lees_edwards_shear_flow_3d",
+  "description": "3D D3Q15 pure shear flow driven by Lees-Edwards BC (no particles)",
+  "case_type": "shear_rheology_3d",
+  "domain": {
+    "nx": 16,
+    "ny": 32,
+    "nz": 8,
+    "dimensions": 3
+  },
+  "flow": {
+    "reynolds_number": 1.0,
+    "u_max": 0.0
+  },
+  "solver": {
+    "lees_edwards": {
+      "enabled": true,
+      "shear_rate": 0.001,
+      "shear_axis": 0,
+      "boundary_axis": 1,
+      "interpolation_order": 3
+    }
+  },
+  "particles": {
+    "n_particles": 0
+  },
+  "runtime": {
+    "total_steps": 5000,
+    "warmup_steps": 0
+  }
+}

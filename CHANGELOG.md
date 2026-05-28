@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.9.0] - 2026-05-28
+
+### Added
+
+- 3D LBM solver `LBMDEMSolver3D` using D3Q15 lattice (`src/particulate_flow/lbm3d.py`), with Lees-Edwards shear BC (x/z periodic, y LE), see PR #9.
+- `build_lbm_dem_solver` dispatches to 3D solver when `dimensions=3` in config/CLI.
+- New CLI args `--dimensions` (2 or 3) and `--nz` for 3D grid depth.
+- Sample config `configs/lbm_dem/cases/lees_edwards_shear_flow_3d.json`.
+
+---
+
 ## [0.8.0] - 2026-05-28
 
 ### Added

@@ -2,5 +2,5 @@ skill: implement
 package: cfd-solver
 issue: 9
 plan-review-preference: proceed
-step: 6 (implement)
-next: write lbm3d.py and wire into builder
+step: 7 (clean up)
+next: check dead code, bump version done, update CHANGELOG done; self-review next
