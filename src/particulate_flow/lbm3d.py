@@ -6,6 +6,8 @@ Particle coupling is not included in this phase.
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
 # ---------------------------------------------------------------------------
@@ -228,14 +230,15 @@ class LBMDEMSolver3D:
 
         Args:
             row: Array of shape (nx,) or (nx, nz).
-            shift: Fractional shift in lattice units (positive = shift right).
+            shift: Fractional shift in lattice units (positive = shift left,
+               matching ``np.roll(row, -shift)`` semantics).
 
         Returns:
             Shifted array of the same shape as ``row``.
         """
         nx = self.nx
-        int_shift = int(shift) % nx
-        frac = shift - int(shift)
+        int_shift = math.floor(shift) % nx
+        frac = shift - math.floor(shift)
         rolled = np.roll(row, -int_shift, axis=0)
         if abs(frac) < 1e-12:
             return rolled
@@ -268,9 +271,11 @@ class LBMDEMSolver3D:
            of the image boxes.
         2. **Velocity boost** — the equilibrium contribution is updated to
            include the shear velocity jump ``dv = γ̇ · ny``.  Top-crossers
-           (now at y=0) receive +dv in x; bottom-crossers (now at y=ny-1)
-           receive -dv.  The correction uses the first-order expansion:
-           ``Δf_i = w_i · ρ · c_ix · dv / cs²``.
+           entered from the upper image box (frame velocity +dv), so they
+           receive a boost of **-dv** when entering the main box; bottom-crossers
+           (from the lower image box at -dv) receive **+dv**.  The correction
+           uses the first-order expansion:
+           ``Δf_i = w_i · ρ · c_ix · (±dv) / cs²``.
         """
         shift = self._le_shift
         dv = self.le_shear_rate * self.ny  # velocity jump across the domain
@@ -312,10 +317,10 @@ class LBMDEMSolver3D:
             n_steps: Number of LBM time steps to execute.
         """
         for _ in range(n_steps):
-            self._le_shift = (self._le_shift + self.le_shear_rate * self.ny) % self.nx
             rho, ux, uy, uz = self._macroscopic()
             self._collide_bgk(rho, ux, uy, uz)
             self._stream()
+            self._le_shift = (self._le_shift + self.le_shear_rate * self.ny) % self.nx
             self._apply_le_bc()
             self.step_count += 1
 

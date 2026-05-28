@@ -5,7 +5,6 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -35,7 +34,7 @@ def _make_3d_solver(
 
 class TestD3Q15Constants:
     def test_15_directions(self):
-        from particulate_flow.lbm3d import C3, W3, Q3
+        from particulate_flow.lbm3d import C3, Q3, W3
 
         assert Q3 == 15
         assert C3.shape == (15, 3)
@@ -178,6 +177,7 @@ class TestConfigDimensions:
     def test_builder_returns_3d_solver_for_dimensions_3(self):
         """build_lbm_dem_solver returns LBMDEMSolver3D when dimensions=3."""
         import argparse
+
         from particulate_flow.builder import build_lbm_dem_solver
         from particulate_flow.lbm3d import LBMDEMSolver3D
 
@@ -197,6 +197,7 @@ class TestConfigDimensions:
     def test_builder_returns_2d_solver_for_dimensions_2(self):
         """build_lbm_dem_solver returns FastLBMDEM when dimensions=2 (regression)."""
         import argparse
+
         from particulate_flow.builder import build_lbm_dem_solver
         from particulate_flow.fast_solver import FastLBMDEM
 
