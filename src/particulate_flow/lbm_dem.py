@@ -44,6 +44,8 @@ from .lbm.constants import (
     CS2,
     FLUID_ACCELERATORS,
     FLUID_METHODS,
+    LE_BOT_CROSS_DIRS,
+    LE_TOP_CROSS_DIRS,
     OPPOSITE,
     PARTICLE_FLUID_COUPLINGS,
     PARTICLE_SEARCH_METHODS,
@@ -191,6 +193,10 @@ class LBMDEMSolver:
         cylinders: list[tuple[float, float, float]] | tuple[tuple[float, float, float], ...] | None = None,
         particle_source: str = "initial",
         source_volume_fraction: float | None = None,
+        le_shear_rate: float = 0.0,
+        le_shear_axis: int = 0,
+        le_boundary_axis: int = 1,
+        le_interpolation_order: int = 3,
     ):
         if particle_attraction and particle_repulsion:
             raise ValueError("particle_attraction and particle_repulsion are mutually exclusive")
@@ -307,6 +313,12 @@ class LBMDEMSolver:
         self.particle_source = particle_source
         self.source_volume_fraction = source_volume_fraction
         self.removed_particles = 0
+        # Lees-Edwards shear boundary state
+        self.le_shear_rate = le_shear_rate
+        self.le_shear_axis = le_shear_axis
+        self.le_boundary_axis = le_boundary_axis
+        self.le_interpolation_order = le_interpolation_order
+        self._le_shift: float = 0.0  # accumulated fractional x-shift [lattice units]
         self.injected_particle_area = 0.0
         self.inlet_particle_area_budget = 0.0
         self.last_inlet_flow_rate = 0.0
@@ -758,7 +770,7 @@ class LBMDEMSolver:
         """Return lattice cells covered by DEM particles, excluding fixed solids."""
         if self.n_p == 0:
             return np.zeros_like(self.fixed_solid)
-        if self.uses_numba_compute and _particle_solid_mask_numba is not None and self.y_boundary != "periodic":
+        if self.uses_numba_compute and _particle_solid_mask_numba is not None and self.y_boundary not in ("periodic", "lees_edwards"):
             particle_solid = _particle_solid_mask_numba(
                 self.pos,
                 self.radii,
@@ -912,6 +924,55 @@ class LBMDEMSolver:
         self.f[6, x, y_indices] = f8 + 0.5 * (f4 - f2) - (1.0 / 6.0) * rho_r * ux_r
         self._invalidate_macroscopic_cache()
 
+    def _fractional_roll_x(self, row: np.ndarray, shift: float) -> np.ndarray:
+        """Shift a 1-D x-row by a fractional amount using linear or cubic interpolation."""
+        nx = row.shape[0]
+        int_shift = int(np.floor(shift)) % nx
+        frac = shift - np.floor(shift)
+        rolled = np.roll(row, int_shift)
+        if abs(frac) < 1e-12:
+            return rolled
+        if self.le_interpolation_order == 1:
+            return (1.0 - frac) * rolled + frac * np.roll(rolled, -1)
+        # Third-order cubic interpolation with periodic boundary via scipy
+        try:
+            from scipy.ndimage import map_coordinates
+            x_dst = (np.arange(nx, dtype=float) - frac) % nx
+            return map_coordinates(rolled, [x_dst], order=3, mode="wrap")
+        except ImportError:
+            # Fall back to linear if scipy unavailable
+            return (1.0 - frac) * rolled + frac * np.roll(rolled, -1)
+
+    def _apply_le_particle_wrap(self) -> None:
+        """Wrap particles that cross LE y boundaries, shifting x and vx accordingly."""
+        ny = self.ny
+        nx = self.nx
+        shift = self._le_shift
+        dv = self.le_shear_rate * ny  # velocity jump across the full domain height
+
+        crossed_top = self.pos[:, 1] >= ny
+        crossed_bot = self.pos[:, 1] < 0.0
+
+        if np.any(crossed_top):
+            self.pos[crossed_top, 1] -= ny
+            self.pos[crossed_top, 0] = (self.pos[crossed_top, 0] - shift) % nx
+            self.vel[crossed_top, 0] -= dv
+
+        if np.any(crossed_bot):
+            self.pos[crossed_bot, 1] += ny
+            self.pos[crossed_bot, 0] = (self.pos[crossed_bot, 0] + shift) % nx
+            self.vel[crossed_bot, 0] += dv
+
+    def _apply_le_streaming_correction(self) -> None:
+        """Apply Lees-Edwards x-shift to populations that just crossed the y boundary."""
+        shift = self._le_shift
+        # Directions crossing top boundary (cy > 0) land in y=0 after streaming
+        for i in LE_TOP_CROSS_DIRS:
+            self.f[i, :, 0] = self._fractional_roll_x(self.f[i, :, 0], shift)
+        # Directions crossing bottom boundary (cy < 0) land in y=ny-1 after streaming
+        for i in LE_BOT_CROSS_DIRS:
+            self.f[i, :, self.ny - 1] = self._fractional_roll_x(self.f[i, :, self.ny - 1], -shift)
+
     def _trt_omega_minus(self) -> float:
         """Return the odd-mode TRT relaxation rate from the magic parameter."""
         tau_plus_offset = max(1.0 / self.omega - 0.5, 1e-12)
@@ -980,6 +1041,9 @@ class LBMDEMSolver:
             streamed[i] = self.f[i][np.ix_(self._stream_x_src[i], self._stream_y_src[i])]
         self.f = streamed
 
+        if self.y_boundary == "lees_edwards":
+            self._apply_le_streaming_correction()
+
         # Bounce-back on solid nodes
         f_tmp = self.f.copy()
         for i in range(Q):
@@ -1010,10 +1074,10 @@ class LBMDEMSolver:
             return np.empty(0), np.empty(0)
 
         x_floor = np.floor(x)
-        y_eval = np.mod(y, self.ny) if self.y_boundary == "periodic" else y
+        y_eval = np.mod(y, self.ny) if self.y_boundary in ("periodic", "lees_edwards") else y
         y_floor = np.floor(y_eval)
         xi = x_floor.astype(int) % self.nx
-        if self.y_boundary == "periodic":
+        if self.y_boundary in ("periodic", "lees_edwards"):
             yi = y_floor.astype(int) % self.ny
             yi1 = (yi + 1) % self.ny
         else:
@@ -1060,6 +1124,31 @@ class LBMDEMSolver:
         coeff = 3.0 * np.pi * self.nu * 2.0 * radii
         return coeff * (uf_x - vel[:, 0]), coeff * (uf_y - vel[:, 1])
 
+    def _interp_velocity_cubic(
+        self,
+        x: np.ndarray,
+        y: np.ndarray,
+        ux: np.ndarray,
+        uy: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Cubic (third-order) velocity interpolation for iSP coupling.
+
+        Uses ``scipy.ndimage.map_coordinates`` with ``order=3`` and periodic
+        wrapping for ``y_boundary`` in ``("periodic", "lees_edwards")``, or
+        nearest-clamp otherwise.  Falls back to bilinear interpolation
+        (``_interp_velocity_many``) when scipy is not available.
+        """
+        try:
+            from scipy.ndimage import map_coordinates
+        except ImportError:
+            return self._interp_velocity_many(x, y, ux=ux, uy=uy)
+        y_eval = np.mod(y, self.ny)
+        coords = np.vstack([x % self.nx, y_eval])
+        mode = "wrap" if self.y_boundary in ("periodic", "lees_edwards") else "nearest"
+        uf_x = map_coordinates(ux, coords, order=3, mode=mode)
+        uf_y = map_coordinates(uy, coords, order=3, mode=mode)
+        return uf_x, uf_y
+
     def _particle_drag_forces(
         self,
         ux: np.ndarray | None = None,
@@ -1068,7 +1157,12 @@ class LBMDEMSolver:
         """Return Stokes drag forces for all active particles."""
         if self.n_p == 0:
             return np.zeros((0, 2))
-        uf_x, uf_y = self._interp_velocity_many(self.pos[:, 0], self.pos[:, 1], ux=ux, uy=uy)
+        if self.particle_fluid_coupling == "isp":
+            if ux is None or uy is None:
+                _, ux, uy = self._macroscopic()
+            uf_x, uf_y = self._interp_velocity_cubic(self.pos[:, 0], self.pos[:, 1], ux, uy)
+        else:
+            uf_x, uf_y = self._interp_velocity_many(self.pos[:, 0], self.pos[:, 1], ux=ux, uy=uy)
         fd_x, fd_y = self._stokes_drag_many(uf_x, uf_y, self.vel, self.radii)
         return np.column_stack((fd_x, fd_y))
 
@@ -1081,9 +1175,9 @@ class LBMDEMSolver:
         ``radius`` sets the normalisation area (defaults to r_p).
         """
         xi = int(np.floor(x)) % self.nx
-        y_eval = y % self.ny if self.y_boundary == "periodic" else y
+        y_eval = y % self.ny if self.y_boundary in ("periodic", "lees_edwards") else y
         y_floor = np.floor(y_eval)
-        if self.y_boundary == "periodic":
+        if self.y_boundary in ("periodic", "lees_edwards"):
             yi = int(y_floor) % self.ny
             yi1 = (yi + 1) % self.ny
         else:
@@ -1114,10 +1208,10 @@ class LBMDEMSolver:
             return
 
         x_floor = np.floor(x)
-        y_eval = np.mod(y, self.ny) if self.y_boundary == "periodic" else y
+        y_eval = np.mod(y, self.ny) if self.y_boundary in ("periodic", "lees_edwards") else y
         y_floor = np.floor(y_eval)
         xi = x_floor.astype(int) % self.nx
-        if self.y_boundary == "periodic":
+        if self.y_boundary in ("periodic", "lees_edwards"):
             yi = y_floor.astype(int) % self.ny
             yi1 = (yi + 1) % self.ny
         else:
@@ -1154,10 +1248,10 @@ class LBMDEMSolver:
             return
 
         x_floor = np.floor(x)
-        y_eval = np.mod(y, self.ny) if self.y_boundary == "periodic" else y
+        y_eval = np.mod(y, self.ny) if self.y_boundary in ("periodic", "lees_edwards") else y
         y_floor = np.floor(y_eval)
         xi = x_floor.astype(int) % self.nx
-        if self.y_boundary == "periodic":
+        if self.y_boundary in ("periodic", "lees_edwards"):
             yi = y_floor.astype(int) % self.ny
             yi1 = (yi + 1) % self.ny
         else:
@@ -1203,7 +1297,7 @@ class LBMDEMSolver:
                 self.radii,
                 self.ibm_marker_spacing,
                 self.ny,
-                self.y_boundary == "periodic",
+                self.y_boundary in ("periodic", "lees_edwards"),
             )
         else:
             marker_x_parts: list[np.ndarray] = []
@@ -1221,7 +1315,7 @@ class LBMDEMSolver:
                 rx = radius * np.cos(theta)
                 ry = radius * np.sin(theta)
                 x = self.pos[i, 0] + rx
-                if self.y_boundary == "periodic":
+                if self.y_boundary in ("periodic", "lees_edwards"):
                     y = np.mod(self.pos[i, 1] + ry, self.ny)
                 else:
                     y = np.clip(self.pos[i, 1] + ry, 0.5, self.ny - 1.5)
@@ -1291,7 +1385,7 @@ class LBMDEMSolver:
                     self.radii,
                     self.ibm_marker_spacing,
                     self.ny,
-                    self.y_boundary == "periodic",
+                    self.y_boundary in ("periodic", "lees_edwards"),
                 )
             )
             return {
@@ -1317,7 +1411,7 @@ class LBMDEMSolver:
             rx = radius * np.cos(theta)
             ry = radius * np.sin(theta)
             marker_x_parts.append(self.pos[i, 0] + rx)
-            if self.y_boundary == "periodic":
+            if self.y_boundary in ("periodic", "lees_edwards"):
                 marker_y_parts.append(np.mod(self.pos[i, 1] + ry, self.ny))
             else:
                 marker_y_parts.append(np.clip(self.pos[i, 1] + ry, 0.5, self.ny - 1.5))
@@ -1351,8 +1445,8 @@ class LBMDEMSolver:
         return max(f_n + f_damp, 0.0)
 
     def _periodic_y_delta(self, dy: float) -> float:
-        """Return the minimum-image y displacement when y is periodic."""
-        if self.y_boundary != "periodic":
+        """Return the minimum-image y displacement when y is periodic or lees_edwards."""
+        if self.y_boundary not in ("periodic", "lees_edwards"):
             return dy
         return dy - self.ny * float(np.rint(dy / self.ny))
 
@@ -1429,7 +1523,7 @@ class LBMDEMSolver:
         if self.n_p < 2:
             return
 
-        if self.particle_search == "all_pairs" or self.y_boundary == "periodic":
+        if self.particle_search == "all_pairs" or self.y_boundary in ("periodic", "lees_edwards"):
             for i in range(self.n_p):
                 for j in range(i + 1, self.n_p):
                     yield i, j
@@ -1443,7 +1537,7 @@ class LBMDEMSolver:
         for (cx, cy), ids in cells.items():
             for dx, dy in neighbour_offsets:
                 other_cy = cy + dy
-                if self.y_boundary == "periodic":
+                if self.y_boundary in ("periodic", "lees_edwards"):
                     other_cy %= ncy
                 other = cells.get((cx + dx, other_cy))
                 if other is None:
@@ -1488,6 +1582,8 @@ class LBMDEMSolver:
         self.pos += dt * self.vel
         if self.y_boundary == "periodic" and self.n_p:
             self.pos[:, 1] %= self.ny
+        elif self.y_boundary == "lees_edwards" and self.n_p:
+            self._apply_le_particle_wrap()
         if self.particle_source == "left_inlet":
             self._delete_right_outflow_particles()
             if self.n_p == 0:
@@ -1529,7 +1625,7 @@ class LBMDEMSolver:
                     ny_ = dy / dist
                     self.pos[i, 0] = cx + min_dist * nx_
                     self.pos[i, 1] = cy + min_dist * ny_
-                    if self.y_boundary == "periodic":
+                    if self.y_boundary in ("periodic", "lees_edwards"):
                         self.pos[i, 1] %= self.ny
                     # Kill inward normal velocity
                     v_n = self.vel[i, 0] * nx_ + self.vel[i, 1] * ny_
@@ -1571,7 +1667,7 @@ class LBMDEMSolver:
                 _, ux_res, uy_res = self._macroscopic()
                 self._apply_porous_resistance(ux_res, uy_res)
 
-            if self.n_p and self.particle_fluid_coupling == "point_force":
+            if self.n_p and self.particle_fluid_coupling in ("point_force", "isp"):
                 _, ux_drag, uy_drag = self._macroscopic()
                 drag = self._particle_drag_forces(ux=ux_drag, uy=uy_drag)
                 self._distribute_forces_many(
@@ -1586,6 +1682,9 @@ class LBMDEMSolver:
                 _, ux_ibm, uy_ibm = self._macroscopic()
                 self._apply_immersed_boundary_forces(ux_ibm, uy_ibm)
                 self._invalidate_macroscopic_cache()
+
+            if self.y_boundary == "lees_edwards":
+                self._le_shift = (self._le_shift + self.le_shear_rate * self.ny) % self.nx
 
             rho, ux, uy = self._macroscopic()
             self._lbm_step(rho, ux, uy)

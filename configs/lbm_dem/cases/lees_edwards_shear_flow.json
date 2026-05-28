@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "name": "lees_edwards_shear_flow",
+  "description": "Wall-less shear suspension using Lees-Edwards BCs and iSP coupling (Phase A demo)",
+  "case_type": "shear_suspension",
+  "domain": {
+    "nx": 64,
+    "ny": 64
+  },
+  "flow": {
+    "u_max": 0.016,
+    "reynolds_number": 1.0
+  },
+  "solver": {
+    "fluid_method": "lbm-trt-guo",
+    "particle_fluid_coupling": "isp",
+    "lees_edwards": {
+      "enabled": true,
+      "shear_rate": 2.5e-4,
+      "shear_axis": 0,
+      "boundary_axis": 1,
+      "interpolation_order": 3
+    }
+  },
+  "particles": {
+    "particle_radius": 3.0,
+    "radius_variation": 0.1,
+    "density_ratio": 1.5,
+    "n_particles": 8,
+    "gravity": 0.0
+  },
+  "numerics": {
+    "dem_substeps": 4
+  },
+  "runtime": {
+    "total_steps": 20000,
+    "warmup_steps": 5000
+  },
+  "outputs": {
+    "save_interval": 1000
+  }
+}

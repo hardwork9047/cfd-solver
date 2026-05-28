@@ -116,6 +116,38 @@ _ACCELERATOR_KEY_MAP = {
     "compute": "compute_accelerator",
 }
 
+# Keys in the ``solver.lees_edwards`` sub-section mapped to solver __init__ params.
+_LE_KEY_MAP = {
+    "shear_rate": "le_shear_rate",
+    "shear_axis": "le_shear_axis",
+    "boundary_axis": "le_boundary_axis",
+    "interpolation_order": "le_interpolation_order",
+}
+
+
+def _expand_solver_section(solver: dict[str, Any]) -> dict[str, Any]:
+    """Expand ``solver.lees_edwards`` sub-dict into flat ``le_*`` keys.
+
+    When ``lees_edwards.enabled`` is ``true``, also injects ``y_boundary``
+    and ``streamwise_boundary`` defaults (``"lees_edwards"`` and
+    ``"periodic_force"`` respectively) unless those keys are already present.
+    """
+    result = dict(solver)
+    le_config = result.pop("lees_edwards", None)
+    if le_config is None:
+        return result
+    if not isinstance(le_config, dict):
+        raise ValueError("solver.lees_edwards must be an object when provided")
+    if le_config.get("enabled", False):
+        result.setdefault("y_boundary", "lees_edwards")
+        result.setdefault("streamwise_boundary", "periodic_force")
+    for k, v in le_config.items():
+        if k == "enabled":
+            continue
+        dest = _LE_KEY_MAP.get(k, f"le_{k}")
+        result[dest] = v
+    return result
+
 
 def _flatten_sections(values: dict[str, Any]) -> dict[str, Any]:
     """Flatten research-friendly config sections into runner argument keys."""
@@ -129,6 +161,8 @@ def _flatten_sections(values: dict[str, Any]) -> dict[str, Any]:
             if key == "accelerator":
                 # Remap short keys (fluid, compute) to argparse destinations.
                 value = {_ACCELERATOR_KEY_MAP.get(k, k): v for k, v in value.items()}
+            elif key == "solver":
+                value = _expand_solver_section(value)
             payload = _deep_merge(payload, value)
         else:
             payload[key] = value
