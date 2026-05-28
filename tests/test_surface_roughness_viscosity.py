@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import csv
-import json
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 from particulate_flow import LBMDEMSolver
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -189,8 +187,9 @@ class TestViscosityEvaluator:
 
     def test_no_extra_cost_when_disabled(self):
         """When disabled ViscosityEvaluator.record() is cheap (no exception, no CSV)."""
-        from particulate_flow.rheology import ViscosityEvaluator
         import tempfile
+
+        from particulate_flow.rheology import ViscosityEvaluator
 
         sim = _shear_sim()
         with tempfile.TemporaryDirectory() as td:

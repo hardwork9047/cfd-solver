@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from particulate_flow.lbm.constants import C, CS2, W
+from particulate_flow.lbm.constants import CS2, C, W
 
 if TYPE_CHECKING:
     from particulate_flow.lbm_dem import LBMDEMSolver
