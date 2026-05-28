@@ -290,7 +290,7 @@ class DEMSolver:
         if (
             sim.uses_numba_compute
             and _wall_cylinder_loads_numba is not None
-            and sim.y_boundary != "periodic"
+            and sim.y_boundary not in ("periodic", "lees_edwards")
         ):
             contact_model_id = 1 if self.contact_model == "dem-linear" else 0
             cylinders = np.asarray(sim.cylinders, dtype=np.float64).reshape((-1, 3))
@@ -398,7 +398,7 @@ class DEMSolver:
 
     def _apply_wall_loads(self, forces: np.ndarray, torques: np.ndarray) -> None:
         sim = self.sim
-        if sim.y_boundary == "periodic":
+        if sim.y_boundary in ("periodic", "lees_edwards"):
             return
         for i in range(sim.n_p):
             wall_bot = sim.radii[i] + 0.5

@@ -26,9 +26,15 @@ Q = 9
 CS2 = 1.0 / 3.0  # lattice speed of sound squared
 
 FLUID_METHODS = ("lbm-bgk-guo", "lbm-trt-guo")
-PARTICLE_FLUID_COUPLINGS = ("point_force", "solid_boundary", "immersed_boundary")
+PARTICLE_FLUID_COUPLINGS = ("point_force", "solid_boundary", "immersed_boundary", "isp")
 FLUID_ACCELERATORS = ("numpy", "numba", "auto")
 COMPUTE_ACCELERATORS = ("numpy", "numba", "auto")
 PARTICLE_SEARCH_METHODS = ("cell_list", "all_pairs")
-Y_BOUNDARIES = ("wall", "periodic")
+Y_BOUNDARIES = ("wall", "periodic", "lees_edwards")
 STREAMWISE_BOUNDARIES = ("periodic_force", "pressure")
+
+# D2Q9 direction indices that cross the y boundaries (y=0 or y=ny-1 during streaming)
+# Directions with cy > 0 cross the top boundary (y = ny-1 → y = 0)
+LE_TOP_CROSS_DIRS = (2, 5, 6)   # N, NE, NW
+# Directions with cy < 0 cross the bottom boundary (y = 0 → y = ny-1)
+LE_BOT_CROSS_DIRS = (4, 7, 8)   # S, SW, SE

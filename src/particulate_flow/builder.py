@@ -175,6 +175,10 @@ def build_lbm_dem_solver(args: argparse.Namespace) -> FastLBMDEM:
         geometry=geometry,
         particle_source=particle_source,
         source_volume_fraction=source_volume_fraction,
+        le_shear_rate=getattr(args, "le_shear_rate", 0.0),
+        le_shear_axis=getattr(args, "le_shear_axis", 0),
+        le_boundary_axis=getattr(args, "le_boundary_axis", 1),
+        le_interpolation_order=getattr(args, "le_interpolation_order", 3),
     )
 
 
