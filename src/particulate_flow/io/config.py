@@ -126,7 +126,12 @@ _LE_KEY_MAP = {
 
 
 def _expand_solver_section(solver: dict[str, Any]) -> dict[str, Any]:
-    """Expand ``solver.lees_edwards`` sub-dict into flat ``le_*`` keys."""
+    """Expand ``solver.lees_edwards`` sub-dict into flat ``le_*`` keys.
+
+    When ``lees_edwards.enabled`` is ``true``, also injects ``y_boundary``
+    and ``streamwise_boundary`` defaults (``"lees_edwards"`` and
+    ``"periodic_force"`` respectively) unless those keys are already present.
+    """
     result = dict(solver)
     le_config = result.pop("lees_edwards", None)
     if le_config is None:

@@ -1131,7 +1131,13 @@ class LBMDEMSolver:
         ux: np.ndarray,
         uy: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Cubic (third-order) periodic velocity interpolation for iSP coupling."""
+        """Cubic (third-order) velocity interpolation for iSP coupling.
+
+        Uses ``scipy.ndimage.map_coordinates`` with ``order=3`` and periodic
+        wrapping for ``y_boundary`` in ``("periodic", "lees_edwards")``, or
+        nearest-clamp otherwise.  Falls back to bilinear interpolation
+        (``_interp_velocity_many``) when scipy is not available.
+        """
         try:
             from scipy.ndimage import map_coordinates
         except ImportError:
