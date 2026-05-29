@@ -44,9 +44,7 @@ def _build_geometry(args: argparse.Namespace, nx: int) -> PoreGeometry:
         cyl_r = args.cyl_r
         cylinders.append((cyl_x, cyl_y, cyl_r))
     if getattr(args, "cylinder_spec", None) is not None:
-        cylinders.extend(
-            (float(x), float(y), float(r)) for x, y, r in args.cylinder_spec
-        )
+        cylinders.extend((float(x), float(y), float(r)) for x, y, r in args.cylinder_spec)
     return PoreGeometry.from_cylinders(cylinders)
 
 
@@ -57,7 +55,9 @@ def _build_lbm3d_solver(args: argparse.Namespace):
         args: Parsed namespace with at least ``nx``, ``ny``, ``nz``,
               ``reynolds_number``, ``u_max``, ``le_shear_rate``,
               ``le_shear_axis``, ``le_boundary_axis``, and
-              ``le_interpolation_order``.
+              ``le_interpolation_order``.  ``streamwise_boundary``,
+              ``pressure_drop``, and ``rho_out`` are forwarded when present to
+              enable the 3D pressure-driven flow mode (default periodic).
 
     Returns:
         Fully initialised LBMDEMSolver3D ready for time-stepping.
@@ -74,6 +74,9 @@ def _build_lbm3d_solver(args: argparse.Namespace):
         le_shear_axis=getattr(args, "le_shear_axis", 0),
         le_boundary_axis=getattr(args, "le_boundary_axis", 1),
         le_interpolation_order=getattr(args, "le_interpolation_order", 3),
+        streamwise_boundary=getattr(args, "streamwise_boundary", "periodic"),
+        pressure_drop=getattr(args, "pressure_drop", None) or 0.0,
+        rho_out=getattr(args, "rho_out", 1.0),
     )
 
 
@@ -149,22 +152,32 @@ def build_lbm_dem_solver(args: argparse.Namespace):
             expected_flow_area = _poiseuille_flow_rate(ny, u_max) * (warmup_steps + total_steps)
             n_particles = max(
                 1,
-                int(np.ceil(1.25 * particle_volume_fraction * expected_flow_area  # noqa: E501
-                    / expected_particle_area)),
+                int(
+                    np.ceil(
+                        1.25
+                        * particle_volume_fraction
+                        * expected_flow_area  # noqa: E501
+                        / expected_particle_area
+                    )
+                ),
             )
         else:
             n_particles = max(
                 1,
-                int(round(
-                    particle_volume_fraction
-                    * geometry.water_area(nx, ny, wall_y=(y_boundary == "wall"))
-                    / expected_particle_area
-                )),
+                int(
+                    round(
+                        particle_volume_fraction
+                        * geometry.water_area(nx, ny, wall_y=(y_boundary == "wall"))
+                        / expected_particle_area
+                    )
+                ),
             )
 
     return FastLBMDEM(
-        nx=nx, ny=ny,
-        Re=re, u_max=u_max,
+        nx=nx,
+        ny=ny,
+        Re=re,
+        u_max=u_max,
         reynolds_length=reynolds_length,
         flow_control=flow_control,
         flow_control_gain=getattr(args, "flow_control_gain", 1.0),
