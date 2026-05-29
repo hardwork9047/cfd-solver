@@ -2,5 +2,5 @@ skill: implement
 package: particulate_flow
 issue: 14
 plan-review-preference: proceed
-step: 7 (clean up)
-next: bump version in pyproject.toml, update CHANGELOG.md, check dead code
+step: 8 (self-review)
+next: run code-reviewer agent, fix blocking items, run doc-parrot, write findings file

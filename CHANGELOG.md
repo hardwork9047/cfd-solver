@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.10.0] - 2026-05-29
+
+### Added
+
+- 3D pressure-driven flow for `LBMDEMSolver3D`: selectable `streamwise_boundary="pressure"` applies a D3Q15 Zou-He density inlet/outlet on x (y, z periodic), mirroring the 2D contract `rho_in = rho_out + pressure_drop / cs²`, see PR #14. Default stays `"periodic"` (Lees-Edwards path unchanged).
+- `build_lbm_dem_solver` forwards `streamwise_boundary`, `pressure_drop`, `rho_out` to the 3D solver.
+
+### Notes
+
+- First vertical slice of the 3D membrane-fouling effort (issue #14). The 3D particle stack — IBM coupling (#17), DEM contact (#18), fixed obstacles (#19), inlet injection (#20) — is not yet implemented; `LBMDEMSolver3D` raises `NotImplementedError` if particles, cylinders, or an inlet source are requested.
+
+---
+
 ## [0.9.0] - 2026-05-28
 
 ### Added
