@@ -370,22 +370,43 @@ class DEM3D:
     # Time integration
     # ------------------------------------------------------------------
 
-    def step(self, n_steps: int = 1) -> None:
+    def step(
+        self,
+        n_steps: int = 1,
+        external_forces: np.ndarray | None = None,
+        external_torques: np.ndarray | None = None,
+    ) -> None:
         """Advance the DEM state by ``n_steps`` outer steps.
 
         Each outer step runs ``dem_substeps`` semi-implicit Euler sub-steps with
         ``dt_sub = 1 / dem_substeps`` so the effective outer ``dt`` is 1 lattice
         time unit, matching the 2D coupling convention.
 
+        ``external_forces`` / ``external_torques`` let a coupling layer (e.g. the
+        3D IBM fluid coupling) inject a constant-over-the-outer-step per-particle
+        load that is added to the contact/gravity loads at every sub-step.  This
+        keeps ``DEM3D`` agnostic of the fluid: the fluid solver computes the IBM
+        reaction and passes it in here.
+
         Args:
             n_steps: Number of outer time steps.
+            external_forces: Optional (n, 3) per-particle force added each
+                sub-step (e.g. fluid drag / IBM reaction).  ``None`` means zero.
+            external_torques: Optional (n, 3) per-particle torque added each
+                sub-step.  ``None`` means zero.
         """
         if self.n_p == 0:
             return
+        ext_f = np.zeros((self.n_p, 3)) if external_forces is None else np.asarray(external_forces)
+        ext_t = (
+            np.zeros((self.n_p, 3)) if external_torques is None else np.asarray(external_torques)
+        )
         dt_sub = 1.0 / self.dem_substeps
         for _ in range(n_steps):
             for _ in range(self.dem_substeps):
                 forces, torques = self.compute_loads()
+                forces += ext_f
+                torques += ext_t
                 self.vel += dt_sub * forces / self.masses[:, None]
                 self.omega += dt_sub * torques / self.inertias[:, None]
                 self.pos += dt_sub * self.vel

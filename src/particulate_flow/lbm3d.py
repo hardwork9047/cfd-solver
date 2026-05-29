@@ -1,7 +1,8 @@
-"""3D LBM solver using the D3Q15 lattice with Lees-Edwards shear boundary conditions.
+"""3D LBM solver on the D3Q15 lattice.
 
-Implements a minimal BGK-collision fluid solver for wall-less shear flow.
-Particle coupling is not included in this phase.
+Implements a BGK-collision fluid solver with three boundary modes: Lees-Edwards
+shear (periodic), Zou-He pressure inlet/outlet (issue #14), and immersed-boundary
+particle coupling driven by an internal ``DEM3D`` contact solver (issues #17/#18).
 """
 
 from __future__ import annotations
@@ -121,9 +122,13 @@ class LBMDEMSolver3D:
       x=0 and outlet at x=nx-1, with y and z periodic.  Drives a
       pressure-gradient flow; ``le_shear_rate`` must be 0 in this mode.
 
-    Particle coupling (IBM, DEM, fixed obstacles, inlet injection) is **not**
-    implemented in this class yet; requesting any of it raises
-    ``NotImplementedError`` (tracked as issues #17-#20).
+    Particles are coupled to the fluid by the immersed-boundary method (issue
+    #17): set ``n_particles > 0`` with ``particle_fluid_coupling=
+    "immersed_boundary"`` and supply ``particle_positions``.  An internal
+    :class:`particulate_flow.dem.contact3d.DEM3D` (issue #18) provides the
+    contact dynamics, driven each step by the IBM reaction force.  Fixed
+    obstacles (#19) and inlet particle injection (#20) are still not implemented
+    and raise ``NotImplementedError``.
 
     Args:
         nx: Grid size in x (streamwise direction).
@@ -146,13 +151,20 @@ class LBMDEMSolver3D:
         pressure_drop: Density-equivalent pressure drop driving the flow in
                        ``"pressure"`` mode; sets ``rho_in = rho_out + pressure_drop / cs²``.
         rho_out: Outlet density (must be positive).
-        n_particles: Number of DEM particles.  Must be 0 (3D particles not yet
-                     implemented — raises ``NotImplementedError`` otherwise).
-        cylinders: Fixed obstacle specs.  Must be empty/None (not yet implemented).
+        n_particles: Number of DEM particles (0 disables the particle path).
+        cylinders: Fixed obstacle specs.  Must be empty/None (not yet implemented, #19).
         particle_source: Particle injection mode.  Must be ``"none"`` (not yet
-                         implemented).
-        particle_fluid_coupling: Coupling mode.  Must be ``"none"`` (not yet
-                                 implemented).
+                         implemented, #20).
+        particle_fluid_coupling: ``"none"`` or ``"immersed_boundary"``.  Particles
+                                 require ``"immersed_boundary"``.
+        particle_positions: ``(n_particles, 3)`` initial particle centres; required
+                            when ``n_particles > 0``.
+        particle_radius: Radius applied to every particle (lattice units).
+        density_ratio: ρ_particle / ρ_fluid for particle mass and buoyancy.
+        gravity: Gravitational acceleration magnitude for the particles.
+        ibm_stiffness: Direct-forcing IBM stiffness (force per unit velocity error).
+        ibm_marker_spacing: Target arc spacing between surface markers.
+        dem_substeps: DEM sub-steps per LBM step.
     """
 
     def __init__(
@@ -175,16 +187,15 @@ class LBMDEMSolver3D:
         cylinders: list | tuple | None = None,
         particle_source: str = "none",
         particle_fluid_coupling: str = "none",
+        particle_positions: np.ndarray | None = None,
+        particle_radius: float = 2.0,
+        density_ratio: float = 2.0,
+        gravity: float = 0.0,
+        ibm_stiffness: float = 1.0,
+        ibm_marker_spacing: float = 1.0,
+        dem_substeps: int = 4,
     ) -> None:
-        # --- Guard the not-yet-implemented particle stack (issue #14 slice) ---
-        # The 3D particle subsystems are tracked as follow-ups split from #14.
-        # Fail loudly so a 3D fouling config does not silently run particle-free.
-        if n_particles > 0:
-            raise NotImplementedError(
-                "3D DEM particles are not implemented yet "
-                "(IBM coupling #17, DEM contact #18). "
-                "Set n_particles=0 for the fluid-only 3D pressure-flow slice."
-            )
+        # --- Guard the particle subsystems not yet implemented (issues #19/#20) ---
         if cylinders:
             raise NotImplementedError(
                 "3D fixed cylinder obstacles are not implemented yet (issue #19)."
@@ -193,9 +204,14 @@ class LBMDEMSolver3D:
             raise NotImplementedError(
                 "3D left-inlet particle injection is not implemented yet (issue #20)."
             )
-        if particle_fluid_coupling not in ("none", None):
+        if particle_fluid_coupling not in ("none", None, "immersed_boundary"):
             raise NotImplementedError(
-                "3D particle-fluid (IBM) coupling is not implemented yet (issue #17)."
+                f"3D particle-fluid coupling {particle_fluid_coupling!r} is not "
+                "supported; only 'immersed_boundary' (issue #17) or 'none'."
+            )
+        if n_particles > 0 and particle_fluid_coupling != "immersed_boundary":
+            raise NotImplementedError(
+                "3D particles require particle_fluid_coupling='immersed_boundary' " "(issue #17)."
             )
 
         if streamwise_boundary not in ("periodic", "pressure"):
@@ -246,6 +262,48 @@ class LBMDEMSolver3D:
             ux_field = np.zeros((nx, ny, nz))
         self.f = _equilibrium_3d(rho0, ux_field, np.zeros_like(ux_field), np.zeros_like(ux_field))
 
+        # Eulerian body-force field (Guo forcing), populated by IBM each step.
+        self.nu = self.tau_to_nu()
+        self.Fx = np.zeros((nx, ny, nz))
+        self.Fy = np.zeros((nx, ny, nz))
+        self.Fz = np.zeros((nx, ny, nz))
+
+        # --- IBM particle coupling (issue #17) -----------------------------
+        self.particle_fluid_coupling = particle_fluid_coupling
+        self.ibm_stiffness = float(ibm_stiffness)
+        self.ibm_marker_spacing = float(ibm_marker_spacing)
+        self.dem = None
+        if n_particles > 0:
+            from .dem.contact3d import DEM3D
+
+            if particle_positions is None:
+                raise ValueError("particle_positions (n,3) is required when n_particles > 0")
+            pos = np.asarray(particle_positions, dtype=float).reshape((-1, 3))
+            if pos.shape[0] != n_particles:
+                raise ValueError(
+                    f"particle_positions has {pos.shape[0]} rows but n_particles=" f"{n_particles}"
+                )
+            radii = np.full(n_particles, float(particle_radius))
+            self.dem = DEM3D(
+                pos=pos,
+                vel=np.zeros((n_particles, 3)),
+                radii=radii,
+                nx=nx,
+                ny=ny,
+                nz=nz,
+                density_ratio=density_ratio,
+                gravity=gravity,
+                dem_substeps=dem_substeps,
+            )
+
+    def tau_to_nu(self) -> float:
+        """Return the kinematic viscosity implied by the relaxation time.
+
+        Returns:
+            ``nu = cs² (tau - 1/2)`` in lattice units.
+        """
+        return CS2_3 * (self.tau - 0.5)
+
     # ------------------------------------------------------------------
     # Macroscopic fields
     # ------------------------------------------------------------------
@@ -253,13 +311,20 @@ class LBMDEMSolver3D:
     def _macroscopic(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Return (rho, ux, uy, uz) from the distribution function.
 
+        When a body force is present (Guo forcing), the velocity includes the
+        half-force correction ``u = (Σ c_i f_i + F/2) / ρ`` so the reported
+        velocity is the physical fluid velocity.
+
         Returns:
             Tuple of four arrays each with shape (nx, ny, nz).
         """
         rho = self.f.sum(axis=0)
-        ux = (C3[:, 0, np.newaxis, np.newaxis, np.newaxis] * self.f).sum(axis=0) / rho
-        uy = (C3[:, 1, np.newaxis, np.newaxis, np.newaxis] * self.f).sum(axis=0) / rho
-        uz = (C3[:, 2, np.newaxis, np.newaxis, np.newaxis] * self.f).sum(axis=0) / rho
+        ux = (C3[:, 0, np.newaxis, np.newaxis, np.newaxis] * self.f).sum(axis=0)
+        uy = (C3[:, 1, np.newaxis, np.newaxis, np.newaxis] * self.f).sum(axis=0)
+        uz = (C3[:, 2, np.newaxis, np.newaxis, np.newaxis] * self.f).sum(axis=0)
+        ux = (ux + 0.5 * self.Fx) / rho
+        uy = (uy + 0.5 * self.Fy) / rho
+        uz = (uz + 0.5 * self.Fz) / rho
         return rho, ux, uy, uz
 
     # ------------------------------------------------------------------
@@ -273,13 +338,31 @@ class LBMDEMSolver3D:
         uy: np.ndarray,
         uz: np.ndarray,
     ) -> None:
-        """BGK collision step (in-place update of ``self.f``).
+        """BGK collision step with Guo forcing (in-place update of ``self.f``).
+
+        Adds the Guo (2002) discrete forcing source term
+        ``S_i = (1 - 1/(2τ)) w_i [ (c_i-u)/cs² + (c_i·u)/cs⁴ c_i ] · F`` so the
+        body force ``(Fx, Fy, Fz)`` drives the fluid consistently to second order.
+        With zero force this reduces to plain BGK.
 
         Args:
             rho, ux, uy, uz: Current macroscopic fields, each shape (nx, ny, nz).
         """
         feq = _equilibrium_3d(rho, ux, uy, uz)
         self.f += self.omega * (feq - self.f)
+
+        if not (self.Fx.any() or self.Fy.any() or self.Fz.any()):
+            return
+        prefactor = 1.0 - 0.5 * self.omega
+        for i in range(Q3):
+            cx, cy, cz = C3[i]
+            cu = cx * ux + cy * uy + cz * uz  # c_i · u
+            # (c_i - u)/cs² + (c_i·u) c_i / cs⁴, dotted with F.
+            term_x = (cx - ux) / CS2_3 + cu * cx / CS2_3**2
+            term_y = (cy - uy) / CS2_3 + cu * cy / CS2_3**2
+            term_z = (cz - uz) / CS2_3 + cu * cz / CS2_3**2
+            s_i = prefactor * W3[i] * (term_x * self.Fx + term_y * self.Fy + term_z * self.Fz)
+            self.f[i] += s_i
 
     # ------------------------------------------------------------------
     # Streaming
@@ -474,19 +557,194 @@ class LBMDEMSolver3D:
     # Main loop
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Immersed-boundary particle coupling (issue #17)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _sphere_markers(radius: float, spacing: float) -> np.ndarray:
+        """Return surface marker offsets on a sphere via a Fibonacci lattice.
+
+        Args:
+            radius: Sphere radius.
+            spacing: Target arc spacing between markers (lattice units).
+
+        Returns:
+            ``(m, 3)`` array of marker offsets from the sphere centre, roughly
+            evenly distributed over the surface, with ``m`` chosen so each marker
+            owns about ``spacing²`` of surface area.
+        """
+        area = 4.0 * np.pi * radius**2
+        m = max(12, int(np.ceil(area / max(spacing, 1e-6) ** 2)))
+        k = np.arange(m, dtype=float)
+        # Spherical Fibonacci lattice.
+        phi = np.arccos(1.0 - 2.0 * (k + 0.5) / m)  # polar angle
+        golden = np.pi * (1.0 + 5.0**0.5)
+        theta = golden * k  # azimuth
+        sin_phi = np.sin(phi)
+        offsets = radius * np.column_stack(
+            (sin_phi * np.cos(theta), sin_phi * np.sin(theta), np.cos(phi))
+        )
+        return offsets
+
+    def _interp_velocity_3d(
+        self, pts: np.ndarray, ux: np.ndarray, uy: np.ndarray, uz: np.ndarray
+    ) -> np.ndarray:
+        """Trilinearly interpolate the fluid velocity at marker points.
+
+        Periodic in all three axes (matches the periodic streaming); the inlet/
+        outlet planes are sampled with periodic wrap, which is acceptable because
+        markers sit on particle surfaces in the interior.
+
+        Args:
+            pts: ``(m, 3)`` marker coordinates.
+            ux, uy, uz: Fluid velocity fields, shape (nx, ny, nz).
+
+        Returns:
+            ``(m, 3)`` interpolated velocities.
+        """
+        x0 = np.floor(pts[:, 0]).astype(int)
+        y0 = np.floor(pts[:, 1]).astype(int)
+        z0 = np.floor(pts[:, 2]).astype(int)
+        tx = pts[:, 0] - x0
+        ty = pts[:, 1] - y0
+        tz = pts[:, 2] - z0
+        x0 %= self.nx
+        y0 %= self.ny
+        z0 %= self.nz
+        x1 = (x0 + 1) % self.nx
+        y1 = (y0 + 1) % self.ny
+        z1 = (z0 + 1) % self.nz
+        out = np.zeros((pts.shape[0], 3))
+        for fld, comp in ((ux, 0), (uy, 1), (uz, 2)):
+            c000 = fld[x0, y0, z0]
+            c100 = fld[x1, y0, z0]
+            c010 = fld[x0, y1, z0]
+            c110 = fld[x1, y1, z0]
+            c001 = fld[x0, y0, z1]
+            c101 = fld[x1, y0, z1]
+            c011 = fld[x0, y1, z1]
+            c111 = fld[x1, y1, z1]
+            c00 = c000 * (1 - tx) + c100 * tx
+            c10 = c010 * (1 - tx) + c110 * tx
+            c01 = c001 * (1 - tx) + c101 * tx
+            c11 = c011 * (1 - tx) + c111 * tx
+            c0 = c00 * (1 - ty) + c10 * ty
+            c1 = c01 * (1 - ty) + c11 * ty
+            out[:, comp] = c0 * (1 - tz) + c1 * tz
+        return out
+
+    def _spread_forces_3d(self, pts: np.ndarray, fmarker: np.ndarray) -> None:
+        """Spread marker forces onto the 8 surrounding lattice nodes (trilinear).
+
+        Adds the spread force into ``self.Fx/Fy/Fz`` in place, periodic in all axes.
+
+        Args:
+            pts: ``(m, 3)`` marker coordinates.
+            fmarker: ``(m, 3)`` force per marker to deposit on the fluid.
+        """
+        x0 = np.floor(pts[:, 0]).astype(int)
+        y0 = np.floor(pts[:, 1]).astype(int)
+        z0 = np.floor(pts[:, 2]).astype(int)
+        tx = pts[:, 0] - x0
+        ty = pts[:, 1] - y0
+        tz = pts[:, 2] - z0
+        x0 %= self.nx
+        y0 %= self.ny
+        z0 %= self.nz
+        x1 = (x0 + 1) % self.nx
+        y1 = (y0 + 1) % self.ny
+        z1 = (z0 + 1) % self.nz
+        for comp, F in ((0, self.Fx), (1, self.Fy), (2, self.Fz)):
+            fc = fmarker[:, comp]
+            for ix, wx in ((x0, 1 - tx), (x1, tx)):
+                for iy, wy in ((y0, 1 - ty), (y1, ty)):
+                    for iz, wz in ((z0, 1 - tz), (z1, tz)):
+                        np.add.at(F, (ix, iy, iz), wx * wy * wz * fc)
+
+    def _apply_ibm(self, ux: np.ndarray, uy: np.ndarray, uz: np.ndarray) -> np.ndarray:
+        """Direct-forcing IBM exchange for one step; returns per-particle reaction.
+
+        Builds spherical markers for every particle, interpolates the fluid
+        velocity there, computes the direct-forcing marker force
+        ``f = stiffness · (u_body - u_fluid) · ds``, spreads ``+f`` back onto the
+        fluid body-force field, and accumulates the particle reaction ``-Σ f`` and
+        torque ``-Σ r × f``.
+
+        Args:
+            ux, uy, uz: Current fluid velocity fields, shape (nx, ny, nz).
+
+        Returns:
+            ``(n, 3)`` reaction force per particle (also stored as
+            ``self._ibm_reaction``; the torque is stored as
+            ``self._ibm_reaction_torque``).
+        """
+        dem = self.dem
+        n = dem.n_p
+        reaction = np.zeros((n, 3))
+        reaction_torque = np.zeros((n, 3))
+        all_pts: list[np.ndarray] = []
+        all_f: list[np.ndarray] = []
+        for i in range(n):
+            offsets = self._sphere_markers(float(dem.radii[i]), self.ibm_marker_spacing)
+            m = offsets.shape[0]
+            ds = 4.0 * np.pi * dem.radii[i] ** 2 / m  # area per marker
+            pts = dem.pos[i] + offsets
+            # Rigid-body surface velocity: v + ω × r.
+            u_body = dem.vel[i] + np.cross(dem.omega[i], offsets)
+            u_fluid = self._interp_velocity_3d(pts, ux, uy, uz)
+            fmarker = self.ibm_stiffness * (u_body - u_fluid) * ds
+            reaction[i] = -fmarker.sum(axis=0)
+            reaction_torque[i] = -np.cross(offsets, fmarker).sum(axis=0)
+            all_pts.append(pts)
+            all_f.append(fmarker)
+        if all_pts:
+            self._spread_forces_3d(np.vstack(all_pts), np.vstack(all_f))
+        self._ibm_reaction = reaction
+        self._ibm_reaction_torque = reaction_torque
+        return reaction
+
+    def _ibm_force_audit(self) -> tuple[np.ndarray, np.ndarray]:
+        """Return (total spread force on fluid, total reaction on particles).
+
+        Runs a single fresh IBM exchange from the current state without advancing
+        time, for momentum-conservation checks.  By Newton's 3rd law the two
+        totals must sum to zero.
+
+        Returns:
+            ``(spread_total, reaction_total)`` each a length-3 vector.
+        """
+        self.Fx[:] = 0.0
+        self.Fy[:] = 0.0
+        self.Fz[:] = 0.0
+        rho, ux, uy, uz = self._macroscopic()
+        reaction = self._apply_ibm(ux, uy, uz)
+        spread_total = np.array([self.Fx.sum(), self.Fy.sum(), self.Fz.sum()])
+        return spread_total, reaction.sum(axis=0)
+
     def advance(self, n_steps: int = 1) -> None:
         """Advance the solver by ``n_steps`` LBM steps.
 
-        Each step: collide → stream → boundary correction.  In the default
+        Each step: (optional IBM exchange) → collide (with Guo forcing) → stream →
+        boundary correction → (optional DEM sub-steps).  In the default
         ``streamwise_boundary="periodic"`` mode the correction is the
         Lees-Edwards shear BC.  In ``"pressure"`` mode a Zou-He density BC is
-        applied on the x inlet/outlet planes instead (y, z stay periodic).
+        applied on the x inlet/outlet planes instead (y, z stay periodic).  When
+        particles are present (``immersed_boundary`` coupling) the IBM reaction
+        force drives an internal :class:`DEM3D` each step.
 
         Args:
             n_steps: Number of LBM time steps to execute.
         """
         for _ in range(n_steps):
             rho, ux, uy, uz = self._macroscopic()
+
+            if self.dem is not None and self.dem.n_p > 0:
+                self.Fx[:] = 0.0
+                self.Fy[:] = 0.0
+                self.Fz[:] = 0.0
+                self._apply_ibm(ux, uy, uz)
+
             self._collide_bgk(rho, ux, uy, uz)
             self._stream()
             if self.streamwise_boundary == "pressure":
@@ -494,6 +752,14 @@ class LBMDEMSolver3D:
             else:
                 self._le_shift = (self._le_shift + self.le_shear_rate * self.ny) % self.nx
                 self._apply_le_bc()
+
+            if self.dem is not None and self.dem.n_p > 0:
+                self.dem.step(
+                    1,
+                    external_forces=self._ibm_reaction,
+                    external_torques=self._ibm_reaction_torque,
+                )
+
             self.step_count += 1
 
     def get_fields(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
