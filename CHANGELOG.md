@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.15.0] - 2026-05-29
+
+### Added
+
+- 3D membrane-fouling config + runner plumbing (issue #15), see PR #28: `run_lbm_dem.py --config <3d_case>` now dispatches to a dedicated 3D path (`particulate_flow/runner3d.py`) when `domain.dimensions=3`, building `LBMDEMSolver3D` and writing `analysis/time_series.csv`+`.npz`, `summary.json`, `run_status.json`, and ParaView 3D VTK (structured fluid field + particle point cloud + `.pvd` time series). The 2D pipeline is untouched.
+- `configs/lbm_dem/templates/fouling_supply_3d.json` (3D fouling template), `configs/lbm_dem/geometries/four_cylinder_3d.json` (z-aligned cylinder fragment, addable via `extends`), and `configs/lbm_dem/cases/fouling_3d_smoke.json` (tiny end-to-end case).
+
+### Notes
+
+- Makes the merged 3D solver stack (#14/#17/#18/#19/#20) runnable from a single command. Remaining: `/simulate` skill 3D support (#16). The 3D path writes ParaView VTK rather than the 2D matplotlib `.mp4`; 3D matplotlib animation is out of scope.
+
+---
+
 ## [0.14.0] - 2026-05-29
 
 ### Added
