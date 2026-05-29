@@ -128,9 +128,9 @@ class LBMDEMSolver3D:
     :class:`particulate_flow.dem.contact3d.DEM3D` (issue #18) provides the
     contact dynamics, driven each step by the IBM reaction force.  Fixed
     z-aligned cylinder obstacles (#19) are supported via ``cylinders`` (no-slip
-    bounce-back for the fluid, collision bodies for the particles).  Inlet
-    particle injection (#20) is still not implemented and raises
-    ``NotImplementedError``.
+    bounce-back for the fluid, collision bodies for the particles).  A
+    pressure-driven ``particle_source="left_inlet"`` (#20) injects particles at
+    the inlet over time per a volume-flux budget and removes them past the outlet.
 
     Args:
         nx: Grid size in x (streamwise direction).
@@ -158,18 +158,24 @@ class LBMDEMSolver3D:
                    ``(cx, cy, r)`` or ``(cx, cy, r, z_lo, z_hi)``.  They form a
                    no-slip solid mask for the fluid and collision bodies for the
                    particles.
-        particle_source: Particle injection mode.  Must be ``"none"`` (not yet
-                         implemented, #20).
+        particle_source: ``"none"`` for a fixed population, or ``"left_inlet"``
+                         to inject particles at the inlet over time (requires
+                         ``streamwise_boundary="pressure"`` and
+                         ``particle_fluid_coupling="immersed_boundary"``).
         particle_fluid_coupling: ``"none"`` or ``"immersed_boundary"``.  Particles
                                  require ``"immersed_boundary"``.
         particle_positions: ``(n_particles, 3)`` initial particle centres; required
-                            when ``n_particles > 0``.
+                            when ``n_particles > 0`` (ignored for ``left_inlet``,
+                            which starts empty).
         particle_radius: Radius applied to every particle (lattice units).
         density_ratio: ρ_particle / ρ_fluid for particle mass and buoyancy.
         gravity: Gravitational acceleration magnitude for the particles.
         ibm_stiffness: Direct-forcing IBM stiffness (force per unit velocity error).
         ibm_marker_spacing: Target arc spacing between surface markers.
         dem_substeps: DEM sub-steps per LBM step.
+        source_volume_fraction: Target injected solid-volume fraction of the inlet
+                                flux for ``left_inlet`` (budget ``+= phi · inlet_flux``).
+        seed: RNG seed for the inlet (y, z) sampling.
     """
 
     def __init__(
@@ -199,11 +205,12 @@ class LBMDEMSolver3D:
         ibm_stiffness: float = 1.0,
         ibm_marker_spacing: float = 1.0,
         dem_substeps: int = 4,
+        source_volume_fraction: float | None = None,
+        seed: int = 42,
     ) -> None:
-        # --- Guard the subsystems not yet implemented (issue #20) ---
-        if particle_source not in ("none", None):
-            raise NotImplementedError(
-                "3D left-inlet particle injection is not implemented yet (issue #20)."
+        if particle_source not in ("none", None, "left_inlet"):
+            raise ValueError(
+                f"particle_source must be 'none' or 'left_inlet', got {particle_source!r}"
             )
         if particle_fluid_coupling not in ("none", None, "immersed_boundary"):
             raise NotImplementedError(
@@ -214,6 +221,23 @@ class LBMDEMSolver3D:
             raise NotImplementedError(
                 "3D particles require particle_fluid_coupling='immersed_boundary' " "(issue #17)."
             )
+        if particle_source == "left_inlet":
+            if streamwise_boundary != "pressure":
+                raise ValueError(
+                    "particle_source='left_inlet' requires "
+                    "streamwise_boundary='pressure' (inlet injection needs a "
+                    "pressure-driven inflow)."
+                )
+            if particle_fluid_coupling != "immersed_boundary":
+                raise ValueError(
+                    "particle_source='left_inlet' requires "
+                    "particle_fluid_coupling='immersed_boundary'."
+                )
+            if source_volume_fraction is None or source_volume_fraction <= 0.0:
+                raise ValueError(
+                    "particle_source='left_inlet' requires a positive "
+                    "source_volume_fraction (injection budget = phi * inlet_flux)."
+                )
 
         if streamwise_boundary not in ("periodic", "pressure"):
             raise ValueError(
@@ -276,21 +300,38 @@ class LBMDEMSolver3D:
         self.particle_fluid_coupling = particle_fluid_coupling
         self.ibm_stiffness = float(ibm_stiffness)
         self.ibm_marker_spacing = float(ibm_marker_spacing)
+
+        # --- Left-inlet particle source (issue #20) ------------------------
+        self.particle_source = particle_source if particle_source else "none"
+        self.particle_radius = float(particle_radius)
+        self.source_volume_fraction = source_volume_fraction
+        self._inlet_volume_budget = 0.0
+        self._inlet_cursor = 0
+        self._rng_inlet = np.random.default_rng(seed)
+        self.injected_particle_volume = 0.0
+        self.cumulative_inlet_flow_volume = 0.0
+        self.removed_particles = 0
+        self.generated_particles = 0
+
         self.dem = None
-        if n_particles > 0:
+        if n_particles > 0 or self.particle_source == "left_inlet":
             from .dem.contact3d import DEM3D
 
-            if particle_positions is None:
-                raise ValueError("particle_positions (n,3) is required when n_particles > 0")
-            pos = np.asarray(particle_positions, dtype=float).reshape((-1, 3))
-            if pos.shape[0] != n_particles:
-                raise ValueError(
-                    f"particle_positions has {pos.shape[0]} rows but n_particles=" f"{n_particles}"
-                )
-            radii = np.full(n_particles, float(particle_radius))
+            if self.particle_source == "left_inlet":
+                pos = np.empty((0, 3))  # start empty; particles injected over time
+            else:
+                if particle_positions is None:
+                    raise ValueError("particle_positions (n,3) is required when n_particles > 0")
+                pos = np.asarray(particle_positions, dtype=float).reshape((-1, 3))
+                if pos.shape[0] != n_particles:
+                    raise ValueError(
+                        f"particle_positions has {pos.shape[0]} rows but "
+                        f"n_particles={n_particles}"
+                    )
+            radii = np.full(pos.shape[0], float(particle_radius))
             self.dem = DEM3D(
                 pos=pos,
-                vel=np.zeros((n_particles, 3)),
+                vel=np.zeros((pos.shape[0], 3)),
                 radii=radii,
                 nx=nx,
                 ny=ny,
@@ -788,21 +829,159 @@ class LBMDEMSolver3D:
         for i in range(Q3):
             self.f[i, self.solid] = f_tmp[OPPOSITE3[i], self.solid]
 
+    # ------------------------------------------------------------------
+    # Left-inlet particle source (issue #20)
+    # ------------------------------------------------------------------
+
+    def _inlet_flow_rate(self, ux_inlet: np.ndarray) -> float:
+        """Return the positive volumetric inflow through the inlet (x=0) plane.
+
+        Sums ``max(ux, 0)`` over the whole y-z inlet cross-section, the 3D
+        analogue of the 2-D ``_left_boundary_flow_rate``.
+
+        Args:
+            ux_inlet: Inlet-plane streamwise velocity ``ux[0]``, shape (ny, nz).
+
+        Returns:
+            Non-negative inlet flux in lattice volume per step.
+        """
+        return float(np.maximum(ux_inlet, 0.0).sum())
+
+    def _sample_inlet_point(self, radius: float, ux_inlet: np.ndarray) -> tuple[float, float]:
+        """Sample a (y, z) injection point on the inlet plane weighted by flux.
+
+        Cells with higher inlet ``ux`` are more likely to receive a particle
+        (uniform incoming concentration).  Before the flow develops, fall back to
+        a deterministic sweep so startup is well behaved.
+
+        Args:
+            radius: Particle radius (keeps the centre clear of the y/z edges).
+            ux_inlet: Inlet-plane streamwise velocity, shape (ny, nz).
+
+        Returns:
+            ``(y, z)`` injection coordinates.
+        """
+        weights = np.maximum(ux_inlet, 0.0).ravel()
+        total = float(weights.sum())
+        ny, nz = ux_inlet.shape
+        if total > 1e-12:
+            flat = int(self._rng_inlet.choice(weights.size, p=weights / total))
+            jitter_y = self._rng_inlet.uniform(-0.45, 0.45)
+            jitter_z = self._rng_inlet.uniform(-0.45, 0.45)
+        else:
+            flat = self._inlet_cursor % weights.size
+            self._inlet_cursor += 1
+            jitter_y = jitter_z = 0.0
+        yc, zc = divmod(flat, nz)
+        y = float(np.clip(yc + jitter_y, radius, ny - 1 - radius))
+        z = float(np.clip(zc + jitter_z, radius, nz - 1 - radius))
+        return y, z
+
+    def _feed_inlet_particles(self, max_new: int = 8) -> None:
+        """Inject queued particles at the inlet per the volume-flux budget.
+
+        Each call accumulates ``phi · inlet_flow_rate`` into the volume budget and
+        places spheres (cost ``(4/3)π r³`` each) just inside the inlet at
+        flux-weighted, non-overlapping (y, z) points until the budget is spent or
+        ``max_new`` is reached.  A no-op outside ``left_inlet`` mode.
+
+        Args:
+            max_new: Maximum particles to inject in a single step.
+        """
+        if self.particle_source != "left_inlet" or self.source_volume_fraction is None:
+            return
+        phi = self.source_volume_fraction
+        if phi <= 0.0:
+            return
+        _, ux, _, _ = self._macroscopic()
+        ux_inlet = ux[0]
+        flow = self._inlet_flow_rate(ux_inlet)
+        self.cumulative_inlet_flow_volume += flow
+        self._inlet_volume_budget += phi * flow
+
+        r = self.particle_radius
+        particle_volume = (4.0 / 3.0) * np.pi * r**3
+        added = 0
+        attempts = 0
+        max_attempts = max(12, 4 * max_new)
+        while self._inlet_volume_budget >= particle_volume and added < max_new:
+            if attempts >= max_attempts:
+                break
+            attempts += 1
+            y, z = self._sample_inlet_point(r, ux_inlet)
+            x = r + 0.75
+            if not self._can_place_inlet(x, y, z, r):
+                continue
+            u_seed = float(max(ux_inlet[int(round(y)) % self.ny, int(round(z)) % self.nz], 0.0))
+            self.dem.add_particles(
+                np.array([[x, y, z]]),
+                np.array([[u_seed, 0.0, 0.0]]),
+                np.array([r]),
+            )
+            self._inlet_volume_budget -= particle_volume
+            self.injected_particle_volume += particle_volume
+            self.generated_particles += 1
+            added += 1
+
+    def _can_place_inlet(self, x: float, y: float, z: float, radius: float) -> bool:
+        """Return whether an inlet particle fits without overlapping existing bodies.
+
+        Rejects placement that would overlap an active particle or a fixed
+        cylinder obstacle, mirroring the 2-D ``_can_place_inlet_particle`` which
+        checks both particle and cylinder overlap.
+
+        Args:
+            x, y, z: Candidate particle centre.
+            radius: Candidate particle radius.
+
+        Returns:
+            ``True`` when no active particle and no cylinder overlaps the candidate.
+        """
+        # Reject overlap with a fixed z-aligned cylinder (within its z-extent).
+        for cyl in self.cylinders:
+            cx, cy, cr = cyl[0], cyl[1], cyl[2]
+            z_lo = cyl[3] if len(cyl) > 3 else 0.0
+            z_hi = cyl[4] if len(cyl) > 4 else float(self.nz)
+            if z_lo <= z <= z_hi and np.hypot(x - cx, y - cy) < 1.02 * (cr + radius):
+                return False
+        if self.dem is None or self.dem.n_p == 0:
+            return True
+        d = self.dem.pos - np.array([x, y, z])
+        dist = np.sqrt((d**2).sum(axis=1))
+        return bool(np.all(dist >= 1.02 * (self.dem.radii + radius)))
+
+    def _remove_outflow_particles(self) -> None:
+        """Delete particles whose sphere has fully passed the outlet.
+
+        Removes any particle whose trailing edge is past the outlet, i.e.
+        ``pos_x - r > nx`` (one lattice unit beyond the last node, matching the
+        2-D convention).  A no-op outside ``left_inlet`` mode or with no particles.
+        """
+        if self.particle_source != "left_inlet" or self.dem is None or self.dem.n_p == 0:
+            return
+        mask = self.dem.pos[:, 0] - self.dem.radii > self.nx
+        self.removed_particles += self.dem.remove_particles(mask)
+
     def advance(self, n_steps: int = 1) -> None:
         """Advance the solver by ``n_steps`` LBM steps.
 
-        Each step: (optional IBM exchange) → collide (with Guo forcing) → stream →
-        boundary correction → (optional DEM sub-steps).  In the default
+        Each step: (optional inlet feed) → (optional IBM exchange) → collide (with
+        Guo forcing) → stream → bounce-back → boundary correction → (optional DEM
+        sub-steps) → (optional outflow removal).  In the default
         ``streamwise_boundary="periodic"`` mode the correction is the
         Lees-Edwards shear BC.  In ``"pressure"`` mode a Zou-He density BC is
         applied on the x inlet/outlet planes instead (y, z stay periodic).  When
         particles are present (``immersed_boundary`` coupling) the IBM reaction
-        force drives an internal :class:`DEM3D` each step.
+        force drives an internal :class:`DEM3D` each step.  With
+        ``particle_source="left_inlet"`` particles are injected at the inlet
+        before the step and removed after they pass the outlet.
 
         Args:
             n_steps: Number of LBM time steps to execute.
         """
         for _ in range(n_steps):
+            # Inject inlet particles first so they take part in this step's coupling.
+            self._feed_inlet_particles()
             coupled = self.dem is not None and self.dem.n_p > 0
 
             if coupled:
@@ -833,6 +1012,7 @@ class LBMDEMSolver3D:
                     external_torques=self._ibm_reaction_torque,
                 )
 
+            self._remove_outflow_particles()
             self.step_count += 1
 
     def get_fields(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
