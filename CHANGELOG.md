@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.14.0] - 2026-05-29
+
+### Added
+
+- 3D left-inlet particle injection/removal for `LBMDEMSolver3D` (`src/particulate_flow/lbm3d.py`), see PR #25: `particle_source="left_inlet"` (pressure mode) injects particles at the inlet plane over time per a volume-flux budget (`+= source_volume_fraction · inlet_flux`, sphere cost `(4/3)π r³`) at flux-weighted, non-overlapping (y, z) points, and removes particles once they pass the outlet. The injected solid-volume fraction tracks `source_volume_fraction`.
+- `DEM3D.add_particles` / `DEM3D.remove_particles` for a dynamic particle population (grow/shrink all state arrays consistently).
+
+### Notes
+
+- Final slice of the 3D membrane-fouling effort (issue #20); the 3D stack (#14 pressure flow, #18 DEM contact, #17 IBM coupling, #19 cylinder obstacles, #20 inlet injection) is now complete. Retires the `particle_source` `NotImplementedError` stub from #14. Per-particle radius distributions and Numba acceleration of the 3D kernels remain future work.
+
+---
+
 ## [0.13.0] - 2026-05-29
 
 ### Added
