@@ -127,8 +127,10 @@ class LBMDEMSolver3D:
     "immersed_boundary"`` and supply ``particle_positions``.  An internal
     :class:`particulate_flow.dem.contact3d.DEM3D` (issue #18) provides the
     contact dynamics, driven each step by the IBM reaction force.  Fixed
-    obstacles (#19) and inlet particle injection (#20) are still not implemented
-    and raise ``NotImplementedError``.
+    z-aligned cylinder obstacles (#19) are supported via ``cylinders`` (no-slip
+    bounce-back for the fluid, collision bodies for the particles).  Inlet
+    particle injection (#20) is still not implemented and raises
+    ``NotImplementedError``.
 
     Args:
         nx: Grid size in x (streamwise direction).
@@ -152,7 +154,10 @@ class LBMDEMSolver3D:
                        ``"pressure"`` mode; sets ``rho_in = rho_out + pressure_drop / cs²``.
         rho_out: Outlet density (must be positive).
         n_particles: Number of DEM particles (0 disables the particle path).
-        cylinders: Fixed obstacle specs.  Must be empty/None (not yet implemented, #19).
+        cylinders: Fixed z-aligned finite cylinder obstacles (#19) as
+                   ``(cx, cy, r)`` or ``(cx, cy, r, z_lo, z_hi)``.  They form a
+                   no-slip solid mask for the fluid and collision bodies for the
+                   particles.
         particle_source: Particle injection mode.  Must be ``"none"`` (not yet
                          implemented, #20).
         particle_fluid_coupling: ``"none"`` or ``"immersed_boundary"``.  Particles
@@ -195,11 +200,7 @@ class LBMDEMSolver3D:
         ibm_marker_spacing: float = 1.0,
         dem_substeps: int = 4,
     ) -> None:
-        # --- Guard the particle subsystems not yet implemented (issues #19/#20) ---
-        if cylinders:
-            raise NotImplementedError(
-                "3D fixed cylinder obstacles are not implemented yet (issue #19)."
-            )
+        # --- Guard the subsystems not yet implemented (issue #20) ---
         if particle_source not in ("none", None):
             raise NotImplementedError(
                 "3D left-inlet particle injection is not implemented yet (issue #20)."
@@ -267,6 +268,10 @@ class LBMDEMSolver3D:
         self.Fy = np.zeros((nx, ny, nz))
         self.Fz = np.zeros((nx, ny, nz))
 
+        # --- Fixed finite z-aligned cylinder obstacles (issue #19) ---------
+        self.cylinders = [tuple(c) for c in (cylinders or [])]
+        self.solid = self._build_cylinder_solid(self.cylinders)
+
         # --- IBM particle coupling (issue #17) -----------------------------
         self.particle_fluid_coupling = particle_fluid_coupling
         self.ibm_stiffness = float(ibm_stiffness)
@@ -293,7 +298,51 @@ class LBMDEMSolver3D:
                 density_ratio=density_ratio,
                 gravity=gravity,
                 dem_substeps=dem_substeps,
+                cylinders=self.cylinders,
             )
+
+    def _build_cylinder_solid(self, cylinders: list) -> np.ndarray:
+        """Return the solid-node mask for z-aligned finite cylinders.
+
+        A node is solid when its x-y radial distance to a cylinder axis is within
+        the cylinder radius and its z lies within the cylinder's z-extent.
+
+        Args:
+            cylinders: List of ``(cx, cy, r)`` or ``(cx, cy, r, z_lo, z_hi)``.
+                ``z_lo``/``z_hi`` are inclusive bounds in lattice-index units;
+                without them the cylinder spans the full depth (``z_hi = nz``).
+
+        Returns:
+            Boolean array of shape (nx, ny, nz); ``True`` marks solid nodes.
+
+        Raises:
+            ValueError: in ``"pressure"`` mode, if a cylinder's x-extent reaches
+                the inlet (x=0) or outlet (x=nx-1) plane, where the Zou-He
+                density BC would overwrite the bounce-back result.
+        """
+        solid = np.zeros((self.nx, self.ny, self.nz), dtype=bool)
+        if not cylinders:
+            return solid
+        ix = np.arange(self.nx)
+        iy = np.arange(self.ny)
+        iz = np.arange(self.nz)
+        xx, yy, zz = np.meshgrid(ix, iy, iz, indexing="ij")
+        for cyl in cylinders:
+            cx, cy, cr = cyl[0], cyl[1], cyl[2]
+            if self.streamwise_boundary == "pressure" and (
+                cx - cr <= 0.0 or cx + cr >= self.nx - 1
+            ):
+                raise ValueError(
+                    f"cylinder at x={cx} r={cr} reaches the pressure inlet/outlet "
+                    "plane; the Zou-He BC would overwrite its bounce-back. Move it "
+                    "into the interior (cx - r > 0 and cx + r < nx-1)."
+                )
+            z_lo = cyl[3] if len(cyl) > 3 else 0.0
+            z_hi = cyl[4] if len(cyl) > 4 else float(self.nz)
+            radial2 = (xx - cx) ** 2 + (yy - cy) ** 2
+            in_z = (zz >= z_lo) & (zz <= z_hi)
+            solid |= (radial2 <= cr**2) & in_z
+        return solid
 
     # ------------------------------------------------------------------
     # Macroscopic fields
@@ -628,7 +677,10 @@ class LBMDEMSolver3D:
     def _spread_forces_3d(self, pts: np.ndarray, fmarker: np.ndarray) -> None:
         """Spread marker forces onto the 8 surrounding lattice nodes (trilinear).
 
-        Adds the spread force into ``self.Fx/Fy/Fz`` in place, periodic in all axes.
+        Adds the spread force into ``self.Fx/Fy/Fz`` in place, periodic in all
+        axes.  Solid (obstacle) nodes are skipped so reaction force is never
+        deposited inside a fixed cylinder, mirroring the 2-D ``active = ~solid``
+        spreading guard.
 
         Args:
             pts: ``(m, 3)`` marker coordinates.
@@ -646,12 +698,16 @@ class LBMDEMSolver3D:
         x1 = (x0 + 1) % self.nx
         y1 = (y0 + 1) % self.ny
         z1 = (z0 + 1) % self.nz
+        has_solid = self.solid.any()
         for comp, F in ((0, self.Fx), (1, self.Fy), (2, self.Fz)):
             fc = fmarker[:, comp]
             for ix, wx in ((x0, 1 - tx), (x1, tx)):
                 for iy, wy in ((y0, 1 - ty), (y1, ty)):
                     for iz, wz in ((z0, 1 - tz), (z1, tz)):
-                        np.add.at(F, (ix, iy, iz), wx * wy * wz * fc)
+                        contrib = wx * wy * wz * fc
+                        if has_solid:
+                            contrib = np.where(self.solid[ix, iy, iz], 0.0, contrib)
+                        np.add.at(F, (ix, iy, iz), contrib)
 
     def _apply_ibm(self, ux: np.ndarray, uy: np.ndarray, uz: np.ndarray) -> np.ndarray:
         """Direct-forcing IBM exchange for one step; returns per-particle reaction.
@@ -699,8 +755,12 @@ class LBMDEMSolver3D:
         """Return (total spread force on fluid, total reaction on particles).
 
         Runs a single fresh IBM exchange from the current state without advancing
-        time, for momentum-conservation checks.  By Newton's 3rd law the two
-        totals must sum to zero.
+        time, for momentum-conservation checks.  With no solid obstacles the two
+        totals sum to zero (Newton's 3rd law).  When cylinders are present the
+        spread force that would land on solid nodes is suppressed (see
+        :meth:`_spread_forces_3d`), so for a particle whose marker cloud overlaps
+        an obstacle the totals no longer exactly cancel — the dropped momentum is
+        absorbed by the (immovable) obstacle.
 
         Returns:
             ``(spread_total, reaction_total)`` each a length-3 vector.
@@ -712,6 +772,21 @@ class LBMDEMSolver3D:
         reaction = self._apply_ibm(ux, uy, uz)
         spread_total = np.array([self.Fx.sum(), self.Fy.sum(), self.Fz.sum()])
         return spread_total, reaction.sum(axis=0)
+
+    def _apply_bounce_back(self) -> None:
+        """Halfway bounce-back on fixed-cylinder solid nodes (no-slip).
+
+        After streaming, every population on a solid node is replaced by the
+        population that streamed from the opposite direction, enforcing a no-slip
+        wall on the staircased obstacle surface.  Mirrors the 2-D solver's
+        ``f[i, solid] = f[opposite[i], solid]``.  A no-op when there are no
+        obstacles.
+        """
+        if not self.solid.any():
+            return
+        f_tmp = self.f.copy()
+        for i in range(Q3):
+            self.f[i, self.solid] = f_tmp[OPPOSITE3[i], self.solid]
 
     def advance(self, n_steps: int = 1) -> None:
         """Advance the solver by ``n_steps`` LBM steps.
@@ -744,6 +819,7 @@ class LBMDEMSolver3D:
             rho, ux, uy, uz = self._macroscopic()
             self._collide_bgk(rho, ux, uy, uz)
             self._stream()
+            self._apply_bounce_back()
             if self.streamwise_boundary == "pressure":
                 self._apply_pressure_bc()
             else:

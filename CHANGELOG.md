@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.13.0] - 2026-05-29
+
+### Added
+
+- 3D fixed finite z-aligned cylinder obstacles for `LBMDEMSolver3D` (`src/particulate_flow/lbm3d.py`), see PR #24: `cylinders` build a solid mask (`(x-cx)² + (y-cy)² ≤ r²` within the z-extent) with halfway bounce-back for no-slip, mirroring the 2D cylinder support. IBM force spreading skips solid nodes, and the same cylinders are forwarded to the internal `DEM3D` so particles collide with the obstacles. Accepts `(cx, cy, r)` or `(cx, cy, r, z_lo, z_hi)`.
+
+### Notes
+
+- Fourth slice of the 3D membrane-fouling effort (issue #19). Retires the `cylinders` `NotImplementedError` stub from #14. Remaining: inlet particle injection (#20). Numba acceleration and arbitrary cylinder orientation are out of scope.
+
+---
+
 ## [0.12.0] - 2026-05-29
 
 ### Added
