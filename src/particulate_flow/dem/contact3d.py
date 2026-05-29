@@ -124,6 +124,59 @@ class DEM3D:
         self.inertias = 0.4 * self.masses * self.radii**2
 
     # ------------------------------------------------------------------
+    # Dynamic particle population (inlet injection / outflow removal, #20)
+    # ------------------------------------------------------------------
+
+    def add_particles(self, pos: np.ndarray, vel: np.ndarray, radii: np.ndarray) -> None:
+        """Append new particles, growing every state array consistently.
+
+        New particles start with zero angular velocity; their mass and inertia
+        are derived from the radii with the solid-sphere formulas.  A no-op when
+        ``pos`` is empty.
+
+        Args:
+            pos: ``(k, 3)`` new particle centres.
+            vel: ``(k, 3)`` new particle velocities.
+            radii: ``(k,)`` new particle radii.
+        """
+        pos = np.asarray(pos, dtype=float).reshape((-1, 3))
+        if pos.shape[0] == 0:
+            return
+        vel = np.asarray(vel, dtype=float).reshape((-1, 3))
+        radii = np.asarray(radii, dtype=float).reshape(-1)
+        new_mass = self.density_ratio * (4.0 / 3.0) * np.pi * radii**3
+        self.pos = np.vstack([self.pos, pos])
+        self.vel = np.vstack([self.vel, vel])
+        self.omega = np.vstack([self.omega, np.zeros((pos.shape[0], 3))])
+        self.radii = np.concatenate([self.radii, radii])
+        self.masses = np.concatenate([self.masses, new_mass])
+        self.inertias = np.concatenate([self.inertias, 0.4 * new_mass * radii**2])
+        self.n_p = self.pos.shape[0]
+
+    def remove_particles(self, mask: np.ndarray) -> int:
+        """Remove particles selected by a boolean ``mask``.
+
+        Args:
+            mask: ``(n_p,)`` boolean array; ``True`` marks particles to delete.
+
+        Returns:
+            The number of particles removed (0 if none / empty).
+        """
+        mask = np.asarray(mask, dtype=bool).reshape(-1)
+        if mask.size == 0 or not mask.any():
+            return 0
+        keep = ~mask
+        removed = int(mask.sum())
+        self.pos = self.pos[keep]
+        self.vel = self.vel[keep]
+        self.omega = self.omega[keep]
+        self.radii = self.radii[keep]
+        self.masses = self.masses[keep]
+        self.inertias = self.inertias[keep]
+        self.n_p = self.pos.shape[0]
+        return removed
+
+    # ------------------------------------------------------------------
     # Scalar contact-law helpers (magnitudes; directions handled by caller)
     # ------------------------------------------------------------------
 

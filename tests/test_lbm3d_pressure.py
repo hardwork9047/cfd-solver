@@ -151,14 +151,21 @@ class TestParticleStackStubs:
         )
         assert sim.solid.any()
 
-    def test_inlet_source_raises_not_implemented(self):
-        with pytest.raises(NotImplementedError, match=r"#20"):
-            LBMDEMSolver3D(
-                nx=16,
-                ny=12,
-                nz=8,
-                particle_source="left_inlet",
-            )
+    def test_inlet_source_now_supported_with_pressure(self):
+        # Inlet injection is implemented as of issue #20 (requires pressure flow).
+        # (Kept here to document the stub's retirement.)
+        sim = LBMDEMSolver3D(
+            nx=16,
+            ny=12,
+            nz=8,
+            streamwise_boundary="pressure",
+            pressure_drop=1e-3,
+            particle_source="left_inlet",
+            particle_fluid_coupling="immersed_boundary",
+            source_volume_fraction=0.05,
+        )
+        assert sim.particle_source == "left_inlet"
+        assert sim.dem is not None and sim.dem.n_p == 0
 
     def test_coupling_raises_not_implemented(self):
         with pytest.raises(NotImplementedError, match=r"#17"):
