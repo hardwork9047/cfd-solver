@@ -149,8 +149,7 @@ class DEM3D:
         """Coulomb-limited tangential-force magnitude opposing slip.
 
         Args:
-            v_t: Magnitude of the tangential slip velocity (signed along the
-                slip direction the caller chose).
+            v_t: Non-negative magnitude of the tangential slip velocity.
             normal_force: Current normal force magnitude.
             mass: Effective mass for the damping term.
 

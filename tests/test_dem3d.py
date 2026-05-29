@@ -150,8 +150,50 @@ class TestFrictionAndRolling:
         assert forces[0, 0] < 0.0
         # Coulomb bound: |f_t| <= mu * |f_n|.
         assert abs(forces[0, 0]) <= 0.5 * abs(forces[0, 1]) + 1e-9
-        # A rolling-resistance torque should be present (nonzero vector).
+        # A torque should be present (here from the tangential friction force).
         assert np.linalg.norm(torques[0]) > 0.0
+
+    def test_rolling_resistance_opposes_spin(self):
+        # A spinning sphere pressed into the wall (no slip velocity) should feel
+        # a rolling-resistance torque that anti-aligns with its angular velocity.
+        r = 3.0
+        pos = np.array([[10.0, r - 0.2, 10.0]])  # overlapping the y=0 wall
+        vel = np.zeros((1, 3))
+        sim = DEM3D(
+            pos=pos,
+            vel=vel,
+            radii=np.array([r]),
+            nx=20,
+            ny=20,
+            nz=20,
+            gravity=0.0,
+            walls=("y_min",),
+            rolling_friction_coeff=0.1,
+        )
+        sim.omega[0] = np.array([0.0, 0.0, 0.5])  # spin about +z
+        _, torques = sim.compute_loads()
+        # No tangential slip (centre at rest, surface velocity from spin is
+        # tangential and produces friction, but the rolling term must oppose ω).
+        # The z-component of the total torque must oppose the +z spin.
+        assert torques[0, 2] < 0.0
+
+    def test_rolling_resistance_vanishes_without_contact(self):
+        r = 3.0
+        pos = np.array([[10.0, 10.0, 10.0]])  # far from the wall
+        vel = np.zeros((1, 3))
+        sim = DEM3D(
+            pos=pos,
+            vel=vel,
+            radii=np.array([r]),
+            nx=20,
+            ny=20,
+            nz=20,
+            gravity=0.0,
+            walls=("y_min",),
+        )
+        sim.omega[0] = np.array([0.0, 0.0, 0.5])
+        _, torques = sim.compute_loads()
+        np.testing.assert_allclose(torques, 0.0, atol=1e-12)
 
     def test_no_tangential_without_contact(self):
         r = 3.0

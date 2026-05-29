@@ -35,11 +35,16 @@ will later wire into `LBMDEMSolver3D.advance()`.
   + sphere-wall contact for the y=0 / y=ny-1 planes (configurable)
   + sphere-(finite z-axis-aligned) cylinder contact
   + velocity-Verlet / semi-implicit Euler time integration with sub-stepping
-- A thin opt-in hook on `LBMDEMSolver3D` (e.g. `attach_dem(...)`) that constructs a
-  `DEM3D` and exposes `step_dem(n_substeps)` WITHOUT touching the fluid path. The
-  existing `NotImplementedError` particle-stub in `__init__` stays for the fluid-coupled
-  config route (that path is #17); `attach_dem` is the explicit, fluid-free entry.
 - Tests for the three acceptance scenarios + 2D-regression guard.
+
+> **Scope trim (decided during self-review):** an `attach_dem`/`step_dem` hook on
+> `LBMDEMSolver3D` was originally listed here. **Deferred to #17.** Rationale: a hook
+> that steps `DEM3D` *without* fluid drag has no real use — the only reason to embed
+> a DEM stepper in the fluid solver is to exchange drag + IBM back-reaction each step,
+> which is exactly #17's job. `DEM3D` is fully standalone and unit-tested on its own,
+> so adding a fluid-free hook now would be dead surface area that #17 would immediately
+> rework. The `NotImplementedError` particle stub in `LBMDEMSolver3D.__init__` (from
+> #14) stays untouched; #17 will replace it with the real coupled path.
 
 ### Out of scope (other issues)
 - Fluid drag + IBM back-reaction coupling → #17
