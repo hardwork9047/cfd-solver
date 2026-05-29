@@ -309,10 +309,16 @@ class LBMDEMSolver3D:
 
         Args:
             cylinders: List of ``(cx, cy, r)`` or ``(cx, cy, r, z_lo, z_hi)``.
-                Without z bounds the cylinder spans the full depth.
+                ``z_lo``/``z_hi`` are inclusive bounds in lattice-index units;
+                without them the cylinder spans the full depth (``z_hi = nz``).
 
         Returns:
             Boolean array of shape (nx, ny, nz); ``True`` marks solid nodes.
+
+        Raises:
+            ValueError: in ``"pressure"`` mode, if a cylinder's x-extent reaches
+                the inlet (x=0) or outlet (x=nx-1) plane, where the Zou-He
+                density BC would overwrite the bounce-back result.
         """
         solid = np.zeros((self.nx, self.ny, self.nz), dtype=bool)
         if not cylinders:
@@ -323,6 +329,14 @@ class LBMDEMSolver3D:
         xx, yy, zz = np.meshgrid(ix, iy, iz, indexing="ij")
         for cyl in cylinders:
             cx, cy, cr = cyl[0], cyl[1], cyl[2]
+            if self.streamwise_boundary == "pressure" and (
+                cx - cr <= 0.0 or cx + cr >= self.nx - 1
+            ):
+                raise ValueError(
+                    f"cylinder at x={cx} r={cr} reaches the pressure inlet/outlet "
+                    "plane; the Zou-He BC would overwrite its bounce-back. Move it "
+                    "into the interior (cx - r > 0 and cx + r < nx-1)."
+                )
             z_lo = cyl[3] if len(cyl) > 3 else 0.0
             z_hi = cyl[4] if len(cyl) > 4 else float(self.nz)
             radial2 = (xx - cx) ** 2 + (yy - cy) ** 2
@@ -741,8 +755,12 @@ class LBMDEMSolver3D:
         """Return (total spread force on fluid, total reaction on particles).
 
         Runs a single fresh IBM exchange from the current state without advancing
-        time, for momentum-conservation checks.  By Newton's 3rd law the two
-        totals must sum to zero.
+        time, for momentum-conservation checks.  With no solid obstacles the two
+        totals sum to zero (Newton's 3rd law).  When cylinders are present the
+        spread force that would land on solid nodes is suppressed (see
+        :meth:`_spread_forces_3d`), so for a particle whose marker cloud overlaps
+        an obstacle the totals no longer exactly cancel — the dropped momentum is
+        absorbed by the (immovable) obstacle.
 
         Returns:
             ``(spread_total, reaction_total)`` each a length-3 vector.

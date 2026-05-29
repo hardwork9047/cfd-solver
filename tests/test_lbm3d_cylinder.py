@@ -10,6 +10,7 @@ Plus mask-geometry and no-cylinder regression.
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from particulate_flow.lbm3d import LBMDEMSolver3D
 
@@ -59,6 +60,12 @@ class TestSolidMask:
     def test_no_cylinders_all_fluid(self):
         sim = _flow_solver([])
         assert not sim.solid.any()
+
+    def test_cylinder_at_pressure_plane_rejected(self):
+        # A cylinder reaching the inlet/outlet plane is rejected in pressure mode,
+        # since the Zou-He BC would overwrite its bounce-back.
+        with pytest.raises(ValueError, match="inlet/outlet"):
+            _flow_solver([(2.0, 10.0, 4.0)])  # cx - r = -2 <= 0
 
 
 # ---------------------------------------------------------------------------
@@ -128,3 +135,47 @@ class TestParticleCollision:
         # Must not penetrate inside (r_cyl + r_p), allowing a small contact overlap.
         assert radial > (cr + rp) - 0.75
         assert np.all(np.isfinite(sim.dem.pos))
+
+
+# ---------------------------------------------------------------------------
+# IBM force balance interaction with obstacles
+# ---------------------------------------------------------------------------
+
+
+class TestIBMSolidInteraction:
+    def test_spread_skips_solid_when_marker_overlaps_cylinder(self):
+        # A particle adjacent to a cylinder: marker forces that would land on solid
+        # nodes are suppressed, so the spread/reaction balance is intentionally
+        # broken (the obstacle absorbs that momentum). A far-away cylinder leaves
+        # the balance intact.
+        cx, cy, cr = 20.0, 10.0, 4.0
+        rp = 2.0
+        # Particle touching the cylinder surface.
+        near_pos = np.array([[cx - cr - rp + 0.5, cy, 6.0]])
+        near = _flow_solver(
+            [(cx, cy, cr)],
+            n_particles=1,
+            particle_fluid_coupling="immersed_boundary",
+            particle_positions=near_pos,
+            particle_radius=rp,
+            density_ratio=2.0,
+            gravity=0.0,
+        )
+        near.advance(30)
+        spread, reaction = near._ibm_force_audit()
+        # Imbalance is expected and bounded by the spread magnitude.
+        assert np.linalg.norm(spread + reaction) > 1e-9
+
+        # Control: same particle, no cylinder → Newton balance holds.
+        ctrl = _flow_solver(
+            [],
+            n_particles=1,
+            particle_fluid_coupling="immersed_boundary",
+            particle_positions=near_pos,
+            particle_radius=rp,
+            density_ratio=2.0,
+            gravity=0.0,
+        )
+        ctrl.advance(30)
+        spread_c, reaction_c = ctrl._ibm_force_audit()
+        np.testing.assert_allclose(spread_c + reaction_c, 0.0, atol=1e-9)
