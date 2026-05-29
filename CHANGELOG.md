@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.12.0] - 2026-05-29
+
+### Added
+
+- 3D immersed-boundary particle-fluid coupling for `LBMDEMSolver3D` (`src/particulate_flow/lbm3d.py`), see PR #23: D3Q15 Guo body forcing, spherical Fibonacci-lattice surface markers, trilinear velocity interpolation and force spreading, and a coupled `advance()` that drives an internal `DEM3D` (issue #18) via the IBM reaction force. Enabled with `n_particles > 0` + `particle_fluid_coupling="immersed_boundary"` + `particle_positions`.
+- `DEM3D.step()` gains `external_forces` / `external_torques` arguments so a coupling layer can inject per-particle fluid loads while keeping `DEM3D` fluid-agnostic.
+
+### Notes
+
+- Third slice of the 3D membrane-fouling effort (issue #17). Completes two-way fluid↔particle coupling. Remaining: 3D fixed-cylinder fluid masks (#19) and inlet particle injection (#20). Numba acceleration of the 3D IBM kernels is deferred.
+
+---
+
 ## [0.11.0] - 2026-05-29
 
 ### Added
