@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.11.0] - 2026-05-29
+
+### Added
+
+- Fresh 3D DEM contact physics `DEM3D` (`src/particulate_flow/dem/contact3d.py`): sphere-sphere, sphere-wall, and sphere-(z-aligned finite cylinder) Hertz/linear normal contact with 3-vector angular velocity and torque, Coulomb-limited tangential friction along the in-plane slip direction, Coulomb-limited rolling resistance, buoyancy-corrected gravity, and semi-implicit Euler sub-stepped integration, see PR #22. The 2D `DEMSolver` is unchanged.
+
+### Notes
+
+- Second slice of the 3D membrane-fouling effort (issue #18). `DEM3D` is fluid-free; wiring it into `LBMDEMSolver3D.advance()` with drag + IBM back-reaction is issue #17. Numba acceleration of the 3D kernels is deferred.
+
+---
+
 ## [0.10.0] - 2026-05-29
 
 ### Added
