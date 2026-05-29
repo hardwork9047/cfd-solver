@@ -233,6 +233,11 @@ class LBMDEMSolver3D:
                     "particle_source='left_inlet' requires "
                     "particle_fluid_coupling='immersed_boundary'."
                 )
+            if source_volume_fraction is None or source_volume_fraction <= 0.0:
+                raise ValueError(
+                    "particle_source='left_inlet' requires a positive "
+                    "source_volume_fraction (injection budget = phi * inlet_flux)."
+                )
 
         if streamwise_boundary not in ("periodic", "pressure"):
             raise ValueError(
@@ -828,17 +833,19 @@ class LBMDEMSolver3D:
     # Left-inlet particle source (issue #20)
     # ------------------------------------------------------------------
 
-    def _inlet_flow_rate(self) -> float:
+    def _inlet_flow_rate(self, ux_inlet: np.ndarray) -> float:
         """Return the positive volumetric inflow through the inlet (x=0) plane.
 
         Sums ``max(ux, 0)`` over the whole y-z inlet cross-section, the 3D
         analogue of the 2-D ``_left_boundary_flow_rate``.
 
+        Args:
+            ux_inlet: Inlet-plane streamwise velocity ``ux[0]``, shape (ny, nz).
+
         Returns:
             Non-negative inlet flux in lattice volume per step.
         """
-        _, ux, _, _ = self._macroscopic()
-        return float(np.maximum(ux[0], 0.0).sum())
+        return float(np.maximum(ux_inlet, 0.0).sum())
 
     def _sample_inlet_point(self, radius: float, ux_inlet: np.ndarray) -> tuple[float, float]:
         """Sample a (y, z) injection point on the inlet plane weighted by flux.
@@ -886,14 +893,14 @@ class LBMDEMSolver3D:
         phi = self.source_volume_fraction
         if phi <= 0.0:
             return
-        flow = self._inlet_flow_rate()
+        _, ux, _, _ = self._macroscopic()
+        ux_inlet = ux[0]
+        flow = self._inlet_flow_rate(ux_inlet)
         self.cumulative_inlet_flow_volume += flow
         self._inlet_volume_budget += phi * flow
 
         r = self.particle_radius
         particle_volume = (4.0 / 3.0) * np.pi * r**3
-        _, ux, _, _ = self._macroscopic()
-        ux_inlet = ux[0]
         added = 0
         attempts = 0
         max_attempts = max(12, 4 * max_new)
@@ -917,15 +924,26 @@ class LBMDEMSolver3D:
             added += 1
 
     def _can_place_inlet(self, x: float, y: float, z: float, radius: float) -> bool:
-        """Return whether an inlet particle fits without overlapping existing ones.
+        """Return whether an inlet particle fits without overlapping existing bodies.
+
+        Rejects placement that would overlap an active particle or a fixed
+        cylinder obstacle, mirroring the 2-D ``_can_place_inlet_particle`` which
+        checks both particle and cylinder overlap.
 
         Args:
             x, y, z: Candidate particle centre.
             radius: Candidate particle radius.
 
         Returns:
-            ``True`` when no active particle overlaps the candidate.
+            ``True`` when no active particle and no cylinder overlaps the candidate.
         """
+        # Reject overlap with a fixed z-aligned cylinder (within its z-extent).
+        for cyl in self.cylinders:
+            cx, cy, cr = cyl[0], cyl[1], cyl[2]
+            z_lo = cyl[3] if len(cyl) > 3 else 0.0
+            z_hi = cyl[4] if len(cyl) > 4 else float(self.nz)
+            if z_lo <= z <= z_hi and np.hypot(x - cx, y - cy) < 1.02 * (cr + radius):
+                return False
         if self.dem is None or self.dem.n_p == 0:
             return True
         d = self.dem.pos - np.array([x, y, z])
@@ -933,9 +951,11 @@ class LBMDEMSolver3D:
         return bool(np.all(dist >= 1.02 * (self.dem.radii + radius)))
 
     def _remove_outflow_particles(self) -> None:
-        """Delete particles whose sphere has fully passed the outlet (x=nx-1).
+        """Delete particles whose sphere has fully passed the outlet.
 
-        A no-op outside ``left_inlet`` mode or when there are no particles.
+        Removes any particle whose trailing edge is past the outlet, i.e.
+        ``pos_x - r > nx`` (one lattice unit beyond the last node, matching the
+        2-D convention).  A no-op outside ``left_inlet`` mode or with no particles.
         """
         if self.particle_source != "left_inlet" or self.dem is None or self.dem.n_p == 0:
             return
@@ -945,13 +965,16 @@ class LBMDEMSolver3D:
     def advance(self, n_steps: int = 1) -> None:
         """Advance the solver by ``n_steps`` LBM steps.
 
-        Each step: (optional IBM exchange) → collide (with Guo forcing) → stream →
-        boundary correction → (optional DEM sub-steps).  In the default
+        Each step: (optional inlet feed) → (optional IBM exchange) → collide (with
+        Guo forcing) → stream → bounce-back → boundary correction → (optional DEM
+        sub-steps) → (optional outflow removal).  In the default
         ``streamwise_boundary="periodic"`` mode the correction is the
         Lees-Edwards shear BC.  In ``"pressure"`` mode a Zou-He density BC is
         applied on the x inlet/outlet planes instead (y, z stay periodic).  When
         particles are present (``immersed_boundary`` coupling) the IBM reaction
-        force drives an internal :class:`DEM3D` each step.
+        force drives an internal :class:`DEM3D` each step.  With
+        ``particle_source="left_inlet"`` particles are injected at the inlet
+        before the step and removed after they pass the outlet.
 
         Args:
             n_steps: Number of LBM time steps to execute.

@@ -88,6 +88,25 @@ class TestDEM3DAddRemove:
         sim.remove_particles(np.zeros(2, dtype=bool))
         assert sim.n_p == 2
 
+    def test_remove_rejects_wrong_size_mask(self):
+        sim = self._solver(3)
+        with pytest.raises(ValueError, match="mask size"):
+            sim.remove_particles(np.array([True, False]))  # size 2 != n_p 3
+
+    def test_add_then_remove_round_trip(self):
+        sim = self._solver(2)
+        sim.add_particles(
+            np.array([[10.0, 10.0, 10.0]]),
+            np.zeros((1, 3)),
+            np.array([2.0]),
+        )
+        assert sim.n_p == 3
+        # Remove the just-added particle; original two remain consistent.
+        sim.remove_particles(np.array([False, False, True]))
+        assert sim.n_p == 2
+        np.testing.assert_allclose(sim.pos[:, 0], [0.0, 1.0])
+        assert sim.masses.shape == (2,) and sim.inertias.shape == (2,)
+
 
 # ---------------------------------------------------------------------------
 # Scenario 1: particles appear and advect downstream
@@ -184,4 +203,30 @@ class TestGuards:
                 particle_source="left_inlet",
                 particle_fluid_coupling="immersed_boundary",
                 source_volume_fraction=0.05,
+            )
+
+    def test_left_inlet_requires_immersed_boundary_coupling(self):
+        with pytest.raises(ValueError, match="immersed_boundary"):
+            LBMDEMSolver3D(
+                nx=32,
+                ny=16,
+                nz=16,
+                streamwise_boundary="pressure",
+                pressure_drop=1e-3,
+                particle_source="left_inlet",
+                particle_fluid_coupling="none",
+                source_volume_fraction=0.05,
+            )
+
+    def test_left_inlet_requires_source_fraction(self):
+        with pytest.raises(ValueError, match="source_volume_fraction"):
+            LBMDEMSolver3D(
+                nx=32,
+                ny=16,
+                nz=16,
+                streamwise_boundary="pressure",
+                pressure_drop=1e-3,
+                particle_source="left_inlet",
+                particle_fluid_coupling="immersed_boundary",
+                source_volume_fraction=None,
             )

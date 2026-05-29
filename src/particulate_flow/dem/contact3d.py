@@ -165,6 +165,8 @@ class DEM3D:
         mask = np.asarray(mask, dtype=bool).reshape(-1)
         if mask.size == 0 or not mask.any():
             return 0
+        if mask.size != self.n_p:
+            raise ValueError(f"mask size {mask.size} does not match particle count {self.n_p}")
         keep = ~mask
         removed = int(mask.sum())
         self.pos = self.pos[keep]
