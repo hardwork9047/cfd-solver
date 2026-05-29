@@ -263,7 +263,6 @@ class LBMDEMSolver3D:
         self.f = _equilibrium_3d(rho0, ux_field, np.zeros_like(ux_field), np.zeros_like(ux_field))
 
         # Eulerian body-force field (Guo forcing), populated by IBM each step.
-        self.nu = self.tau_to_nu()
         self.Fx = np.zeros((nx, ny, nz))
         self.Fy = np.zeros((nx, ny, nz))
         self.Fz = np.zeros((nx, ny, nz))
@@ -295,14 +294,6 @@ class LBMDEMSolver3D:
                 gravity=gravity,
                 dem_substeps=dem_substeps,
             )
-
-    def tau_to_nu(self) -> float:
-        """Return the kinematic viscosity implied by the relaxation time.
-
-        Returns:
-            ``nu = cs² (tau - 1/2)`` in lattice units.
-        """
-        return CS2_3 * (self.tau - 0.5)
 
     # ------------------------------------------------------------------
     # Macroscopic fields
@@ -737,14 +728,20 @@ class LBMDEMSolver3D:
             n_steps: Number of LBM time steps to execute.
         """
         for _ in range(n_steps):
-            rho, ux, uy, uz = self._macroscopic()
+            coupled = self.dem is not None and self.dem.n_p > 0
 
-            if self.dem is not None and self.dem.n_p > 0:
+            if coupled:
+                # Compute the IBM exchange against the un-forced velocity, then
+                # re-read the macroscopic fields so the collision sees the new
+                # body force's half-correction (consistent Guo scheme, matching
+                # the 2-D path which recomputes velocity after IBM).
                 self.Fx[:] = 0.0
                 self.Fy[:] = 0.0
                 self.Fz[:] = 0.0
+                _, ux, uy, uz = self._macroscopic()
                 self._apply_ibm(ux, uy, uz)
 
+            rho, ux, uy, uz = self._macroscopic()
             self._collide_bgk(rho, ux, uy, uz)
             self._stream()
             if self.streamwise_boundary == "pressure":
@@ -753,7 +750,7 @@ class LBMDEMSolver3D:
                 self._le_shift = (self._le_shift + self.le_shear_rate * self.ny) % self.nx
                 self._apply_le_bc()
 
-            if self.dem is not None and self.dem.n_p > 0:
+            if coupled:
                 self.dem.step(
                     1,
                     external_forces=self._ibm_reaction,

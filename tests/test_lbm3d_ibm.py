@@ -13,7 +13,30 @@ from __future__ import annotations
 import numpy as np
 
 from particulate_flow.dem.contact3d import DEM3D
-from particulate_flow.lbm3d import LBMDEMSolver3D
+from particulate_flow.lbm3d import C3, CS2_3, Q3, W3, LBMDEMSolver3D
+
+# ---------------------------------------------------------------------------
+# Guo forcing source-term moments (the non-trivial maths of the coupling)
+# ---------------------------------------------------------------------------
+
+
+class TestGuoSourceMoments:
+    def test_source_conserves_mass_and_injects_momentum(self):
+        # For a known velocity u and force F, the Guo source S_i must satisfy
+        # Σ S_i = 0 (mass) and Σ c_i S_i = (1 - ω/2) F (momentum).
+        omega = 1.0 / 0.9  # tau = 0.9
+        u = np.array([0.03, -0.01, 0.02])
+        F = np.array([1e-3, 2e-3, -1e-3])
+        prefactor = 1.0 - 0.5 * omega
+        s = np.zeros(Q3)
+        for i in range(Q3):
+            cx, cy, cz = C3[i]
+            cu = cx * u[0] + cy * u[1] + cz * u[2]
+            term = (C3[i] - u) / CS2_3 + cu * C3[i] / CS2_3**2
+            s[i] = prefactor * W3[i] * float(term @ F)
+        assert abs(s.sum()) < 1e-12  # mass conservation
+        momentum = (C3 * s[:, None]).sum(axis=0)
+        np.testing.assert_allclose(momentum, prefactor * F, atol=1e-12)
 
 
 def _coupled_solver(*, pressure_drop=2e-3, n_particles=1, **kwargs):
@@ -82,9 +105,12 @@ class TestBackReaction:
 
     def test_reaction_balances_spread_force(self):
         # The force spread to the fluid must equal minus the reaction on particles
-        # (Newton's 3rd law), to tolerance, for the IBM exchange in one step.
+        # (Newton's 3rd law). Advance first so the exchange is genuinely nonzero
+        # (a quiescent start would make both sides trivially zero).
         sim = _coupled_solver(pressure_drop=3e-3)
+        sim.advance(50)
         spread, reaction = sim._ibm_force_audit()
+        assert np.linalg.norm(spread) > 0.0, "exchange should be nonzero after flow develops"
         np.testing.assert_allclose(spread + reaction, 0.0, atol=1e-9)
 
 
