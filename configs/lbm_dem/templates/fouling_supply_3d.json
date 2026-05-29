@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "name": "fouling_supply_3d",
+  "case_type": "fouling_supply_3d",
+  "description": "3D pressure-driven membrane-pore fouling with particles supplied from the left inlet (D3Q15, IBM coupling).",
+  "domain": {
+    "nx": 48,
+    "ny": 24,
+    "nz": 24,
+    "dimensions": 3
+  },
+  "flow": {
+    "streamwise_boundary": "pressure",
+    "pressure_drop": 3e-3,
+    "rho_out": 1.0,
+    "reynolds_number": 10,
+    "u_max": 0.05
+  },
+  "solver": {
+    "particle_fluid_coupling": "immersed_boundary",
+    "ibm_marker_spacing": 2.0
+  },
+  "particles": {
+    "particle_source": "left-inlet",
+    "particle_volume_fraction": 0.05,
+    "particle_radius": 2.0,
+    "density_ratio": 2.0,
+    "gravity": 0.0,
+    "dem_substeps": 4
+  },
+  "runtime": {
+    "total_steps": 2000,
+    "warmup_steps": 200,
+    "snapshot_every": 100
+  },
+  "outputs": {
+    "output_profile": "analysis",
+    "paraview_output": true,
+    "paraview_every": 0,
+    "snapshot_storage": "none",
+    "no_video": true
+  }
+}

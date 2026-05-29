@@ -116,9 +116,9 @@ class TestRunner3D:
 
 class TestCylinderGeometry:
     def test_case_with_cylinder_geometry_has_solid(self, tmp_path):
-        from particulate_flow.runner3d import build_3d_solver
-
         import argparse
+
+        from particulate_flow.runner3d import build_3d_solver
 
         args = argparse.Namespace(
             dimensions=3,
