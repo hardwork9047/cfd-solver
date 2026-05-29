@@ -140,14 +140,16 @@ class TestParticleStackStubs:
         with pytest.raises(NotImplementedError, match=r"#1[78]"):
             LBMDEMSolver3D(nx=16, ny=12, nz=8, n_particles=5)
 
-    def test_cylinders_raise_not_implemented(self):
-        with pytest.raises(NotImplementedError, match=r"#19"):
-            LBMDEMSolver3D(
-                nx=16,
-                ny=12,
-                nz=8,
-                cylinders=[(8.0, 6.0, 4.0, 3.0)],
-            )
+    def test_cylinders_now_build_solid_mask(self):
+        # Cylinders are implemented as of issue #19: they build a solid mask
+        # rather than raising. (Kept here to document the stub's retirement.)
+        sim = LBMDEMSolver3D(
+            nx=16,
+            ny=12,
+            nz=8,
+            cylinders=[(8.0, 6.0, 3.0)],
+        )
+        assert sim.solid.any()
 
     def test_inlet_source_raises_not_implemented(self):
         with pytest.raises(NotImplementedError, match=r"#20"):
