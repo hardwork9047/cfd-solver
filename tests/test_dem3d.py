@@ -70,6 +70,28 @@ class TestSphereSphereNormal:
         p1 = (sim.masses[:, None] * sim.vel).sum(axis=0)
         np.testing.assert_allclose(p1, p0, atol=1e-9)
 
+    def test_shear_contact_spins_both_spheres(self):
+        # Two overlapping spheres with opposite transverse (y) velocities create
+        # a shearing contact: both partners must receive a tangential torque and
+        # the linear forces must obey Newton's 3rd law.
+        r = 3.0
+        pos = np.array([[0.0, 10.0, 10.0], [5.5, 10.0, 10.0]])  # 0.5 overlap
+        vel = np.array([[0.0, 0.02, 0.0], [0.0, -0.02, 0.0]])
+        sim = DEM3D(
+            pos=pos,
+            vel=vel,
+            radii=np.full(2, r),
+            nx=40,
+            ny=20,
+            nz=20,
+            gravity=0.0,
+            sliding_friction=0.5,
+        )
+        forces, torques = sim.compute_loads()
+        assert np.linalg.norm(torques[0]) > 0.0
+        assert np.linalg.norm(torques[1]) > 0.0
+        np.testing.assert_allclose(forces[0] + forces[1], 0.0, atol=1e-9)
+
 
 # ---------------------------------------------------------------------------
 # Scenario 2: sphere settles on a wall under gravity
