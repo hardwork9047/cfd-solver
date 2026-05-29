@@ -74,7 +74,7 @@ def _build_lbm3d_solver(args: argparse.Namespace):
         le_shear_axis=getattr(args, "le_shear_axis", 0),
         le_boundary_axis=getattr(args, "le_boundary_axis", 1),
         le_interpolation_order=getattr(args, "le_interpolation_order", 3),
-        streamwise_boundary=getattr(args, "streamwise_boundary", "periodic").replace("-", "_"),
+        streamwise_boundary=getattr(args, "streamwise_boundary", "periodic"),
         pressure_drop=getattr(args, "pressure_drop", None) or 0.0,
         rho_out=getattr(args, "rho_out", 1.0),
     )

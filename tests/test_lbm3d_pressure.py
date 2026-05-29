@@ -15,10 +15,10 @@ import pytest
 
 from particulate_flow.lbm3d import CS2_3, LBMDEMSolver3D
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _pressure_solver(*, nx=24, ny=12, nz=8, pressure_drop=2e-3, **kwargs):
     """Build a 3D pressure-driven solver (no shear, x=pressure)."""
@@ -38,7 +38,9 @@ def _pressure_solver(*, nx=24, ny=12, nz=8, pressure_drop=2e-3, **kwargs):
 
 def _builder_args_3d_pressure(**overrides):
     args = argparse.Namespace(
-        nx=24, ny=12, nz=8,
+        nx=24,
+        ny=12,
+        nz=8,
         dimensions=3,
         reynolds_number=10.0,
         u_max=0.05,
@@ -58,6 +60,7 @@ def _builder_args_3d_pressure(**overrides):
 # ---------------------------------------------------------------------------
 # Scenario 1: 3D pressure-driven flow works
 # ---------------------------------------------------------------------------
+
 
 class TestPressureDrivenFlow:
     def test_rho_in_exceeds_rho_out(self):
@@ -100,6 +103,7 @@ class TestPressureDrivenFlow:
 # Scenario 5: builder dispatch forwards pressure params
 # ---------------------------------------------------------------------------
 
+
 class TestBuilderPressureForwarding:
     def test_builder_returns_3d_pressure_solver(self):
         from particulate_flow.builder import build_lbm_dem_solver
@@ -113,6 +117,7 @@ class TestBuilderPressureForwarding:
 # ---------------------------------------------------------------------------
 # Scenario 6: 2D + existing 3D LE behaviour unchanged
 # ---------------------------------------------------------------------------
+
 
 class TestRegression:
     def test_default_periodic_unchanged(self):
@@ -129,6 +134,7 @@ class TestRegression:
 # Scenarios 2-4: particle stack must fail loudly (not silently absent)
 # ---------------------------------------------------------------------------
 
+
 class TestParticleStackStubs:
     def test_particles_raise_not_implemented(self):
         with pytest.raises(NotImplementedError, match=r"#1[78]"):
@@ -137,13 +143,26 @@ class TestParticleStackStubs:
     def test_cylinders_raise_not_implemented(self):
         with pytest.raises(NotImplementedError, match=r"#19"):
             LBMDEMSolver3D(
-                nx=16, ny=12, nz=8,
+                nx=16,
+                ny=12,
+                nz=8,
                 cylinders=[(8.0, 6.0, 4.0, 3.0)],
             )
 
     def test_inlet_source_raises_not_implemented(self):
         with pytest.raises(NotImplementedError, match=r"#20"):
             LBMDEMSolver3D(
-                nx=16, ny=12, nz=8,
+                nx=16,
+                ny=12,
+                nz=8,
                 particle_source="left_inlet",
+            )
+
+    def test_coupling_raises_not_implemented(self):
+        with pytest.raises(NotImplementedError, match=r"#17"):
+            LBMDEMSolver3D(
+                nx=16,
+                ny=12,
+                nz=8,
+                particle_fluid_coupling="ibm",
             )

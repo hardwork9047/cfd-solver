@@ -179,7 +179,7 @@ class LBMDEMSolver3D:
         # --- Guard the not-yet-implemented particle stack (issue #14 slice) ---
         # The 3D particle subsystems are tracked as follow-ups split from #14.
         # Fail loudly so a 3D fouling config does not silently run particle-free.
-        if n_particles and n_particles > 0:
+        if n_particles > 0:
             raise NotImplementedError(
                 "3D DEM particles are not implemented yet "
                 "(IBM coupling #17, DEM contact #18). "
@@ -386,89 +386,82 @@ class LBMDEMSolver3D:
         """Apply Zou-He density (pressure) BC on the x inlet/outlet planes.
 
         Imposes ``rho = rho_in`` at the inlet plane x=0 and ``rho = rho_out`` at
-        the outlet plane x=nx-1, with zero transverse velocity (uy = uz = 0) at
-        both planes.  The streamwise velocity is solved from the density
-        constraint, then the unknown incoming populations are reconstructed by
-        the Zou-He bounce-back-of-non-equilibrium rule generalised to D3Q15.
+        the outlet plane x=nx-1.  The streamwise velocity is solved exactly from
+        the density constraint, then the unknown incoming populations are
+        reconstructed by the Zou-He bounce-back-of-non-equilibrium rule on the
+        D3Q15 lattice.
+
+        Only ``rho`` and the streamwise velocity ``ux`` are enforced exactly:
+        the equilibrium used in the reconstruction assumes zero transverse
+        velocity, which biases ``uy``/``uz`` toward zero but does not pin them.
+        For the intended duct (periodic y, z) this is the desired behaviour.
 
         This mirrors the 2-D ``LBMDEMSolver`` Zou-He inlet/outlet contract
-        (``rho_in = rho_out + pressure_drop / cs^2``) on the D3Q15 lattice.
-        Called after streaming; y and z remain periodic.
+        (``rho_in = rho_out + pressure_drop / cs^2``).  Called after streaming;
+        y and z remain periodic.  ``plane`` slices are NumPy views, so the
+        in-place reconstruction writes straight through to ``self.f``.
         """
         f = self.f
 
-        # --- Inlet plane x = 0 : impose rho = rho_in, uy = uz = 0 ----------
-        plane = f[:, 0, :, :]  # (Q3, ny, nz)
-        rho_in = self.rho_in
+        # --- Inlet plane x = 0 : impose rho = rho_in ----------------------
+        plane = f[:, 0, :, :]  # (Q3, ny, nz) view into self.f
         # Known populations: cx <= 0 (rest + outgoing/tangential already streamed).
         sum_zero = plane[_X_ZERO_DIRS].sum(axis=0)
         sum_neg = plane[_X_NEG_DIRS].sum(axis=0)
         # rho = sum_zero + sum_neg + sum_pos, and momentum_x = sum_pos - sum_neg
         # = rho * ux  ->  ux = 1 - (sum_zero + 2*sum_neg) / rho.
-        ux_in = 1.0 - (sum_zero + 2.0 * sum_neg) / rho_in
+        ux_in = 1.0 - (sum_zero + 2.0 * sum_neg) / self.rho_in
         self._zou_he_reconstruct(
             plane=plane,
             unknown_dirs=_X_POS_DIRS,
-            known_neg_dirs=_X_NEG_DIRS,
-            rho=rho_in,
+            rho=self.rho_in,
             u_normal=ux_in,
             axis=0,
-            sign=+1,
         )
-        f[:, 0, :, :] = plane
 
-        # --- Outlet plane x = nx-1 : impose rho = rho_out, uy = uz = 0 ------
-        plane = f[:, -1, :, :]
-        rho_out = self.rho_out
+        # --- Outlet plane x = nx-1 : impose rho = rho_out -----------------
+        plane = f[:, -1, :, :]  # view into self.f
         sum_zero = plane[_X_ZERO_DIRS].sum(axis=0)
         sum_pos = plane[_X_POS_DIRS].sum(axis=0)
         # ux = -(1 - (sum_zero + 2*sum_pos) / rho)  (flow leaves in +x)
-        ux_out = -1.0 + (sum_zero + 2.0 * sum_pos) / rho_out
+        ux_out = -1.0 + (sum_zero + 2.0 * sum_pos) / self.rho_out
         self._zou_he_reconstruct(
             plane=plane,
             unknown_dirs=_X_NEG_DIRS,
-            known_neg_dirs=_X_POS_DIRS,
-            rho=rho_out,
+            rho=self.rho_out,
             u_normal=ux_out,
             axis=0,
-            sign=-1,
         )
-        f[:, -1, :, :] = plane
 
     @staticmethod
     def _zou_he_reconstruct(
         plane: np.ndarray,
         unknown_dirs: list[int],
-        known_neg_dirs: list[int],
         rho: float,
         u_normal: np.ndarray,
         axis: int,
-        sign: int,
     ) -> None:
         """Reconstruct unknown populations on a boundary plane (Zou-He, D3Q15).
 
-        Uses bounce-back of the non-equilibrium normal part plus a transverse
-        momentum correction so that the imposed transverse velocity is zero.
+        For each unknown direction ``i`` the opposite (known) population is
+        ``OPPOSITE3[i]``; the rule sets ``f_i = feq_i + (f_opp - feq_opp)``,
+        i.e. bounce-back of the non-equilibrium part, where ``feq`` is evaluated
+        with only the wall-normal velocity non-zero.
 
         Args:
             plane: Population slice at the boundary, shape (Q3, n1, n2). Modified
                 in place.
             unknown_dirs: Indices of the incoming (unknown) populations.
-            known_neg_dirs: Indices of the outgoing populations opposite to the
-                unknowns (used for the bounce-back baseline).
             rho: Imposed density on the plane (scalar).
             u_normal: Imposed wall-normal velocity, shape (n1, n2).
             axis: Lattice velocity component index of the wall normal (0=x).
-            sign: +1 at an inlet (unknowns have positive normal component),
-                -1 at an outlet.
         """
         # Equilibrium with only the wall-normal velocity non-zero (uy=uz=0).
         # feq_i = w_i * rho * (1 + (c.u)/cs2 + (c.u)^2/(2 cs2^2) - u^2/(2 cs2))
         u2 = u_normal**2
         for i in unknown_dirs:
             opp = OPPOSITE3[i]
-            cn = C3[i, axis]
-            cu = cn * u_normal
+            cu = C3[i, axis] * u_normal
             feq_i = W3[i] * rho * (1.0 + cu / CS2_3 + 0.5 * cu**2 / CS2_3**2 - 0.5 * u2 / CS2_3)
             cu_o = C3[opp, axis] * u_normal
             feq_opp = (
