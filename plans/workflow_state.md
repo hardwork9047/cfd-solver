@@ -2,5 +2,5 @@ skill: implement
 package: particulate_flow
 issue: 20
 plan-review-preference: proceed
-step: 5 (write tests)
-next: write failing tests in tests/test_lbm3d_inlet.py (inject/advect, removal, phi tracking, DEM3D add/remove)
+step: 6 (implement)
+next: add DEM3D add/remove + left_inlet feed/removal in lbm3d.py
