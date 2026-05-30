@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.17.3] - 2026-05-30
+
+### Added
+
+- Analytical benchmark and grid-convergence verification tests (issue #27, PR #35). New `tests/lbm/test_verification.py` adds: 2D body-force Poiseuille parabola-shape and symmetry checks; `_stokes_drag` unit tests (F = 3πμdΔu exact formula); grid-convergence checks at ny=16/24/32; and 3D pressure-driven plug-flow uniformity regression.
+
+---
+
 ## [0.17.2] - 2026-05-30
 
 ### Fixed
