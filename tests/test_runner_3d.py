@@ -92,8 +92,11 @@ class TestRunner3D:
         out_dir = run_3d(self._tiny_args(tmp_path))
         out_dir = Path(out_dir)
         assert out_dir.is_dir()
+        # Honors output_root: results land under tmp_path, not the repo tree.
+        assert tmp_path in out_dir.parents
         assert (out_dir / "analysis" / "time_series.csv").is_file()
         assert (out_dir / "summary.json").is_file()
+        assert (out_dir / "metadata.json").is_file()
         pv = out_dir / "paraview"
         assert pv.is_dir()
         assert list(pv.glob("*.vtk")), "expected at least one VTK file"

@@ -47,6 +47,13 @@ def build_3d_solver(args: argparse.Namespace) -> LBMDEMSolver3D:
     coupling = getattr(args, "particle_fluid_coupling", "none")
     coupling = "immersed_boundary" if coupling == "immersed_boundary" else "none"
 
+    # The 3D solver only knows "periodic" / "pressure"; map the 2D-style
+    # "periodic-force" alias to "periodic" so a config copied from a 2D case
+    # does not crash deep inside the solver.
+    streamwise = getattr(args, "streamwise_boundary", "pressure")
+    if streamwise == "periodic-force":
+        streamwise = "periodic"
+
     phi = getattr(args, "particle_volume_fraction", None)
     if phi is not None and phi > 1.0:
         phi /= 100.0
@@ -57,7 +64,7 @@ def build_3d_solver(args: argparse.Namespace) -> LBMDEMSolver3D:
         nz=getattr(args, "nz", 1),
         Re=getattr(args, "reynolds_number", 10.0),
         u_max=getattr(args, "u_max", 0.05),
-        streamwise_boundary=getattr(args, "streamwise_boundary", "pressure"),
+        streamwise_boundary=streamwise,
         pressure_drop=getattr(args, "pressure_drop", None) or 0.0,
         rho_out=getattr(args, "rho_out", 1.0),
         cylinders=cylinders,
@@ -73,7 +80,7 @@ def build_3d_solver(args: argparse.Namespace) -> LBMDEMSolver3D:
 
 def _scalar_row(sim: LBMDEMSolver3D, step: int) -> dict[str, float | int]:
     """Return a dimension-agnostic time-series row for the current state."""
-    _, ux, uy, uz = sim.get_fields()
+    rho, ux, uy, uz = sim.get_fields()
     speed = np.sqrt(ux**2 + uy**2 + uz**2)
     n_p = sim.dem.n_p if sim.dem is not None else 0
     if n_p:
@@ -85,7 +92,7 @@ def _scalar_row(sim: LBMDEMSolver3D, step: int) -> dict[str, float | int]:
     return {
         "step": int(step),
         "u_max": float(speed.max()),
-        "rho_mean": float(sim.get_fields()[0].mean()),
+        "rho_mean": float(rho.mean()),
         "particle_count": int(n_p),
         "particle_speed_mean": p_mean,
         "particle_speed_max": p_max,
@@ -197,11 +204,14 @@ def run_3d(args: argparse.Namespace) -> Path:
 
     Builds the solver, optionally warms up, advances in ``snapshot_every`` chunks to
     ``total_steps``, records a scalar time-series, and writes ``analysis/
-    time_series.csv`` + ``.npz``, ``summary.json``, ParaView VTK (fluid + particles +
-    a ``.pvd`` index), and ``run_status.json`` to a timestamped result directory.
+    time_series.csv`` + ``.npz``, ``summary.json``, ``metadata.json``,
+    ``run_status.json``, and ParaView VTK (fluid + particles + a ``.pvd`` index) to a
+    timestamped result directory.
 
     Args:
-        args: Parsed runner namespace (``dimensions == 3``).
+        args: Parsed runner namespace (``dimensions == 3``).  An optional
+            ``output_root`` attribute redirects the result directory (used by tests);
+            otherwise results land under the standard ``results/run_lbm_dem/`` tree.
 
     Returns:
         The result directory path.
@@ -212,7 +222,12 @@ def run_3d(args: argparse.Namespace) -> Path:
     if getattr(args, "result_tag", None):
         tag_parts.append(args.result_tag)
     tag_parts.append(datetime.now().strftime("run_%Y%m%d_%H%M%S_%f"))
-    out_dir = program_results_dir("run_lbm_dem.py", *tag_parts)
+    output_root = getattr(args, "output_root", None)
+    if output_root:
+        out_dir = Path(output_root).joinpath(*tag_parts)
+        out_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        out_dir = program_results_dir("run_lbm_dem.py", *tag_parts)
     paraview_dir = out_dir / "paraview"
     paraview_dir.mkdir(parents=True, exist_ok=True)
     analysis_dir = out_dir / "analysis"
@@ -284,6 +299,22 @@ def run_3d(args: argparse.Namespace) -> Path:
         "created_at": datetime.now().isoformat(timespec="seconds"),
     }
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+
+    # Metadata (reproducibility): grid, physics, and the resolved solver config.
+    metadata = {
+        "dimensions": 3,
+        "grid": [sim.nx, sim.ny, sim.nz],
+        "reynolds_number": float(getattr(args, "reynolds_number", 0.0)),
+        "u_max": float(getattr(args, "u_max", 0.0)),
+        "pressure_drop": float(getattr(args, "pressure_drop", 0.0) or 0.0),
+        "streamwise_boundary": sim.streamwise_boundary,
+        "particle_source": sim.particle_source,
+        "particle_radius": float(getattr(args, "particle_radius", 0.0)),
+        "density_ratio": float(getattr(args, "density_ratio", 0.0)),
+        "n_cylinders": len(sim.cylinders),
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    (out_dir / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
     (out_dir / "run_status.json").write_text(
         json.dumps({"status": "completed", "dimensions": 3}, indent=2),
