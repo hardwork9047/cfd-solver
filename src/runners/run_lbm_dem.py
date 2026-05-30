@@ -307,6 +307,17 @@ if args.cyl_r <= 0.0:
     parser.error("--cyl-r must be positive")
 
 # ---------------------------------------------------------------------------
+# 3D dispatch (issue #15): the 2D pipeline below assumes the D2Q9 FastLBMDEM.
+# For dimensions=3, hand off to the streamlined 3D runner and exit before any
+# 2D-specific module-level setup runs.
+# ---------------------------------------------------------------------------
+if getattr(args, "dimensions", 2) == 3:
+    from particulate_flow.runner3d import run_3d
+
+    run_3d(args)
+    sys.exit(0)
+
+# ---------------------------------------------------------------------------
 # シミュレーション設定
 # ---------------------------------------------------------------------------
 

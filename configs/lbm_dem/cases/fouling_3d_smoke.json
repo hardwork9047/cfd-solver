@@ -1,0 +1,19 @@
+{
+  "extends": ["../templates/fouling_supply_3d.json"],
+  "name": "fouling_3d_smoke",
+  "description": "Tiny 3D fouling smoke case: extends fouling_supply_3d with a small grid and few steps for a quick end-to-end check.",
+  "domain": {
+    "nx": 24,
+    "ny": 12,
+    "nz": 12,
+    "dimensions": 3
+  },
+  "runtime": {
+    "total_steps": 20,
+    "warmup_steps": 5,
+    "snapshot_every": 10
+  },
+  "outputs": {
+    "result_tag": "smoke3d"
+  }
+}

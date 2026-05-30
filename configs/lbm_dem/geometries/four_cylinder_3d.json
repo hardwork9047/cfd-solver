@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "name": "four_cylinder_3d",
+  "description": "Four z-aligned finite cylinders (full depth) as a simple 3D membrane-pore geometry, sized for the fouling_supply_3d domain (nx=48, ny=24).",
+  "geometry": {
+    "cylinders": [
+      {"x": 20, "y": 8, "radius": 3.0},
+      {"x": 20, "y": 16, "radius": 3.0},
+      {"x": 28, "y": 8, "radius": 3.0},
+      {"x": 28, "y": 16, "radius": 3.0}
+    ]
+  }
+}
