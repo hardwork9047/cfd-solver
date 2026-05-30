@@ -140,6 +140,13 @@ class LBMDEMSolver:
     particle_search   : str — ``"cell_list"`` or ``"all_pairs"``.
                         ``"cell_list"`` is the scalable DEM neighbourhood
                         search used for production runs.
+    init_analytical   : bool — when ``True`` and ``le_shear_rate != 0``, initialise
+                        ``f`` from the analytical linear Lees-Edwards shear profile
+                        ``ux = le_shear_rate·(y − (ny−1)/2)`` (mirrors
+                        ``LBMDEMSolver3D``).  The LE boundary correction maintains
+                        it; a pure-shear run from rest never develops it.  Has no
+                        effect when ``le_shear_rate == 0`` (the profile would be
+                        all-zeros anyway).  Default ``False`` keeps rest init.
     """
 
     def __init__(
