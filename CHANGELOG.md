@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.17.1] - 2026-05-30
+
+### Fixed
+
+- 2D Lees-Edwards shear flow now maintains the analytical linear profile `u_x = γ̇·y` (issue #31, PR #32). Three layered causes: the validation test drove a body force (`u_max>0` with `periodic_force`) that produced a plug flow swamping the shear; the 2D solver had no `init_analytical` option so a pure-shear run never formed the profile from rest; and `_apply_le_streaming_correction` was missing the velocity-jump boost (`f_i += w_i·ρ·c_x·(±dv)/cs²`) that the 3D path already had, so the interior slope decayed ~6.5%. Added `init_analytical` to `LBMDEMSolver` (mirroring `LBMDEMSolver3D`) and the LE velocity boost; the maintained profile is now exact (L2 ≈ 0).
+- `pytest.ini` used a `[tool:pytest]` section header (valid only in `setup.cfg`), so pytest silently ignored the entire file — the `slow`/`integration` markers were unregistered and `--strict-markers` was not enforced. Fixed the header to `[pytest]` and consolidated `--import-mode=importlib` (previously the only active pytest config, in `pyproject.toml`) into `pytest.ini` as the single source of truth.
+
+---
+
 ## [0.17.0] - 2026-05-29
 
 ### Changed
