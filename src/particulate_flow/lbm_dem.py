@@ -1073,6 +1073,8 @@ class LBMDEMSolver:
                 W,
                 self._opposite,
             )
+            if self.y_boundary == "lees_edwards":
+                self._apply_le_streaming_correction()
             self._apply_pressure_boundaries()
             return
 
