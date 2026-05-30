@@ -18,13 +18,22 @@ def _le_sim(
     n_particles: int = 0,
     interpolation_order: int = 3,
     particle_fluid_coupling: str = "point_force",
+    u_max: float | None = None,
+    init_analytical: bool = False,
 ) -> FastLBMDEM:
-    """Build a minimal Lees-Edwards shear-flow simulation."""
+    """Build a minimal Lees-Edwards shear-flow simulation.
+
+    For a *pure* shear validation, pass ``u_max=0.0`` so the ``periodic_force``
+    streamwise mode derives no body force (``F_drive=0``) — otherwise a plug flow
+    toward ``u_max`` swamps the shear signal.  ``init_analytical=True`` seeds the
+    distribution from the analytical linear profile (mirroring the 3D solver), which
+    the LE boundary correction then maintains.
+    """
     return FastLBMDEM(
         nx=nx,
         ny=ny,
         Re=1.0,
-        u_max=shear_rate * ny / 2.0,
+        u_max=(shear_rate * ny / 2.0) if u_max is None else u_max,
         n_particles=n_particles,
         particle_radius=2.0,
         gravity=0.0,
@@ -37,6 +46,7 @@ def _le_sim(
         particle_fluid_coupling=particle_fluid_coupling,
         pressure_drop=0.0,
         fluid_accelerator="numpy",
+        init_analytical=init_analytical,
         seed=42,
     )
 
@@ -47,21 +57,36 @@ def _le_sim(
 
 @pytest.mark.slow
 def test_le_linear_shear_profile():
-    """Steady-state velocity field should match u_x = γ̇·y with L2 error < 1%."""
+    """Lees-Edwards shear maintains the analytical linear profile u_x = γ̇·y.
+
+    Pure shear: ``u_max=0`` so no body force drives a plug flow, and
+    ``init_analytical=True`` seeds the linear profile (mirroring the 3D LE test).
+    The LE boundary correction must hold it to L2 error < 1% with zero bulk offset.
+    """
     shear_rate = 5e-4
     ny = 32
-    sim = _le_sim(shear_rate=shear_rate, ny=ny)
+    sim = _le_sim(shear_rate=shear_rate, ny=ny, u_max=0.0, init_analytical=True)
 
     sim.advance(5000)
 
     _, ux, _ = sim.get_fields()
     y = np.arange(ny)
     expected = shear_rate * (y - (ny - 1) / 2.0)
-    # Average over x
+    # Average over x.
     ux_mean = np.mean(ux, axis=0)
     scale = float(np.max(np.abs(expected))) or 1.0
     l2_err = float(np.sqrt(np.mean((ux_mean - expected) ** 2))) / scale
     assert l2_err < 0.01, f"L2 error {l2_err:.4f} exceeds 1% threshold"
+    # No plug-flow contamination: the bulk-mean velocity stays ~0 (pure shear).
+    assert abs(float(ux_mean.mean())) < 1e-4, "unexpected bulk velocity offset (body force?)"
+
+
+def test_le_default_init_is_rest():
+    """Without init_analytical the 2D solver still initialises from rest (opt-in)."""
+    sim = _le_sim(u_max=0.0, init_analytical=False)
+    _, ux, uy = sim.get_fields()
+    np.testing.assert_allclose(ux, 0.0, atol=1e-12)
+    np.testing.assert_allclose(uy, 0.0, atol=1e-12)
 
 
 # ---------------------------------------------------------------------------
