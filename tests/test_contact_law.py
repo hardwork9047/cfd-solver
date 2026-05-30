@@ -11,6 +11,7 @@ Acceptance scenarios:
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from particulate_flow.dem.contact_law import ContactLaw
 
@@ -90,7 +91,7 @@ class TestStandaloneContactLaw:
 
 
 class TestDelegationEquivalence:
-    def _solver_and_law(self):
+    def _solver_and_law(self, contact_model="dem-hertz"):
         from particulate_flow import LBMDEMSolver
         from particulate_flow.dem.solver import DEMSolver
 
@@ -110,10 +111,22 @@ class TestDelegationEquivalence:
             tangential_damping=0.35,
             rolling_friction_coeff=0.06,
             rolling_damping=0.25,
+            particle_method=contact_model,
             seed=1,
         )
-        dem = DEMSolver(sim, contact_model="dem-hertz")
-        law = ContactLaw.from_solver(sim)
+        dem = DEMSolver(sim, contact_model=contact_model)
+        # Reference law built with the DEMSolver's own contact_model (matching how
+        # DEMSolver builds its internal law).
+        law = ContactLaw(
+            contact_model=contact_model,
+            k_n=sim.k_n,
+            damping=sim.damping,
+            sliding_friction=sim.sliding_friction,
+            tangential_damping=sim.tangential_damping,
+            rolling_friction=sim.rolling_friction,
+            rolling_friction_coeff=sim.rolling_friction_coeff,
+            rolling_damping=sim.rolling_damping,
+        )
         return dem, law
 
     def test_from_solver_reads_params(self):
@@ -122,8 +135,9 @@ class TestDelegationEquivalence:
         assert law.sliding_friction == 0.4
         assert law.rolling_friction_coeff == 0.06
 
-    def test_normal_matches(self):
-        dem, law = self._solver_and_law()
+    @pytest.mark.parametrize("model", ["dem-hertz", "dem-linear"])
+    def test_normal_matches(self, model):
+        dem, law = self._solver_and_law(model)
         for overlap, v_n, mass in [(0.5, 0.0, 1.0), (0.2, -0.1, 2.0), (0.01, 5.0, 0.5)]:
             assert dem.normal_contact_magnitude(overlap, v_n, mass) == law.normal_magnitude(
                 overlap, v_n, mass

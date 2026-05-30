@@ -53,20 +53,32 @@ class ContactLaw:
 
     @classmethod
     def from_solver(cls, sim) -> ContactLaw:
-        """Build a :class:`ContactLaw` from any object exposing the 8 parameters.
+        """Build a :class:`ContactLaw` from an object exposing the material params.
+
+        Reads the seven scalar material attributes (``k_n, damping,
+        sliding_friction, tangential_damping, rolling_friction,
+        rolling_friction_coeff, rolling_damping``) off ``sim``.  The contact model
+        is taken from ``sim.contact_model`` if present, else ``sim.particle_method``
+        (which is where ``LBMDEMSolver`` stores it), else ``"dem-hertz"``.
+
+        Note:
+            ``DEMSolver`` does not use this constructor — it builds ``ContactLaw``
+            directly so the contact model comes from its own constructor argument,
+            which may differ from the coupled solver's.  ``from_solver`` is a
+            convenience for callers that want the law a solver actually uses.
 
         Args:
-            sim: An object (typically the LBM-DEM solver) with ``contact_model``-less
-                material attributes ``k_n, damping, sliding_friction,
-                tangential_damping, rolling_friction, rolling_friction_coeff,
-                rolling_damping``.  ``contact_model`` is read if present, else
-                defaults to ``"dem-hertz"``.
+            sim: An object carrying the material parameters (typically the LBM-DEM
+                solver).
 
         Returns:
             A frozen ``ContactLaw`` carrying those parameter values.
         """
+        contact_model = getattr(sim, "contact_model", None) or getattr(
+            sim, "particle_method", "dem-hertz"
+        )
         return cls(
-            contact_model=getattr(sim, "contact_model", "dem-hertz"),
+            contact_model=contact_model,
             k_n=sim.k_n,
             damping=sim.damping,
             sliding_friction=sim.sliding_friction,
