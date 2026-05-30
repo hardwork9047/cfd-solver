@@ -6,6 +6,8 @@ from typing import Callable
 
 import numpy as np
 
+from particulate_flow.dem.contact_law import ContactLaw
+
 PARTICLE_METHODS = ("dem-hertz", "dem-linear")
 
 try:  # Optional acceleration for particle-boundary contacts.
@@ -70,7 +72,9 @@ if njit is not None:  # pragma: no cover - exercised when numba is installed
                     forces[i, 0] += f_t * tx
                     forces[i, 1] += f_t * ty
                     torques[i] -= radii[i] * f_t
-                    torque_trial = -rolling_damping * (k_n * masses[i]) ** 0.5 * radii[i] ** 2 * omega_p[i]
+                    torque_trial = (
+                        -rolling_damping * (k_n * masses[i]) ** 0.5 * radii[i] ** 2 * omega_p[i]
+                    )
                     torque_limit = rolling_friction_coeff * f_mag * radii[i]
                     torques[i] += min(max(torque_trial, -torque_limit), torque_limit)
 
@@ -95,7 +99,9 @@ if njit is not None:  # pragma: no cover - exercised when numba is installed
                     forces[i, 0] += f_t * tx
                     forces[i, 1] += f_t * ty
                     torques[i] -= radii[i] * f_t
-                    torque_trial = -rolling_damping * (k_n * masses[i]) ** 0.5 * radii[i] ** 2 * omega_p[i]
+                    torque_trial = (
+                        -rolling_damping * (k_n * masses[i]) ** 0.5 * radii[i] ** 2 * omega_p[i]
+                    )
                     torque_limit = rolling_friction_coeff * f_mag * radii[i]
                     torques[i] += min(max(torque_trial, -torque_limit), torque_limit)
 
@@ -129,7 +135,12 @@ if njit is not None:  # pragma: no cover - exercised when numba is installed
                             forces[i, 0] += f_t * tx
                             forces[i, 1] += f_t * ty
                             torques[i] -= radii[i] * f_t
-                            torque_trial = -rolling_damping * (k_n * masses[i]) ** 0.5 * radii[i] ** 2 * omega_p[i]
+                            torque_trial = (
+                                -rolling_damping
+                                * (k_n * masses[i]) ** 0.5
+                                * radii[i] ** 2
+                                * omega_p[i]
+                            )
                             torque_limit = rolling_friction_coeff * f_mag * radii[i]
                             torques[i] += min(max(torque_trial, -torque_limit), torque_limit)
 
@@ -181,6 +192,19 @@ class DEMSolver:
         self.sim = coupled_solver
         self.pair_kernel = pair_kernel
         self.contact_model = contact_model
+        # Fluid-independent contact-law core (issue #26). Carries this solver's
+        # contact_model + the coupled solver's material params so the delegated
+        # magnitudes are bit-identical to the previous inline formulas.
+        self._contact_law = ContactLaw(
+            contact_model=contact_model,
+            k_n=coupled_solver.k_n,
+            damping=coupled_solver.damping,
+            sliding_friction=coupled_solver.sliding_friction,
+            tangential_damping=coupled_solver.tangential_damping,
+            rolling_friction=coupled_solver.rolling_friction,
+            rolling_friction_coeff=coupled_solver.rolling_friction_coeff,
+            rolling_damping=coupled_solver.rolling_damping,
+        )
 
     @staticmethod
     def tangent_from_normal(nx_: float, ny_: float) -> np.ndarray:
@@ -188,14 +212,11 @@ class DEMSolver:
         return np.array([-ny_, nx_])
 
     def normal_contact_magnitude(self, overlap: float, v_n: float, mass: float) -> float:
-        """Normal contact force with damping, clamped to avoid artificial tension."""
-        sim = self.sim
-        if self.contact_model == "dem-linear":
-            f_n = sim.k_n * overlap
-        else:
-            f_n = sim.k_n * overlap**1.5
-        f_damp = -sim.damping * v_n * float(np.sqrt(sim.k_n * mass))
-        return max(f_n + f_damp, 0.0)
+        """Normal contact force with damping, clamped to avoid artificial tension.
+
+        Delegates to :class:`ContactLaw` (issue #26); behaviour is unchanged.
+        """
+        return self._contact_law.normal_magnitude(overlap, v_n, mass)
 
     def tangential_force_magnitude(
         self,
@@ -203,13 +224,11 @@ class DEMSolver:
         normal_force: float,
         mass: float,
     ) -> float:
-        """Coulomb-limited tangential force opposing slip at a contact."""
-        sim = self.sim
-        if not sim.rolling_friction or normal_force <= 0.0:
-            return 0.0
-        f_trial = -sim.tangential_damping * float(np.sqrt(sim.k_n * mass)) * v_t
-        f_limit = sim.sliding_friction * normal_force
-        return float(np.clip(f_trial, -f_limit, f_limit))
+        """Coulomb-limited tangential force opposing slip at a contact.
+
+        Delegates to :class:`ContactLaw` (issue #26); behaviour is unchanged.
+        """
+        return self._contact_law.tangential_magnitude(v_t, normal_force, mass)
 
     def rolling_resistance_torque(
         self,
@@ -218,18 +237,11 @@ class DEMSolver:
         radius: float,
         mass: float,
     ) -> float:
-        """Coulomb-limited rolling resistance torque opposing angular velocity."""
-        sim = self.sim
-        if not sim.rolling_friction or normal_force <= 0.0:
-            return 0.0
-        torque_trial = (
-            -sim.rolling_damping
-            * float(np.sqrt(sim.k_n * mass))
-            * radius**2
-            * omega
-        )
-        torque_limit = sim.rolling_friction_coeff * normal_force * radius
-        return float(np.clip(torque_trial, -torque_limit, torque_limit))
+        """Coulomb-limited rolling resistance torque opposing angular velocity.
+
+        Delegates to :class:`ContactLaw` (issue #26); behaviour is unchanged.
+        """
+        return self._contact_law.rolling_torque(omega, normal_force, radius, mass)
 
     def compute_loads(self, dt_sub: float) -> tuple[np.ndarray, np.ndarray]:
         """Compute total DEM force and torque on every active particle."""

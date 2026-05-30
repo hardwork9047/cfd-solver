@@ -64,9 +64,7 @@ class TestStandaloneContactLaw:
     def test_tangential_zero_without_contact_or_rolling(self):
         assert _law().tangential_magnitude(v_t=1.0, normal_force=0.0, mass=1.0) == 0.0
         assert (
-            _law(rolling_friction=False).tangential_magnitude(
-                v_t=1.0, normal_force=10.0, mass=1.0
-            )
+            _law(rolling_friction=False).tangential_magnitude(v_t=1.0, normal_force=10.0, mass=1.0)
             == 0.0
         )
 
@@ -134,16 +132,16 @@ class TestDelegationEquivalence:
     def test_tangential_matches(self):
         dem, law = self._solver_and_law()
         for v_t, f_n, mass in [(0.1, 5.0, 1.0), (10.0, 2.0, 0.5), (0.0, 0.0, 1.0)]:
-            assert dem.tangential_force_magnitude(
+            assert dem.tangential_force_magnitude(v_t, f_n, mass) == law.tangential_magnitude(
                 v_t, f_n, mass
-            ) == law.tangential_magnitude(v_t, f_n, mass)
+            )
 
     def test_rolling_matches(self):
         dem, law = self._solver_and_law()
         for omega, f_n, r, mass in [(0.1, 5.0, 2.0, 1.0), (100.0, 3.0, 1.5, 0.5)]:
-            assert dem.rolling_resistance_torque(
+            assert dem.rolling_resistance_torque(omega, f_n, r, mass) == law.rolling_torque(
                 omega, f_n, r, mass
-            ) == law.rolling_torque(omega, f_n, r, mass)
+            )
 
 
 # ---------------------------------------------------------------------------
