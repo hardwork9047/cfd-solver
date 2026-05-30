@@ -4,7 +4,7 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
 name = "cfd-solver"
-version = "0.17.0"
+version = "0.17.1"
 description = "Particulate-flow simulation toolkit with LBM-DEM coupling."
 readme = "README.md"
 license = "MIT"
@@ -69,8 +69,8 @@ extend-exclude = '''
 )
 '''
 
-[tool.pytest.ini_options]
-addopts = "--import-mode=importlib"
+# Pytest configuration lives in pytest.ini (single source of truth). The
+# --import-mode=importlib setting was migrated there.
 
 [tool.ruff]
 line-length = 100

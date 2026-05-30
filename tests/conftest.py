@@ -1,6 +1,6 @@
 """Shared pytest configuration for local source-tree imports.
 
-NOTE: This test suite requires ``--import-mode=importlib`` (set in pyproject.toml).
+NOTE: This test suite requires ``--import-mode=importlib`` (set in pytest.ini).
 Test subdirectories intentionally omit ``__init__.py`` to avoid shadowing stdlib
 modules (e.g. ``tests/io/`` would shadow the built-in ``io`` package with the
 default prepend import mode).

@@ -140,6 +140,13 @@ class LBMDEMSolver:
     particle_search   : str — ``"cell_list"`` or ``"all_pairs"``.
                         ``"cell_list"`` is the scalable DEM neighbourhood
                         search used for production runs.
+    init_analytical   : bool — when ``True`` and ``le_shear_rate != 0``, initialise
+                        ``f`` from the analytical linear Lees-Edwards shear profile
+                        ``ux = le_shear_rate·(y − (ny−1)/2)`` (mirrors
+                        ``LBMDEMSolver3D``).  The LE boundary correction maintains
+                        it; a pure-shear run from rest never develops it.  Has no
+                        effect when ``le_shear_rate == 0`` (the profile would be
+                        all-zeros anyway).  Default ``False`` keeps rest init.
     """
 
     def __init__(
@@ -190,7 +197,9 @@ class LBMDEMSolver:
         porous_resistance_coeff: float = 0.0,
         geometry: PoreGeometry | None = None,
         cylinder: tuple | None = None,
-        cylinders: list[tuple[float, float, float]] | tuple[tuple[float, float, float], ...] | None = None,
+        cylinders: (
+            list[tuple[float, float, float]] | tuple[tuple[float, float, float], ...] | None
+        ) = None,
         particle_source: str = "initial",
         source_volume_fraction: float | None = None,
         le_shear_rate: float = 0.0,
@@ -198,6 +207,7 @@ class LBMDEMSolver:
         le_boundary_axis: int = 1,
         le_interpolation_order: int = 3,
         surface_roughness: float = 0.0,
+        init_analytical: bool = False,
     ):
         if particle_attraction and particle_repulsion:
             raise ValueError("particle_attraction and particle_repulsion are mutually exclusive")
@@ -418,15 +428,19 @@ class LBMDEMSolver:
 
         # --- LBM distribution functions f[q, x, y] ---
         rho0 = np.ones((nx, ny))
-        self.f = _equilibrium(rho0, np.zeros((nx, ny)), np.zeros((nx, ny)))
-        self._stream_x_src = [
-            (np.arange(nx) - int(C[i, 0])) % nx
-            for i in range(Q)
-        ]
-        self._stream_y_src = [
-            (np.arange(ny) - int(C[i, 1])) % ny
-            for i in range(Q)
-        ]
+        if init_analytical and le_shear_rate != 0.0:
+            # Seed the analytical linear Lees-Edwards shear profile
+            # ux = γ̇·(y − (ny−1)/2), mirroring LBMDEMSolver3D.  The LE boundary
+            # correction maintains it; without this seed a pure-shear run started
+            # from rest never develops the profile.
+            y = np.arange(ny, dtype=float)
+            ux0 = le_shear_rate * (y - (ny - 1) / 2.0)
+            ux_field = np.broadcast_to(ux0[np.newaxis, :], (nx, ny)).copy()
+            self.f = _equilibrium(rho0, ux_field, np.zeros((nx, ny)))
+        else:
+            self.f = _equilibrium(rho0, np.zeros((nx, ny)), np.zeros((nx, ny)))
+        self._stream_x_src = [(np.arange(nx) - int(C[i, 0])) % nx for i in range(Q)]
+        self._stream_y_src = [(np.arange(ny) - int(C[i, 1])) % ny for i in range(Q)]
 
         # Solid nodes: optional top/bottom walls and fixed cylinders.  Moving particle
         # solids are overlaid in solid-boundary coupling mode.
@@ -772,7 +786,11 @@ class LBMDEMSolver:
         """Return lattice cells covered by DEM particles, excluding fixed solids."""
         if self.n_p == 0:
             return np.zeros_like(self.fixed_solid)
-        if self.uses_numba_compute and _particle_solid_mask_numba is not None and self.y_boundary not in ("periodic", "lees_edwards"):
+        if (
+            self.uses_numba_compute
+            and _particle_solid_mask_numba is not None
+            and self.y_boundary not in ("periodic", "lees_edwards")
+        ):
             particle_solid = _particle_solid_mask_numba(
                 self.pos,
                 self.radii,
@@ -840,9 +858,15 @@ class LBMDEMSolver:
         return {
             "observed_reynolds_number": float(u_ref * l_ref / nu),
             "particle_reynolds_number": float(u_ref * particle_diameter / nu),
-            "stokes_number_estimate": float(self.density_ratio * particle_diameter**2 * u_ref / (18.0 * nu * l_ref)),
+            "stokes_number_estimate": float(
+                self.density_ratio * particle_diameter**2 * u_ref / (18.0 * nu * l_ref)
+            ),
             "particle_to_length_ratio": float(particle_diameter / l_ref),
-            "brinkman_resistance_number": float(self.porous_resistance_coeff * l_ref**2 / nu) if self.porous_resistance else 0.0,
+            "brinkman_resistance_number": (
+                float(self.porous_resistance_coeff * l_ref**2 / nu)
+                if self.porous_resistance
+                else 0.0
+            ),
         }
 
     # ------------------------------------------------------------------
@@ -939,6 +963,7 @@ class LBMDEMSolver:
         # Third-order cubic interpolation with periodic boundary via scipy
         try:
             from scipy.ndimage import map_coordinates
+
             x_dst = (np.arange(nx, dtype=float) - frac) % nx
             return map_coordinates(rolled, [x_dst], order=3, mode="wrap")
         except ImportError:
@@ -966,14 +991,33 @@ class LBMDEMSolver:
             self.vel[crossed_bot, 0] += dv
 
     def _apply_le_streaming_correction(self) -> None:
-        """Apply Lees-Edwards x-shift to populations that just crossed the y boundary."""
+        """Apply the Lees-Edwards correction to populations that crossed the y boundary.
+
+        Two corrections are applied (matching the 3-D ``_apply_le_bc``):
+
+        1. **Fractional x-shift** — populations are rolled by ±``_le_shift`` to
+           account for the accumulated relative displacement of the image boxes.
+        2. **Velocity boost** — top-crossers entered from the upper image box
+           (frame velocity +dv) so they receive a boost of -dv; bottom-crossers
+           (from the lower image box at -dv) receive +dv, via the first-order
+           expansion ``Δf_i = w_i · ρ · c_ix · (±dv) / cs²``.  Without this boost the
+           interior shear slope slowly relaxes (the profile is not maintained).
+        """
         shift = self._le_shift
-        # Directions crossing top boundary (cy > 0) land in y=0 after streaming
+        dv = self.le_shear_rate * self.ny  # velocity jump across the domain height
+
+        # Top crossers (cy > 0) land at y=0 after streaming; entered from +dv frame.
+        rho_top = self.f[:, :, 0].sum(axis=0)
         for i in LE_TOP_CROSS_DIRS:
             self.f[i, :, 0] = self._fractional_roll_x(self.f[i, :, 0], shift)
-        # Directions crossing bottom boundary (cy < 0) land in y=ny-1 after streaming
+            self.f[i, :, 0] += W[i] * rho_top * C[i, 0] * (-dv) / CS2
+
+        # Bottom crossers (cy < 0) land at y=ny-1 after streaming; entered from -dv frame.
+        yn = self.ny - 1
+        rho_bot = self.f[:, :, yn].sum(axis=0)
         for i in LE_BOT_CROSS_DIRS:
-            self.f[i, :, self.ny - 1] = self._fractional_roll_x(self.f[i, :, self.ny - 1], -shift)
+            self.f[i, :, yn] = self._fractional_roll_x(self.f[i, :, yn], -shift)
+            self.f[i, :, yn] += W[i] * rho_bot * C[i, 0] * dv / CS2
 
     def _trt_omega_minus(self) -> float:
         """Return the odd-mode TRT relaxation rate from the magic parameter."""
@@ -1475,12 +1519,7 @@ class LBMDEMSolver:
         """Coulomb-limited rolling resistance torque opposing angular velocity."""
         if not self.rolling_friction or normal_force <= 0.0:
             return 0.0
-        torque_trial = (
-            -self.rolling_damping
-            * float(np.sqrt(self.k_n * mass))
-            * radius**2
-            * omega
-        )
+        torque_trial = -self.rolling_damping * float(np.sqrt(self.k_n * mass)) * radius**2 * omega
         torque_limit = self.rolling_friction_coeff * normal_force * radius
         return float(np.clip(torque_trial, -torque_limit, torque_limit))
 

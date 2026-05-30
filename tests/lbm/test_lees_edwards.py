@@ -11,6 +11,7 @@ from particulate_flow import FastLBMDEM
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _le_sim(
     nx: int = 48,
     ny: int = 32,
@@ -18,13 +19,22 @@ def _le_sim(
     n_particles: int = 0,
     interpolation_order: int = 3,
     particle_fluid_coupling: str = "point_force",
+    u_max: float | None = None,
+    init_analytical: bool = False,
 ) -> FastLBMDEM:
-    """Build a minimal Lees-Edwards shear-flow simulation."""
+    """Build a minimal Lees-Edwards shear-flow simulation.
+
+    For a *pure* shear validation, pass ``u_max=0.0`` so the ``periodic_force``
+    streamwise mode derives no body force (``F_drive=0``) — otherwise a plug flow
+    toward ``u_max`` swamps the shear signal.  ``init_analytical=True`` seeds the
+    distribution from the analytical linear profile (mirroring the 3D solver), which
+    the LE boundary correction then maintains.
+    """
     return FastLBMDEM(
         nx=nx,
         ny=ny,
         Re=1.0,
-        u_max=shear_rate * ny / 2.0,
+        u_max=(shear_rate * ny / 2.0) if u_max is None else u_max,
         n_particles=n_particles,
         particle_radius=2.0,
         gravity=0.0,
@@ -37,6 +47,7 @@ def _le_sim(
         particle_fluid_coupling=particle_fluid_coupling,
         pressure_drop=0.0,
         fluid_accelerator="numpy",
+        init_analytical=init_analytical,
         seed=42,
     )
 
@@ -45,28 +56,45 @@ def _le_sim(
 # Acceptance scenario 1: linear velocity profile u_x = γ̇·y after steady state
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.slow
 def test_le_linear_shear_profile():
-    """Steady-state velocity field should match u_x = γ̇·y with L2 error < 1%."""
+    """Lees-Edwards shear maintains the analytical linear profile u_x = γ̇·y.
+
+    Pure shear: ``u_max=0`` so no body force drives a plug flow, and
+    ``init_analytical=True`` seeds the linear profile (mirroring the 3D LE test).
+    The LE boundary correction must hold it to L2 error < 1% with zero bulk offset.
+    """
     shear_rate = 5e-4
     ny = 32
-    sim = _le_sim(shear_rate=shear_rate, ny=ny)
+    sim = _le_sim(shear_rate=shear_rate, ny=ny, u_max=0.0, init_analytical=True)
 
     sim.advance(5000)
 
     _, ux, _ = sim.get_fields()
     y = np.arange(ny)
     expected = shear_rate * (y - (ny - 1) / 2.0)
-    # Average over x
+    # Average over x.
     ux_mean = np.mean(ux, axis=0)
     scale = float(np.max(np.abs(expected))) or 1.0
     l2_err = float(np.sqrt(np.mean((ux_mean - expected) ** 2))) / scale
     assert l2_err < 0.01, f"L2 error {l2_err:.4f} exceeds 1% threshold"
+    # No plug-flow contamination: the bulk-mean velocity stays ~0 (pure shear).
+    assert abs(float(ux_mean.mean())) < 1e-4, "unexpected bulk velocity offset (body force?)"
+
+
+def test_le_default_init_is_rest():
+    """Without init_analytical the 2D solver still initialises from rest (opt-in)."""
+    sim = _le_sim(u_max=0.0, init_analytical=False)
+    _, ux, uy = sim.get_fields()
+    np.testing.assert_allclose(ux, 0.0, atol=1e-12)
+    np.testing.assert_allclose(uy, 0.0, atol=1e-12)
 
 
 # ---------------------------------------------------------------------------
 # Acceptance scenario 2: shear_axis / boundary_axis configurability
 # ---------------------------------------------------------------------------
+
 
 def test_le_axis_configuration():
     """Non-default shear_axis and boundary_axis should be stored without error."""
@@ -98,6 +126,7 @@ def test_le_axis_configuration():
 # Acceptance scenario 3: interpolation_order 1 and 3
 # ---------------------------------------------------------------------------
 
+
 def test_le_interpolation_order_toggle():
     """Both interpolation_order=1 and 3 should run and produce finite fields."""
     for order in (1, 3):
@@ -111,6 +140,7 @@ def test_le_interpolation_order_toggle():
 # Acceptance scenario 4: iSP coupling mode selectable
 # ---------------------------------------------------------------------------
 
+
 def test_isp_coupling_selectable():
     """particle_fluid_coupling='isp' should be accepted without ValueError."""
     sim = _le_sim(n_particles=3, particle_fluid_coupling="isp")
@@ -123,6 +153,7 @@ def test_isp_coupling_selectable():
 # ---------------------------------------------------------------------------
 # Acceptance scenario 5: particle wrap across LE boundary (unit test)
 # ---------------------------------------------------------------------------
+
 
 def test_le_particle_wrapping_position():
     """Particle crossing y=ny boundary should have x wrapped by le_shift."""
@@ -149,9 +180,9 @@ def test_le_particle_wrapping_position():
 
     # x should be shifted by -known_shift (mod nx) when crossing top boundary
     expected_x = (x_before - known_shift) % sim.nx
-    assert abs(x_after - expected_x) < 0.5, (
-        f"x_after={x_after:.4f} expected≈{expected_x:.4f} (shift={known_shift})"
-    )
+    assert (
+        abs(x_after - expected_x) < 0.5
+    ), f"x_after={x_after:.4f} expected≈{expected_x:.4f} (shift={known_shift})"
 
 
 def test_le_particle_wrapping_velocity():
@@ -181,6 +212,7 @@ def test_le_particle_wrapping_velocity():
 # ---------------------------------------------------------------------------
 # Acceptance scenario 6: existing fouling tests still pass
 # ---------------------------------------------------------------------------
+
 
 def test_existing_periodic_y_still_works():
     """Existing periodic y_boundary mode unchanged after LE addition."""
