@@ -11,6 +11,7 @@ from particulate_flow import FastLBMDEM
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _le_sim(
     nx: int = 48,
     ny: int = 32,
@@ -55,6 +56,7 @@ def _le_sim(
 # Acceptance scenario 1: linear velocity profile u_x = γ̇·y after steady state
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.slow
 def test_le_linear_shear_profile():
     """Lees-Edwards shear maintains the analytical linear profile u_x = γ̇·y.
@@ -93,6 +95,7 @@ def test_le_default_init_is_rest():
 # Acceptance scenario 2: shear_axis / boundary_axis configurability
 # ---------------------------------------------------------------------------
 
+
 def test_le_axis_configuration():
     """Non-default shear_axis and boundary_axis should be stored without error."""
     sim = FastLBMDEM(
@@ -123,6 +126,7 @@ def test_le_axis_configuration():
 # Acceptance scenario 3: interpolation_order 1 and 3
 # ---------------------------------------------------------------------------
 
+
 def test_le_interpolation_order_toggle():
     """Both interpolation_order=1 and 3 should run and produce finite fields."""
     for order in (1, 3):
@@ -136,6 +140,7 @@ def test_le_interpolation_order_toggle():
 # Acceptance scenario 4: iSP coupling mode selectable
 # ---------------------------------------------------------------------------
 
+
 def test_isp_coupling_selectable():
     """particle_fluid_coupling='isp' should be accepted without ValueError."""
     sim = _le_sim(n_particles=3, particle_fluid_coupling="isp")
@@ -148,6 +153,7 @@ def test_isp_coupling_selectable():
 # ---------------------------------------------------------------------------
 # Acceptance scenario 5: particle wrap across LE boundary (unit test)
 # ---------------------------------------------------------------------------
+
 
 def test_le_particle_wrapping_position():
     """Particle crossing y=ny boundary should have x wrapped by le_shift."""
@@ -174,9 +180,9 @@ def test_le_particle_wrapping_position():
 
     # x should be shifted by -known_shift (mod nx) when crossing top boundary
     expected_x = (x_before - known_shift) % sim.nx
-    assert abs(x_after - expected_x) < 0.5, (
-        f"x_after={x_after:.4f} expected≈{expected_x:.4f} (shift={known_shift})"
-    )
+    assert (
+        abs(x_after - expected_x) < 0.5
+    ), f"x_after={x_after:.4f} expected≈{expected_x:.4f} (shift={known_shift})"
 
 
 def test_le_particle_wrapping_velocity():
@@ -206,6 +212,7 @@ def test_le_particle_wrapping_velocity():
 # ---------------------------------------------------------------------------
 # Acceptance scenario 6: existing fouling tests still pass
 # ---------------------------------------------------------------------------
+
 
 def test_existing_periodic_y_still_works():
     """Existing periodic y_boundary mode unchanged after LE addition."""

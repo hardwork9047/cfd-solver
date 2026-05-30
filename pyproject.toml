@@ -69,8 +69,8 @@ extend-exclude = '''
 )
 '''
 
-[tool.pytest.ini_options]
-addopts = "--import-mode=importlib"
+# Pytest configuration lives in pytest.ini (single source of truth). The
+# --import-mode=importlib setting was migrated there.
 
 [tool.ruff]
 line-length = 100
