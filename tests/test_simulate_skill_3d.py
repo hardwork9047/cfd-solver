@@ -49,10 +49,9 @@ class TestThreeDInstructions:
 
 class TestTwoDOnlyWarning:
     def test_warns_about_2d_only_assets(self, skill_text):
-        # Some warning tying the 2D-only geometry/template to 3D misuse.
-        assert "2D" in skill_text or "2 次元" in skill_text or "二次元" in skill_text
-        # The 2D staggered geometry is explicitly flagged as 2D-only somewhere
-        # in the 3D guidance.
+        # The warning explicitly flags 2D-only assets ("2D 専用") and names the
+        # 2D staggered geometry as the thing not to use under 3D intent.
+        assert "2D 専用" in skill_text
         assert "four_cylinder_staggered.json" in skill_text
 
 
@@ -66,5 +65,7 @@ class TestTwoDStillPresent:
         assert "../templates/fouling_supply.json" in skill_text
 
     def test_2d_default_behaviour_documented(self, skill_text):
-        # The skill still describes the default (2D) flow.
-        assert "fouling_supply" in skill_text
+        # The skill explicitly states the 2D path is the default when no 3D
+        # intent is expressed (3D-specific string the 3D path cannot satisfy).
+        assert "3D 以外" in skill_text
+        assert "デフォルト挙動は不変" in skill_text

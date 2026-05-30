@@ -2,5 +2,5 @@ skill: implement
 package: particulate_flow
 issue: 16
 plan-review-preference: proceed
-step: 8 (self-review)
-next: run code-reviewer, fix blocking, run doc-parrot, write findings
+step: 9 (push and PR)
+next: push, create PR, post annotations, delete workflow_state.md
