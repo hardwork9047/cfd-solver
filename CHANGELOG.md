@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.17.0] - 2026-05-29
+
+### Changed
+
+- Extracted the 2D DEM contact-force laws into a fluid-independent `ContactLaw` dataclass (`particulate_flow/dem/contact_law.py`), see PR #30: the clamp-to-zero Hertz/linear normal force, Coulomb-limited tangential force, and Coulomb-limited rolling torque now live in a small class holding only the 8 material parameters, so the contact physics can be built and tested without constructing a fluid solver. `DEMSolver` delegates its three contact-law methods to a `ContactLaw` built from the coupled solver's params; the formulas are unchanged, so `FastLBMDEM` production results are bit-identical. This is the first step of the larger God-class split (issue #26).
+
+### Notes
+
+- Pure structural refactor — no physics or numerical change. `ContactLaw` is the 2D counterpart of the scalar contact-law helpers on the 3D `DEM3D` and shares the same clamp/Coulomb concepts. Decoupling the rest of `DEMSolver` (pair search, drag, IBM) from the fluid solver remains future work.
+
+---
+
 ## [0.16.0] - 2026-05-29
 
 ### Added
