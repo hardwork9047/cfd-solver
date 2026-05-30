@@ -108,8 +108,10 @@ def test_poiseuille_2d_umax_matches_body_force():
     """2D Poiseuille peak velocity is consistent with the body-force formula.
 
     The solver sets F_drive = 8ν·u_max/ny², which predicts a peak velocity of
-    u_max.  The actual LBM peak differs from this target by a small amount due
-    to bounce-back wall offsets.  We accept a ±15% tolerance.
+    u_max.  The actual LBM peak differs from this target due to the bounce-back
+    wall offset (effectively ~1 node at each wall).  At ny=32, the measured
+    offset is ~7%; we accept ±12% to accommodate the documented offset plus
+    floating-point noise while catching large implementation errors.
     """
     ny = 32
     u_max_target = 0.01
@@ -124,9 +126,9 @@ def test_poiseuille_2d_umax_matches_body_force():
     u_max_sim = float(ux_mean[fluid].max())
 
     rel_err = abs(u_max_sim - u_max_target) / u_max_target
-    assert rel_err < 0.15, (
+    assert rel_err < 0.12, (
         f"u_max_sim={u_max_sim:.5f} deviates from target {u_max_target:.5f} "
-        f"by {rel_err*100:.1f}% (> 15%)"
+        f"by {rel_err*100:.1f}% (> 12%)"
     )
 
 
@@ -180,13 +182,13 @@ def test_stokes_drag_scales_with_radius():
 
 @pytest.mark.slow
 def test_poiseuille_2d_grid_convergence():
-    """2D Poiseuille parabola fit quality is maintained (or improves) as grid refines.
+    """2D Poiseuille parabola fit quality and u_max convergence across grid sizes.
 
     Tests ny = 16, 24, 32.  The parabola fit residual should remain below 0.1%
     at all resolutions — the LBM steady state is analytically exact at all grid
-    sizes.  Also checks that finer grids produce smaller absolute differences
-    from the body-force-formula prediction, confirming second-order convergence
-    in u_max relative to the target.
+    sizes.  Also verifies that the u_max amplitude error decreases monotonically
+    as the grid is refined (the bounce-back wall offset shrinks relative to ny,
+    producing first-order convergence in the amplitude toward the target u_max).
     """
     grids = [16, 24, 32]
     u_max_target = 0.01
@@ -215,10 +217,15 @@ def test_poiseuille_2d_grid_convergence():
     for ny, residual in zip(grids, fit_residuals):
         assert residual < 0.001, f"ny={ny}: parabola fit residual {residual:.4f} > 0.1%"
 
-    # u_max convergence: finer grids should be closer to the target
-    assert u_max_errors[2] <= u_max_errors[0] * 1.1, (
-        f"u_max error should decrease from ny=16 to ny=32: "
-        f"{u_max_errors[0]:.4f} → {u_max_errors[2]:.4f}"
+    # u_max convergence: finer grids must have strictly smaller amplitude error.
+    # Measured: ny=16 ~14%, ny=24 ~9%, ny=32 ~7% (monotone decrease).
+    assert u_max_errors[1] < u_max_errors[0], (
+        f"u_max error should decrease from ny=16 to ny=24: "
+        f"{u_max_errors[0]*100:.1f}% → {u_max_errors[1]*100:.1f}%"
+    )
+    assert u_max_errors[2] < u_max_errors[1], (
+        f"u_max error should decrease from ny=24 to ny=32: "
+        f"{u_max_errors[1]*100:.1f}% → {u_max_errors[2]*100:.1f}%"
     )
 
 
