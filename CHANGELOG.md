@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.17.2] - 2026-05-30
+
+### Fixed
+
+- Numba LBM path now applies the Lees-Edwards streaming correction (x-shift + velocity-jump boost) that was already present in the NumPy path, eliminating the accelerator asymmetry (issue #33, PR #34). The `_lbm_step_numba` branch in `_lbm_step` returned early without calling `_apply_le_streaming_correction`; both paths now produce the same linear shear profile with L2 error < 1%.
+
+---
+
 ## [0.17.1] - 2026-05-29
 
 ### Fixed
