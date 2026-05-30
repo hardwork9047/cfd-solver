@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.16.0] - 2026-05-29
+
+### Added
+
+- `/simulate` skill 3D support (issue #16), see PR #29: the skill now recognises 3D intent ("3D" / `nz`) and generates a config that extends `fouling_supply_3d.json` with `domain.dimensions=3` + `nz`, uses the 3D cylinder geometry (`four_cylinder_3d.json`), shows `dimensions`/`nz` in the confirmation table, and warns when a 2D-only template/geometry is requested under 3D intent. 2D default behaviour is unchanged. `.claude/skills/simulate/SKILL.md` only (no Python change).
+
+### Notes
+
+- Completes the 3D membrane-fouling effort: the full stack (#14/#17/#18/#19/#20 solver, #15 config/runner, #16 skill) now lets a natural-language request drive a 3D simulation end-to-end, mirroring the 2D operability.
+
+---
+
 ## [0.15.0] - 2026-05-29
 
 ### Added
