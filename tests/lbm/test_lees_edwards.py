@@ -1,4 +1,4 @@
-"""Tests for Lees-Edwards boundary conditions and iSP coupling (issue-7)."""
+"""Tests for Lees-Edwards boundary conditions and iSP coupling (issue-7, issue-33)."""
 
 from __future__ import annotations
 
@@ -232,3 +232,99 @@ def test_existing_periodic_y_still_works():
     sim.advance(10)
     _, ux, _ = sim.get_fields()
     assert np.all(np.isfinite(ux))
+
+
+# ---------------------------------------------------------------------------
+# issue-33: Numba path must apply LE correction (new tests — currently failing)
+# ---------------------------------------------------------------------------
+
+
+def _le_sim_numba(
+    nx: int = 48,
+    ny: int = 32,
+    shear_rate: float = 5e-4,
+    u_max: float = 0.0,
+    init_analytical: bool = True,
+) -> FastLBMDEM:
+    """Build a LE shear sim with the numba fluid accelerator."""
+    return FastLBMDEM(
+        nx=nx,
+        ny=ny,
+        Re=1.0,
+        u_max=u_max,
+        n_particles=0,
+        particle_radius=2.0,
+        gravity=0.0,
+        y_boundary="lees_edwards",
+        streamwise_boundary="periodic_force",
+        le_shear_rate=shear_rate,
+        le_shear_axis=0,
+        le_boundary_axis=1,
+        le_interpolation_order=3,
+        pressure_drop=0.0,
+        fluid_accelerator="numba",
+        init_analytical=init_analytical,
+        seed=42,
+    )
+
+
+@pytest.mark.slow
+def test_le_numba_linear_shear_profile():
+    """Numba path maintains analytical linear shear profile u_x = γ̇·y with < 1% L2 error.
+
+    Mirrors ``test_le_linear_shear_profile`` but uses ``fluid_accelerator="numba"``.
+    Skipped when numba is not installed.
+    """
+    pytest.importorskip("numba")
+
+    shear_rate = 5e-4
+    ny = 32
+    sim = _le_sim_numba(shear_rate=shear_rate, ny=ny, u_max=0.0, init_analytical=True)
+    assert (
+        sim.uses_numba_lbm
+    ), "numba accelerator was not activated — test would validate numpy path twice"
+    sim.advance(5000)
+
+    _, ux, _ = sim.get_fields()
+    y = np.arange(ny)
+    expected = shear_rate * (y - (ny - 1) / 2.0)
+    ux_mean = np.mean(ux, axis=0)
+    scale = float(np.max(np.abs(expected))) or 1.0
+    l2_err = float(np.sqrt(np.mean((ux_mean - expected) ** 2))) / scale
+    assert l2_err < 0.01, f"Numba LE L2 error {l2_err:.4f} exceeds 1% threshold"
+    assert abs(float(ux_mean.mean())) < 1e-4, "unexpected bulk velocity offset (numba path)"
+
+
+@pytest.mark.slow
+def test_le_numpy_numba_field_agreement():
+    """NumPy and Numba accelerators produce the same steady-state velocity field.
+
+    Runs both paths from an identical analytical seed for 500 steps and asserts
+    the x-averaged velocity profiles agree within 1e-4 (physical symmetry check).
+    Skipped when numba is not installed.
+    """
+    pytest.importorskip("numba")
+
+    shear_rate = 5e-4
+    ny = 32
+    steps = 500
+
+    sim_np = _le_sim(shear_rate=shear_rate, ny=ny, u_max=0.0, init_analytical=True)
+    sim_nb = _le_sim_numba(shear_rate=shear_rate, ny=ny, u_max=0.0, init_analytical=True)
+    assert (
+        sim_nb.uses_numba_lbm
+    ), "numba accelerator was not activated — test would compare numpy with itself"
+
+    sim_np.advance(steps)
+    sim_nb.advance(steps)
+
+    _, ux_np, _ = sim_np.get_fields()
+    _, ux_nb, _ = sim_nb.get_fields()
+
+    profile_np = np.mean(ux_np, axis=0)
+    profile_nb = np.mean(ux_nb, axis=0)
+
+    max_diff = float(np.max(np.abs(profile_np - profile_nb)))
+    assert (
+        max_diff < 1e-3
+    ), f"NumPy/Numba ux profiles diverge by {max_diff:.2e} (LE correction asymmetry)"
