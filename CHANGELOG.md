@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.17.4] - 2026-05-31
+
+### Added
+
+- Hamaker-type particle-particle and particle-cylinder attraction/repulsion for the 3D DEM solver (`DEM3D`), mirroring the 2D `DEMSolver` implementation (issue #36, PR #37). New params: `particle_attraction`, `particle_repulsion`, `attraction_strength`, `attraction_cutoff`, `attraction_min_gap`, and repulsion equivalents. Wired through `LBMDEMSolver3D` and `runner3d.build_3d_solver`; JSON config keys match 2D (`adhesive_rolling_particles.json` now effective in 3D runs).
+
+---
+
 ## [0.17.3] - 2026-05-30
 
 ### Added
