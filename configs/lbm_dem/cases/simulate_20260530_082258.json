@@ -1,0 +1,27 @@
+{
+  "extends": [
+    "../templates/fouling_supply_3d.json",
+    "../geometries/four_cylinder_3d.json",
+    "../materials/adhesive_rolling_particles.json"
+  ],
+  "name": "simulate_20260530_082258",
+  "description": "3D膜ファウリング：four_cylinder_3dで細孔モデル化、粒子付着力あり、粒子半径1.5、体積分率0.15、5000ステップ",
+  "domain": {
+    "nx": 48,
+    "ny": 24,
+    "nz": 24,
+    "dimensions": 3
+  },
+  "particles": {
+    "particle_radius": 1.5,
+    "particle_volume_fraction": 0.15
+  },
+  "runtime": {
+    "total_steps": 5000,
+    "warmup_steps": 200,
+    "snapshot_every": 200
+  },
+  "outputs": {
+    "result_tag": "simulate_20260530_082258"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "extends": [
+    "../templates/fouling_supply.json",
+    "../geometries/four_cylinder_staggered.json"
+  ],
+  "name": "simulate_20260529_115425",
+  "description": "Re=10、4本シリンダー、粒子体積分率0.2、5000ステップのファウリングシミュレーション",
+  "flow": {
+    "reynolds_number": 10
+  },
+  "particles": {
+    "particle_volume_fraction": 0.2
+  },
+  "runtime": {
+    "total_steps": 5000
+  },
+  "outputs": {
+    "result_tag": "simulate_20260529_115425"
+  }
+}

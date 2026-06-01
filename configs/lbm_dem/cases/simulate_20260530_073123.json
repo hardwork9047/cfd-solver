@@ -1,0 +1,16 @@
+{
+  "extends": [
+    "../templates/fouling_supply_3d.json"
+  ],
+  "name": "simulate_20260530_073123",
+  "description": "3D膜ファウリングシミュレーション：グリッド48×24×24、圧力駆動（pressure_drop=3e-3）、左インレット粒子供給（体積分率5%、半径2.0）、IBM結合、2000ステップ",
+  "domain": {
+    "nx": 48,
+    "ny": 24,
+    "nz": 24,
+    "dimensions": 3
+  },
+  "outputs": {
+    "result_tag": "simulate_20260530_073123"
+  }
+}

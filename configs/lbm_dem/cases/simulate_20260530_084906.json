@@ -1,0 +1,34 @@
+{
+  "extends": [
+    "../templates/fouling_supply_3d.json",
+    "../geometries/four_cylinder_3d.json"
+  ],
+  "name": "simulate_20260530_084906",
+  "description": "3D膜ファウリング（安定化版）：four_cylinder_3dで細孔モデル化、ibm_stiffness=0.3で数値安定化、粒子半径1.5、体積分率0.15、5000ステップ",
+  "domain": {
+    "nx": 48,
+    "ny": 24,
+    "nz": 24,
+    "dimensions": 3
+  },
+  "flow": {
+    "pressure_drop": 1e-3,
+    "u_max": 0.02
+  },
+  "solver": {
+    "ibm_stiffness": 0.3,
+    "ibm_marker_spacing": 2.0
+  },
+  "particles": {
+    "particle_radius": 1.5,
+    "particle_volume_fraction": 0.15
+  },
+  "runtime": {
+    "total_steps": 5000,
+    "warmup_steps": 500,
+    "snapshot_every": 200
+  },
+  "outputs": {
+    "result_tag": "simulate_20260530_084906"
+  }
+}
