@@ -63,6 +63,21 @@ class DEM3D:
         cylinders: Z-aligned finite cylinders as ``(cx, cy, r)`` or
             ``(cx, cy, r, z_min, z_max)``; collide in the x-y plane within the
             z-extent (full z by default).
+        particle_attraction: Enable Hamaker-like short-range attraction between
+            sphere-sphere and sphere-cylinder pairs.  Mutually exclusive with
+            ``particle_repulsion``.
+        particle_repulsion: Enable Hamaker-like short-range repulsion.  Mutually
+            exclusive with ``particle_attraction``.
+        attraction_strength: Dimensionless Hamaker prefactor A* for attraction.
+            Force magnitude: ``f = A* * r_eff / (6 * h²)``.
+        repulsion_strength: Dimensionless Hamaker prefactor A* for repulsion.
+        attraction_cutoff: Surface-gap distance (lattice units) beyond which
+            attraction is zero.
+        repulsion_cutoff: Surface-gap distance (lattice units) beyond which
+            repulsion is zero.
+        attraction_min_gap: Minimum surface gap used in the attraction formula
+            (prevents divergence at contact).
+        repulsion_min_gap: Minimum surface gap used in the repulsion formula.
     """
 
     def __init__(
@@ -87,12 +102,22 @@ class DEM3D:
         dem_substeps: int = 4,
         walls: tuple[str, ...] = (),
         cylinders: list | tuple | None = None,
+        particle_attraction: bool = False,
+        particle_repulsion: bool = False,
+        attraction_strength: float = 1e-3,
+        repulsion_strength: float = 1e-3,
+        attraction_cutoff: float = 3.0,
+        repulsion_cutoff: float = 3.0,
+        attraction_min_gap: float = 0.05,
+        repulsion_min_gap: float = 0.05,
     ) -> None:
         if contact_model not in PARTICLE_METHODS:
             raise ValueError(f"contact_model must be one of {PARTICLE_METHODS}")
         for w in walls:
             if w not in _WALL_SPECS:
                 raise ValueError(f"unknown wall {w!r}; valid: {sorted(_WALL_SPECS)}")
+        if particle_attraction and particle_repulsion:
+            raise ValueError("particle_attraction and particle_repulsion are mutually exclusive")
 
         self.pos = np.asarray(pos, dtype=float).reshape((-1, 3))
         self.vel = np.asarray(vel, dtype=float).reshape((-1, 3))
@@ -116,6 +141,15 @@ class DEM3D:
         self.dem_substeps = int(dem_substeps)
         self.walls = tuple(walls)
         self.cylinders = [tuple(c) for c in (cylinders or [])]
+
+        self.particle_attraction = bool(particle_attraction)
+        self.particle_repulsion = bool(particle_repulsion)
+        self.attraction_strength = float(attraction_strength)
+        self.repulsion_strength = float(repulsion_strength)
+        self.attraction_cutoff = float(attraction_cutoff)
+        self.repulsion_cutoff = float(repulsion_cutoff)
+        self.attraction_min_gap = float(attraction_min_gap)
+        self.repulsion_min_gap = float(repulsion_min_gap)
 
         # Angular velocity as a 3-vector per particle.
         self.omega = np.zeros((self.n_p, 3))
@@ -340,30 +374,56 @@ class DEM3D:
         return forces, torques
 
     def _sphere_sphere_loads(self, forces: np.ndarray, torques: np.ndarray) -> None:
-        """Accumulate pairwise sphere-sphere contact loads (all-pairs)."""
+        """Accumulate pairwise sphere-sphere contact loads (all-pairs).
+
+        Includes optional Hamaker-like attraction or repulsion active for surface
+        gaps within the configured cutoff, even without mechanical contact.
+        """
         for i in range(self.n_p):
             for j in range(i + 1, self.n_p):
                 dp = self.pos[j] - self.pos[i]
                 dist = float(np.linalg.norm(dp))
-                min_dist = self.radii[i] + self.radii[j]
-                if dist <= 1e-10 or dist >= min_dist:
+                if dist <= 1e-10:
                     continue
-                overlap = min_dist - dist
-                # Normal pointing toward i (push i away from j).
+                min_dist = self.radii[i] + self.radii[j]
+                surface_gap = dist - min_dist
+
+                # Normal direction from j toward i (outward from j).
                 normal_i = -dp / dist
-                eff_mass = (self.masses[i] + self.masses[j]) / 2.0
-                self._add_contact(
-                    idx=i,
-                    normal=normal_i,
-                    overlap=overlap,
-                    other_vel=self.vel[j],
-                    other_omega=self.omega[j],
-                    other_radius=self.radii[j],
-                    eff_mass=eff_mass,
-                    forces=forces,
-                    torques=torques,
-                    partner=j,
-                )
+
+                if surface_gap < 0.0:
+                    # Mechanical contact: normal + tangential + rolling loads.
+                    overlap = -surface_gap
+                    eff_mass = (self.masses[i] + self.masses[j]) / 2.0
+                    self._add_contact(
+                        idx=i,
+                        normal=normal_i,
+                        overlap=overlap,
+                        other_vel=self.vel[j],
+                        other_omega=self.omega[j],
+                        other_radius=self.radii[j],
+                        eff_mass=eff_mass,
+                        forces=forces,
+                        torques=torques,
+                        partner=j,
+                    )
+
+                # Hamaker-like surface force (active within cutoff, contact or not).
+                r_eff = self.radii[i] * self.radii[j] / min_dist
+                if self.particle_attraction and self.attraction_strength > 0.0:
+                    if surface_gap <= self.attraction_cutoff:
+                        h = max(surface_gap, max(self.attraction_min_gap, 1e-12))
+                        f = self.attraction_strength * r_eff / (6.0 * h**2)
+                        # Attraction: pull i toward j (+dp direction = -normal_i).
+                        forces[i] -= f * normal_i
+                        forces[j] += f * normal_i
+                elif self.particle_repulsion and self.repulsion_strength > 0.0:
+                    if surface_gap <= self.repulsion_cutoff:
+                        h = max(surface_gap, max(self.repulsion_min_gap, 1e-12))
+                        f = self.repulsion_strength * r_eff / (6.0 * h**2)
+                        # Repulsion: push i away from j (normal_i direction).
+                        forces[i] += f * normal_i
+                        forces[j] -= f * normal_i
 
     def _wall_loads(self, forces: np.ndarray, torques: np.ndarray) -> None:
         """Accumulate sphere-wall contact loads for the configured walls."""
@@ -392,7 +452,11 @@ class DEM3D:
                 )
 
     def _cylinder_loads(self, forces: np.ndarray, torques: np.ndarray) -> None:
-        """Accumulate sphere-(z-aligned finite cylinder) contact loads."""
+        """Accumulate sphere-(z-aligned finite cylinder) contact loads.
+
+        Includes optional Hamaker-like attraction or repulsion active for surface
+        gaps within the configured cutoff, even without mechanical contact.
+        """
         for cyl in self.cylinders:
             cx, cy, cr = cyl[0], cyl[1], cyl[2]
             z_lo = cyl[3] if len(cyl) > 3 else 0.0
@@ -403,23 +467,42 @@ class DEM3D:
                 dx = self.pos[i, 0] - cx
                 dy = self.pos[i, 1] - cy
                 radial = float(np.hypot(dx, dy))
-                min_dist = cr + self.radii[i]
-                if radial <= 1e-10 or radial >= min_dist:
+                if radial <= 1e-10:
                     continue
-                overlap = min_dist - radial
+                min_dist = cr + self.radii[i]
+                surface_gap = radial - min_dist
                 # Normal points radially outward from the axis toward the sphere.
                 normal = np.array([dx / radial, dy / radial, 0.0])
-                self._add_contact(
-                    idx=i,
-                    normal=normal,
-                    overlap=overlap,
-                    other_vel=np.zeros(3),
-                    other_omega=np.zeros(3),
-                    other_radius=cr,
-                    eff_mass=self.masses[i],
-                    forces=forces,
-                    torques=torques,
-                )
+
+                if surface_gap < 0.0:
+                    # Mechanical contact.
+                    overlap = -surface_gap
+                    self._add_contact(
+                        idx=i,
+                        normal=normal,
+                        overlap=overlap,
+                        other_vel=np.zeros(3),
+                        other_omega=np.zeros(3),
+                        other_radius=cr,
+                        eff_mass=self.masses[i],
+                        forces=forces,
+                        torques=torques,
+                    )
+
+                # Hamaker-like surface force (acts even without contact).
+                r_eff = self.radii[i] * cr / min_dist
+                if self.particle_attraction and self.attraction_strength > 0.0:
+                    if surface_gap <= self.attraction_cutoff:
+                        h = max(surface_gap, max(self.attraction_min_gap, 1e-12))
+                        f = self.attraction_strength * r_eff / (6.0 * h**2)
+                        # Attraction: pull sphere toward cylinder surface (-normal).
+                        forces[i] -= f * normal
+                elif self.particle_repulsion and self.repulsion_strength > 0.0:
+                    if surface_gap <= self.repulsion_cutoff:
+                        h = max(surface_gap, max(self.repulsion_min_gap, 1e-12))
+                        f = self.repulsion_strength * r_eff / (6.0 * h**2)
+                        # Repulsion: push sphere away from cylinder (+normal).
+                        forces[i] += f * normal
 
     # ------------------------------------------------------------------
     # Time integration
