@@ -243,6 +243,264 @@ class TestCylinderContact:
 
 
 # ---------------------------------------------------------------------------
+# Hamaker attraction / repulsion (issue #36)
+# ---------------------------------------------------------------------------
+
+
+class TestSphereSphereAttraction:
+    """Sphere-sphere Hamaker attraction and repulsion."""
+
+    def test_attraction_pulls_nearby_spheres_together(self):
+        # Two spheres with a clear gap (no contact) but within attraction cutoff.
+        # attraction force should bring them closer.
+        r = 3.0
+        gap = -1.5  # 1.5 lattice units clear gap (negative = not overlapping)
+        dist = 2 * r - gap  # 7.5
+        pos = np.array([[0.0, 10.0, 10.0], [dist, 10.0, 10.0]])
+        sim = DEM3D(
+            pos=pos,
+            vel=np.zeros((2, 3)),
+            radii=np.full(2, r),
+            nx=40,
+            ny=20,
+            nz=20,
+            gravity=0.0,
+            particle_attraction=True,
+            attraction_strength=0.01,
+            attraction_cutoff=3.0,
+        )
+        forces, _ = sim.compute_loads()
+        # Sphere 0 should be pulled in +x direction, sphere 1 in -x.
+        assert forces[0, 0] > 0.0
+        assert forces[1, 0] < 0.0
+        np.testing.assert_allclose(forces[0] + forces[1], 0.0, atol=1e-12)
+
+    def test_attraction_zero_beyond_cutoff(self):
+        r = 3.0
+        gap = -5.0  # 5 units clear gap, beyond cutoff=3.0
+        dist = 2 * r - gap  # 11.0
+        pos = np.array([[0.0, 10.0, 10.0], [dist, 10.0, 10.0]])
+        sim = DEM3D(
+            pos=pos,
+            vel=np.zeros((2, 3)),
+            radii=np.full(2, r),
+            nx=40,
+            ny=20,
+            nz=20,
+            gravity=0.0,
+            particle_attraction=True,
+            attraction_strength=0.01,
+            attraction_cutoff=3.0,
+        )
+        forces, _ = sim.compute_loads()
+        np.testing.assert_allclose(forces, 0.0, atol=1e-12)
+
+    def test_repulsion_pushes_nearby_spheres_apart(self):
+        r = 3.0
+        gap = -1.0  # 1 unit gap, within cutoff
+        dist = 2 * r - gap  # 7.0
+        pos = np.array([[0.0, 10.0, 10.0], [dist, 10.0, 10.0]])
+        sim = DEM3D(
+            pos=pos,
+            vel=np.zeros((2, 3)),
+            radii=np.full(2, r),
+            nx=40,
+            ny=20,
+            nz=20,
+            gravity=0.0,
+            particle_repulsion=True,
+            repulsion_strength=0.01,
+            repulsion_cutoff=3.0,
+        )
+        forces, _ = sim.compute_loads()
+        # Sphere 0 pushed in -x, sphere 1 in +x.
+        assert forces[0, 0] < 0.0
+        assert forces[1, 0] > 0.0
+        np.testing.assert_allclose(forces[0] + forces[1], 0.0, atol=1e-12)
+
+    def test_attraction_and_repulsion_mutually_exclusive(self):
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            DEM3D(
+                pos=np.array([[0.0, 5.0, 5.0]]),
+                vel=np.zeros((1, 3)),
+                radii=np.array([2.0]),
+                nx=20,
+                ny=20,
+                nz=20,
+                particle_attraction=True,
+                particle_repulsion=True,
+            )
+
+    def test_default_no_surface_force(self):
+        # Both disabled by default: nearby spheres (gap within typical cutoff)
+        # produce zero force when there is no contact.
+        r = 3.0
+        gap = -1.5
+        dist = 2 * r - gap
+        pos = np.array([[0.0, 10.0, 10.0], [dist, 10.0, 10.0]])
+        sim = DEM3D(
+            pos=pos,
+            vel=np.zeros((2, 3)),
+            radii=np.full(2, r),
+            nx=40,
+            ny=20,
+            nz=20,
+            gravity=0.0,
+        )
+        forces, _ = sim.compute_loads()
+        np.testing.assert_allclose(forces, 0.0, atol=1e-12)
+
+    def test_attraction_causes_aggregation(self):
+        # Integration test: two non-overlapping spheres with attraction should
+        # approach each other over time.
+        r = 3.0
+        gap = -1.5
+        dist = 2 * r - gap
+        pos = np.array([[0.0, 10.0, 10.0], [dist, 10.0, 10.0]])
+        sim = DEM3D(
+            pos=pos,
+            vel=np.zeros((2, 3)),
+            radii=np.full(2, r),
+            nx=40,
+            ny=20,
+            nz=20,
+            gravity=0.0,
+            particle_attraction=True,
+            attraction_strength=0.01,
+            attraction_cutoff=3.0,
+            dem_substeps=4,
+        )
+        d0 = np.linalg.norm(sim.pos[1] - sim.pos[0])
+        sim.step(100)
+        d1 = np.linalg.norm(sim.pos[1] - sim.pos[0])
+        assert d1 < d0, "attracted spheres should move closer"
+
+
+class TestCylinderAttraction:
+    """Sphere-cylinder Hamaker attraction and repulsion."""
+
+    def test_cylinder_attraction_pulls_sphere_inward(self):
+        # Sphere just outside cylinder, within attraction cutoff.
+        r_sphere = 2.0
+        r_cyl = 4.0
+        # Place sphere so surface gap = 1.0 (within cutoff=3.0)
+        # radial dist from axis = r_sphere + r_cyl + 1.0 = 7.0
+        pos = np.array([[7.0, 10.0, 10.0]])  # cylinder at (0,10)
+        sim = DEM3D(
+            pos=pos,
+            vel=np.zeros((1, 3)),
+            radii=np.array([r_sphere]),
+            nx=30,
+            ny=20,
+            nz=20,
+            gravity=0.0,
+            cylinders=[(0.0, 10.0, r_cyl)],
+            particle_attraction=True,
+            attraction_strength=0.01,
+            attraction_cutoff=3.0,
+        )
+        forces, _ = sim.compute_loads()
+        # Sphere should be pulled toward cylinder axis (-x direction).
+        assert forces[0, 0] < 0.0
+        assert np.all(np.isfinite(forces))
+
+    def test_cylinder_repulsion_pushes_sphere_outward(self):
+        r_sphere = 2.0
+        r_cyl = 4.0
+        pos = np.array([[7.0, 10.0, 10.0]])
+        sim = DEM3D(
+            pos=pos,
+            vel=np.zeros((1, 3)),
+            radii=np.array([r_sphere]),
+            nx=30,
+            ny=20,
+            nz=20,
+            gravity=0.0,
+            cylinders=[(0.0, 10.0, r_cyl)],
+            particle_repulsion=True,
+            repulsion_strength=0.01,
+            repulsion_cutoff=3.0,
+        )
+        forces, _ = sim.compute_loads()
+        # Sphere should be pushed away from cylinder axis (+x direction).
+        assert forces[0, 0] > 0.0
+
+
+class TestAttractionConfigWiring:
+    """attraction/repulsion propagates through LBMDEMSolver3D and runner3d."""
+
+    def test_lbm3d_wires_attraction_to_dem(self):
+        from particulate_flow.lbm3d import LBMDEMSolver3D
+
+        sim = LBMDEMSolver3D(
+            nx=12,
+            ny=8,
+            nz=8,
+            particle_source="left_inlet",
+            particle_fluid_coupling="immersed_boundary",
+            ibm_stiffness=0.3,
+            pressure_drop=1e-3,
+            streamwise_boundary="pressure",
+            source_volume_fraction=0.1,
+            particle_radius=2.0,
+            particle_attraction=True,
+            attraction_strength=0.005,
+            attraction_cutoff=2.5,
+            attraction_min_gap=0.1,
+        )
+        assert sim.dem.particle_attraction is True
+        assert sim.dem.attraction_strength == pytest.approx(0.005)
+        assert sim.dem.attraction_cutoff == pytest.approx(2.5)
+        assert sim.dem.attraction_min_gap == pytest.approx(0.1)
+
+    def test_lbm3d_raises_on_conflicting_flags(self):
+        from particulate_flow.lbm3d import LBMDEMSolver3D
+
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            LBMDEMSolver3D(
+                nx=12,
+                ny=8,
+                nz=8,
+                particle_source="left_inlet",
+                particle_fluid_coupling="immersed_boundary",
+                pressure_drop=1e-3,
+                streamwise_boundary="pressure",
+                source_volume_fraction=0.1,
+                particle_radius=2.0,
+                particle_attraction=True,
+                particle_repulsion=True,
+            )
+
+    def test_runner3d_passes_attraction_from_args(self):
+        import argparse
+        from particulate_flow.runner3d import build_3d_solver
+
+        args = argparse.Namespace(
+            nx=12, ny=8, nz=8,
+            reynolds_number=10.0, u_max=0.02,
+            streamwise_boundary="pressure", pressure_drop=1e-3, rho_out=1.0,
+            cylinder_spec=[],
+            particle_source="left-inlet",
+            particle_fluid_coupling="immersed_boundary",
+            ibm_stiffness=0.3, ibm_marker_spacing=2.0,
+            particle_radius=2.0, density_ratio=2.0, gravity=0.0, dem_substeps=4,
+            sliding_friction=0.5, rolling_friction_coeff=0.05,
+            particle_volume_fraction=0.1,
+            particle_attraction=True,
+            particle_repulsion=False,
+            attraction_strength=0.007,
+            repulsion_strength=1e-3,
+            attraction_cutoff=3.0,
+            repulsion_cutoff=3.0,
+            attraction_min_gap=0.05,
+            repulsion_min_gap=0.05,
+        )
+        solver = build_3d_solver(args)
+        assert solver.dem.particle_attraction is True
+        assert solver.dem.attraction_strength == pytest.approx(0.007)
+
+
+# ---------------------------------------------------------------------------
 # 2D regression guard
 # ---------------------------------------------------------------------------
 

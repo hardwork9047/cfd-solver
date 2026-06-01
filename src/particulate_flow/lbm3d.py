@@ -205,9 +205,23 @@ class LBMDEMSolver3D:
         ibm_stiffness: float = 1.0,
         ibm_marker_spacing: float = 1.0,
         dem_substeps: int = 4,
+        sliding_friction: float = 0.5,
+        rolling_friction_coeff: float = 0.05,
+        particle_attraction: bool = False,
+        particle_repulsion: bool = False,
+        attraction_strength: float = 1e-3,
+        repulsion_strength: float = 1e-3,
+        attraction_cutoff: float = 3.0,
+        repulsion_cutoff: float = 3.0,
+        attraction_min_gap: float = 0.05,
+        repulsion_min_gap: float = 0.05,
         source_volume_fraction: float | None = None,
         seed: int = 42,
     ) -> None:
+        if particle_attraction and particle_repulsion:
+            raise ValueError(
+                "particle_attraction and particle_repulsion are mutually exclusive"
+            )
         if particle_source not in ("none", None, "left_inlet"):
             raise ValueError(
                 f"particle_source must be 'none' or 'left_inlet', got {particle_source!r}"
@@ -340,6 +354,16 @@ class LBMDEMSolver3D:
                 gravity=gravity,
                 dem_substeps=dem_substeps,
                 cylinders=self.cylinders,
+                sliding_friction=sliding_friction,
+                rolling_friction_coeff=rolling_friction_coeff,
+                particle_attraction=particle_attraction,
+                particle_repulsion=particle_repulsion,
+                attraction_strength=attraction_strength,
+                repulsion_strength=repulsion_strength,
+                attraction_cutoff=attraction_cutoff,
+                repulsion_cutoff=repulsion_cutoff,
+                attraction_min_gap=attraction_min_gap,
+                repulsion_min_gap=repulsion_min_gap,
             )
 
     def _build_cylinder_solid(self, cylinders: list) -> np.ndarray:
