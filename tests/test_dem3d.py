@@ -295,6 +295,26 @@ class TestSphereSphereAttraction:
         forces, _ = sim.compute_loads()
         np.testing.assert_allclose(forces, 0.0, atol=1e-12)
 
+    def test_repulsion_zero_beyond_cutoff(self):
+        r = 3.0
+        gap = -5.0  # 5 units clear gap, beyond cutoff=3.0
+        dist = 2 * r - gap
+        pos = np.array([[0.0, 10.0, 10.0], [dist, 10.0, 10.0]])
+        sim = DEM3D(
+            pos=pos,
+            vel=np.zeros((2, 3)),
+            radii=np.full(2, r),
+            nx=40,
+            ny=20,
+            nz=20,
+            gravity=0.0,
+            particle_repulsion=True,
+            repulsion_strength=0.01,
+            repulsion_cutoff=3.0,
+        )
+        forces, _ = sim.compute_loads()
+        np.testing.assert_allclose(forces, 0.0, atol=1e-12)
+
     def test_repulsion_pushes_nearby_spheres_apart(self):
         r = 3.0
         gap = -1.0  # 1 unit gap, within cutoff

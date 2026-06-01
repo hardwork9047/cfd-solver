@@ -173,6 +173,23 @@ class LBMDEMSolver3D:
         ibm_stiffness: Direct-forcing IBM stiffness (force per unit velocity error).
         ibm_marker_spacing: Target arc spacing between surface markers.
         dem_substeps: DEM sub-steps per LBM step.
+        sliding_friction: Coulomb limit μ for tangential (sliding) contact force.
+        rolling_friction_coeff: Rolling-resistance moment coefficient.
+        particle_attraction: Enable Hamaker-like short-range particle-particle and
+            particle-cylinder attraction.  Mutually exclusive with
+            ``particle_repulsion``.
+        particle_repulsion: Enable Hamaker-like short-range repulsion.  Mutually
+            exclusive with ``particle_attraction``.
+        attraction_strength: Dimensionless Hamaker prefactor A* for attraction.
+            Force magnitude: ``f = A* * r_eff / (6 * h²)``.
+        repulsion_strength: Dimensionless Hamaker prefactor A* for repulsion.
+        attraction_cutoff: Surface-gap distance (lattice units) beyond which
+            attraction is zero.
+        repulsion_cutoff: Surface-gap distance (lattice units) beyond which
+            repulsion is zero.
+        attraction_min_gap: Minimum surface gap used in the attraction formula
+            (prevents divergence at contact).
+        repulsion_min_gap: Minimum surface gap used in the repulsion formula.
         source_volume_fraction: Target injected solid-volume fraction of the inlet
                                 flux for ``left_inlet`` (budget ``+= phi · inlet_flux``).
         seed: RNG seed for the inlet (y, z) sampling.

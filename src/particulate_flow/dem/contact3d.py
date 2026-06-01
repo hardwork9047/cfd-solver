@@ -390,10 +390,12 @@ class DEM3D:
                 min_dist = self.radii[i] + self.radii[j]
                 surface_gap = dist - min_dist
 
+                # Normal direction from j toward i (outward from j).
+                normal_i = -dp / dist
+
                 if surface_gap < 0.0:
                     # Mechanical contact: normal + tangential + rolling loads.
                     overlap = -surface_gap
-                    normal_i = -dp / dist
                     eff_mass = (self.masses[i] + self.masses[j]) / 2.0
                     self._add_contact(
                         idx=i,
@@ -408,9 +410,7 @@ class DEM3D:
                         partner=j,
                     )
 
-                # Hamaker-like surface force (acts even without contact).
-                # Normal direction from j toward i (outward from j).
-                normal_i = -dp / dist
+                # Hamaker-like surface force (active within cutoff, contact or not).
                 r_eff = self.radii[i] * self.radii[j] / min_dist
                 if self.particle_attraction and self.attraction_strength > 0.0:
                     if surface_gap <= self.attraction_cutoff:
