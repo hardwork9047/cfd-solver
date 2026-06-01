@@ -117,9 +117,7 @@ class DEM3D:
             if w not in _WALL_SPECS:
                 raise ValueError(f"unknown wall {w!r}; valid: {sorted(_WALL_SPECS)}")
         if particle_attraction and particle_repulsion:
-            raise ValueError(
-                "particle_attraction and particle_repulsion are mutually exclusive"
-            )
+            raise ValueError("particle_attraction and particle_repulsion are mutually exclusive")
 
         self.pos = np.asarray(pos, dtype=float).reshape((-1, 3))
         self.vel = np.asarray(vel, dtype=float).reshape((-1, 3))

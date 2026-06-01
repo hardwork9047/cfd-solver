@@ -236,9 +236,7 @@ class LBMDEMSolver3D:
         seed: int = 42,
     ) -> None:
         if particle_attraction and particle_repulsion:
-            raise ValueError(
-                "particle_attraction and particle_repulsion are mutually exclusive"
-            )
+            raise ValueError("particle_attraction and particle_repulsion are mutually exclusive")
         if particle_source not in ("none", None, "left_inlet"):
             raise ValueError(
                 f"particle_source must be 'none' or 'left_inlet', got {particle_source!r}"

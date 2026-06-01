@@ -493,18 +493,29 @@ class TestAttractionConfigWiring:
 
     def test_runner3d_passes_attraction_from_args(self):
         import argparse
+
         from particulate_flow.runner3d import build_3d_solver
 
         args = argparse.Namespace(
-            nx=12, ny=8, nz=8,
-            reynolds_number=10.0, u_max=0.02,
-            streamwise_boundary="pressure", pressure_drop=1e-3, rho_out=1.0,
+            nx=12,
+            ny=8,
+            nz=8,
+            reynolds_number=10.0,
+            u_max=0.02,
+            streamwise_boundary="pressure",
+            pressure_drop=1e-3,
+            rho_out=1.0,
             cylinder_spec=[],
             particle_source="left-inlet",
             particle_fluid_coupling="immersed_boundary",
-            ibm_stiffness=0.3, ibm_marker_spacing=2.0,
-            particle_radius=2.0, density_ratio=2.0, gravity=0.0, dem_substeps=4,
-            sliding_friction=0.5, rolling_friction_coeff=0.05,
+            ibm_stiffness=0.3,
+            ibm_marker_spacing=2.0,
+            particle_radius=2.0,
+            density_ratio=2.0,
+            gravity=0.0,
+            dem_substeps=4,
+            sliding_friction=0.5,
+            rolling_friction_coeff=0.05,
             particle_volume_fraction=0.1,
             particle_attraction=True,
             particle_repulsion=False,
