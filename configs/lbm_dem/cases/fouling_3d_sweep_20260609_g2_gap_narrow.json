@@ -1,0 +1,11 @@
+{
+  "extends": [
+    "../cases/fouling_3d_sweep_20260609_a2_attr_0010.json",
+    "../geometries/four_cylinder_3d_gap_narrow.json"
+  ],
+  "name": "fouling_3d_sweep_20260609_g2_gap_narrow",
+  "description": "Geometry scan: narrow the membrane throat while keeping attraction strength at 0.0010.",
+  "outputs": {
+    "result_tag": "fouling_3d_sweep_20260609_g2_gap_narrow"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "extends": [
+    "../cases/fouling_3d_sweep_20260609_a2_attr_0010.json"
+  ],
+  "name": "fouling_3d_sweep_20260609_f1_roll_005",
+  "description": "Rolling scan: reduce rolling friction coefficient to 0.05 at attraction strength 0.0010.",
+  "physics": {
+    "rolling_friction_coeff": 0.05
+  },
+  "outputs": {
+    "result_tag": "fouling_3d_sweep_20260609_f1_roll_005"
+  }
+}

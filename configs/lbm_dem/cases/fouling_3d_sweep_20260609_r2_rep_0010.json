@@ -1,0 +1,16 @@
+{
+  "extends": [
+    "../cases/fouling_3d_sweep_20260609_b0_baseline.json"
+  ],
+  "name": "fouling_3d_sweep_20260609_r2_rep_0010",
+  "description": "Repulsion scan: switch from attraction to moderate particle repulsion at 0.0010.",
+  "physics": {
+    "particle_attraction": false,
+    "particle_repulsion": true,
+    "attraction_strength": 0.001,
+    "repulsion_strength": 0.0010
+  },
+  "outputs": {
+    "result_tag": "fouling_3d_sweep_20260609_r2_rep_0010"
+  }
+}

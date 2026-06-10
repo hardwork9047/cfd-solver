@@ -1,0 +1,16 @@
+{
+  "extends": [
+    "../cases/fouling_3d_sweep_20260609_b0_baseline.json"
+  ],
+  "name": "fouling_3d_sweep_20260609_r1_rep_0005",
+  "description": "Repulsion scan: switch from attraction to weak particle repulsion at 0.0005.",
+  "physics": {
+    "particle_attraction": false,
+    "particle_repulsion": true,
+    "attraction_strength": 0.001,
+    "repulsion_strength": 0.0005
+  },
+  "outputs": {
+    "result_tag": "fouling_3d_sweep_20260609_r1_rep_0005"
+  }
+}

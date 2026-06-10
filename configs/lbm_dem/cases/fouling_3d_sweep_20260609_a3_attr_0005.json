@@ -1,0 +1,13 @@
+{
+  "extends": [
+    "../cases/fouling_3d_sweep_20260609_b0_baseline.json"
+  ],
+  "name": "fouling_3d_sweep_20260609_a3_attr_0005",
+  "description": "Attraction scan: reduce Hamaker-like attraction strength to 0.0005.",
+  "physics": {
+    "attraction_strength": 0.0005
+  },
+  "outputs": {
+    "result_tag": "fouling_3d_sweep_20260609_a3_attr_0005"
+  }
+}

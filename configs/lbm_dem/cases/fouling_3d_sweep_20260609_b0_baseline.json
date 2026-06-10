@@ -1,0 +1,44 @@
+{
+  "extends": [
+    "../templates/fouling_supply_3d.json",
+    "../geometries/four_cylinder_3d.json"
+  ],
+  "name": "fouling_3d_sweep_20260609_b0_baseline",
+  "description": "Sweep baseline reproducing the June 1, 2026 fouling case with strong attraction and rolling friction.",
+  "domain": {
+    "nx": 48,
+    "ny": 24,
+    "nz": 24,
+    "dimensions": 3
+  },
+  "flow": {
+    "pressure_drop": 1e-3,
+    "u_max": 0.02
+  },
+  "solver": {
+    "ibm_stiffness": 0.3,
+    "ibm_marker_spacing": 2.0
+  },
+  "particles": {
+    "particle_radius": 1.5,
+    "particle_volume_fraction": 0.15
+  },
+  "physics": {
+    "particle_attraction": true,
+    "particle_repulsion": false,
+    "attraction_strength": 0.002,
+    "attraction_cutoff": 3.0,
+    "attraction_min_gap": 0.05,
+    "rolling_friction": true,
+    "rolling_friction_coeff": 0.15,
+    "sliding_friction": 0.5
+  },
+  "runtime": {
+    "total_steps": 125000,
+    "warmup_steps": 500,
+    "snapshot_every": 1250
+  },
+  "outputs": {
+    "result_tag": "fouling_3d_sweep_20260609_b0_baseline"
+  }
+}

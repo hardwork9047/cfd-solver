@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "name": "four_cylinder_3d_gap_narrow",
+  "description": "Four z-aligned cylinders with a narrower throat than the baseline 3D membrane-pore geometry.",
+  "geometry": {
+    "cylinders": [
+      {"x": 21, "y": 8, "radius": 3.0},
+      {"x": 21, "y": 16, "radius": 3.0},
+      {"x": 27, "y": 8, "radius": 3.0},
+      {"x": 27, "y": 16, "radius": 3.0}
+    ]
+  }
+}

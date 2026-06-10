@@ -1,0 +1,13 @@
+{
+  "extends": [
+    "../cases/fouling_3d_sweep_20260609_a2_attr_0010.json"
+  ],
+  "name": "fouling_3d_sweep_20260609_c1_phi_010",
+  "description": "Concentration scan: lower inlet particle volume fraction to 0.10 at attraction strength 0.0010.",
+  "particles": {
+    "particle_volume_fraction": 0.10
+  },
+  "outputs": {
+    "result_tag": "fouling_3d_sweep_20260609_c1_phi_010"
+  }
+}
