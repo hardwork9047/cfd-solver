@@ -1,0 +1,18 @@
+{
+  "dimensions": 3,
+  "grid": [
+    48,
+    24,
+    24
+  ],
+  "streamwise_boundary": "pressure",
+  "total_steps": 125000,
+  "warmup_steps": 500,
+  "n_cylinders": 4,
+  "particle_source": "left_inlet",
+  "final_particle_count": 324,
+  "generated_particles": 334,
+  "removed_particles": 10,
+  "max_speed": 0.003122732965536521,
+  "created_at": "2026-06-11T18:16:32"
+}
