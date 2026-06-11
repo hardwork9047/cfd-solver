@@ -1,0 +1,5 @@
+{
+  "machine": "TRI-PF5FWBF1",
+  "started_at": "2026-06-11T18:16:33",
+  "config": "configs/lbm_dem/cases/fouling_3d_sweep_20260609_a1_attr_0015.json"
+}
