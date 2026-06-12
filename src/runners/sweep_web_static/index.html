@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sweep Web UI</title>
+<style>
+  :root {
+    --bg: #0f1117; --panel: #171a23; --border: #272b36; --fg: #d7dae0;
+    --muted: #8b909c; --accent: #4f7cff;
+    --done: #2ea043; --prog: #4f7cff; --fail: #d9534f; --pend: #6b7280; --stop: #b9770e;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+  header { padding: 12px 18px; border-bottom: 1px solid var(--border); display: flex; gap: 16px; align-items: center; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  header .hint { color: var(--muted); font-size: 12px; }
+  main { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 14px 18px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
+  .panel h2 { font-size: 13px; margin: 0 0 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .full { grid-column: 1 / -1; }
+  select, button { font: inherit; color: var(--fg); background: #20242f; border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; }
+  button { cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { background: var(--fail); border-color: var(--fail); color: #fff; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); font-size: 13px; }
+  th { color: var(--muted); font-weight: 500; }
+  tr.sel { background: #1d2230; }
+  tr.clickable { cursor: pointer; }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px; color: #fff; }
+  .badge.done { background: var(--done); } .badge.in-progress { background: var(--prog); }
+  .badge.failed { background: var(--fail); } .badge.pending { background: var(--pend); }
+  .bar { height: 7px; background: #2a2f3c; border-radius: 4px; overflow: hidden; min-width: 80px; }
+  .bar > span { display: block; height: 100%; background: var(--prog); }
+  .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 10px; }
+  .controls label { color: var(--muted); font-size: 12px; display: inline-flex; gap: 4px; align-items: center; }
+  pre.log { background: #0b0d12; border: 1px solid var(--border); border-radius: 6px; padding: 10px; height: 280px; overflow: auto; font-size: 12px; margin: 0; white-space: pre-wrap; }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; font-size: 13px; }
+  .kv .k { color: var(--muted); }
+  .path { font-family: ui-monospace, monospace; font-size: 12px; word-break: break-all; background: #0b0d12; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--border); }
+  .muted { color: var(--muted); }
+  .row-actions { display: flex; gap: 8px; margin: 8px 0; }
+  svg.spark { width: 100%; height: 60px; background: #0b0d12; border: 1px solid var(--border); border-radius: 6px; }
+  .tbl-scroll { overflow-x: auto; }
+  table.cfg { white-space: nowrap; }
+  table.cfg th, table.cfg td { font-family: ui-monospace, monospace; font-size: 12px; }
+  table.cfg th.varying { color: #e6c07b; }
+  table.cfg td.varying { color: #e6c07b; }
+  table.cfg td.casecol, table.cfg th.casecol { position: sticky; left: 0; background: var(--panel); font-family: system-ui, sans-serif; }
+  table.cfg tr:hover td { background: #1d2230; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .seg button { border: none; border-radius: 0; padding: 4px 12px; background: #20242f; }
+  .seg button.on { background: var(--accent); color: #fff; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Sweep Web UI</h1>
+  <select id="sweepSel"></select>
+  <span class="hint">ローカルマシンで実行/停止・進捗はgit同期で全マシン分</span>
+</header>
+
+<main>
+  <section class="panel full">
+    <h2>Cases</h2>
+    <div class="controls">
+      <button class="primary" id="runBtn">▶ 選択を実行</button>
+      <button class="danger" id="stopBtn" disabled>■ 停止</button>
+      <label><input type="checkbox" id="optForce" /> --force</label>
+      <label><input type="checkbox" id="optNoPush" checked /> --no-push</label>
+      <label><input type="checkbox" id="optNoInstall" checked /> --no-install</label>
+      <span class="muted" id="runMsg"></span>
+    </div>
+    <table id="casesTbl">
+      <thead><tr>
+        <th><input type="checkbox" id="selAll" /></th>
+        <th>Alias</th><th>Case</th><th>Status</th><th>Machine</th><th>When</th><th>Progress</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section class="panel full">
+    <h2>条件設定 (Conditions)
+      <span class="seg" style="margin-left:10px">
+        <button id="cfgVarying" class="on">差分のみ</button>
+        <button id="cfgAll">全パラメータ</button>
+      </span>
+      <span class="muted" id="cfgMsg" style="margin-left:8px"></span>
+    </h2>
+    <div class="tbl-scroll">
+      <table class="cfg" id="cfgTbl"><thead></thead><tbody></tbody></table>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Log <span class="muted" id="logRunId"></span></h2>
+    <pre class="log" id="logPane">（実行を開始するとログが表示されます）</pre>
+  </section>
+
+  <section class="panel">
+    <h2>Results <span class="muted" id="resCase"></span></h2>
+    <div id="resBody"><span class="muted">ケースをクリックすると結果を表示します</span></div>
+  </section>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const api = (p, opt) => fetch(p, opt).then(r => r.json().then(j => ({ok: r.ok, status: r.status, body: j})));
+let currentSweep = null, activeRunId = null, selectedCase = null, polling = true;
+let cfgMode = 'varying', cfgData = null;
+
+document.addEventListener('visibilitychange', () => { polling = !document.hidden; });
+
+async function loadSweeps() {
+  const { body } = await api('/api/sweeps');
+  const sel = $('#sweepSel');
+  sel.innerHTML = '';
+  body.forEach(s => {
+    const o = document.createElement('option');
+    o.value = s.name; o.textContent = `${s.name} (${s.case_count})`;
+    sel.appendChild(o);
+  });
+  if (body.length) { currentSweep = body[0].name; sel.value = currentSweep; }
+  sel.onchange = () => { currentSweep = sel.value; selectedCase = null; refresh(); loadConfig(); };
+}
+
+function fmtVal(v) {
+  if (v === undefined || v === null) return '<span class="muted">–</span>';
+  if (typeof v === 'boolean') return v ? '✓' : '✗';
+  if (Array.isArray(v) || typeof v === 'object') {
+    const s = JSON.stringify(v);
+    return s.length > 40 ? s.slice(0, 38) + '…' : s;
+  }
+  return String(v);
+}
+
+async function loadConfig() {
+  if (!currentSweep) return;
+  const { ok, body } = await api('/api/sweeps/' + currentSweep + '/config');
+  if (!ok) { $('#cfgMsg').textContent = body.error || '設定取得失敗'; return; }
+  cfgData = body;
+  renderConfig();
+}
+
+function renderConfig() {
+  if (!cfgData) return;
+  const varying = new Set(cfgData.varying_keys);
+  const keys = cfgMode === 'varying' ? cfgData.varying_keys : cfgData.all_keys;
+  $('#cfgMsg').textContent = `${cfgData.cases.length} 条件 / ${keys.length} パラメータ` +
+    (cfgMode === 'varying' ? `（差分のみ・全${cfgData.all_keys.length}中）` : '');
+  const thead = $('#cfgTbl thead'), tbody = $('#cfgTbl tbody');
+  thead.innerHTML = '<tr><th class="casecol">Case</th>' +
+    keys.map(k => `<th class="${varying.has(k) ? 'varying' : ''}">${k}</th>`).join('') + '</tr>';
+  tbody.innerHTML = cfgData.cases.map(c => {
+    const label = (c.alias ? c.alias + ' · ' : '') + c.case_name;
+    const cells = keys.map(k =>
+      `<td class="${varying.has(k) ? 'varying' : ''}">${fmtVal((c.values || {})[k])}</td>`).join('');
+    return `<tr><td class="casecol">${label}</td>${cells}</tr>`;
+  }).join('');
+  if (!keys.length) tbody.innerHTML = '<tr><td class="muted">差分のあるパラメータがありません</td></tr>';
+}
+
+$('#cfgVarying').onclick = () => { cfgMode = 'varying'; $('#cfgVarying').classList.add('on'); $('#cfgAll').classList.remove('on'); renderConfig(); };
+$('#cfgAll').onclick = () => { cfgMode = 'all'; $('#cfgAll').classList.add('on'); $('#cfgVarying').classList.remove('on'); renderConfig(); };
+
+function badge(status) { return `<span class="badge ${status}">${status}</span>`; }
+
+function progressCell(c) {
+  if (!c.progress || !c.local_running && c.status !== 'in-progress') return '<span class="muted">–</span>';
+  const p = c.progress;
+  return `<div style="display:flex;gap:6px;align-items:center">
+    <div class="bar"><span style="width:${p.percent}%"></span></div>
+    <span class="muted">${p.percent}% (${p.snapshots_done}/${p.snapshots_expected})</span></div>`;
+}
+
+async function refresh() {
+  if (!currentSweep) return;
+  const { body } = await api('/api/sweeps/' + currentSweep);
+  const tb = $('#casesTbl tbody');
+  tb.innerHTML = '';
+  let anyRunning = null;
+  body.cases.forEach(c => {
+    const tr = document.createElement('tr');
+    tr.className = 'clickable' + (c.case_name === selectedCase ? ' sel' : '');
+    tr.innerHTML = `
+      <td><input type="checkbox" class="caseCb" data-alias="${c.alias || c.case_name}"></td>
+      <td>${c.alias || '–'}</td>
+      <td>${c.case_name}</td>
+      <td>${badge(c.status)}</td>
+      <td>${c.machine}</td>
+      <td>${c.when === '-' ? '–' : c.when}</td>
+      <td>${progressCell(c)}</td>`;
+    tr.querySelector('input').onclick = e => e.stopPropagation();
+    tr.onclick = () => { selectedCase = c.case_name; loadResults(c.case_name); refresh(); };
+    tb.appendChild(tr);
+    if (c.local_running && c.run_id) anyRunning = c.run_id;
+  });
+  if (anyRunning) { activeRunId = anyRunning; $('#stopBtn').disabled = false; }
+  else if (activeRunId) { $('#stopBtn').disabled = false; }
+  else { $('#stopBtn').disabled = true; }
+  if (activeRunId) loadLog(activeRunId);
+}
+
+async function loadLog(runId) {
+  const { ok, body } = await api('/api/logs/' + runId + '?tail=300');
+  if (!ok) return;
+  $('#logRunId').textContent = runId + '  [' + (body.status || '') + ']';
+  const pane = $('#logPane');
+  pane.textContent = (body.lines || []).join('\n') || '（ログ待機中…）';
+  pane.scrollTop = pane.scrollHeight;
+}
+
+function sparkline(ts) {
+  const cols = ts.columns || [];
+  if (!cols.includes('step')) return '';
+  const yKey = ['particle_count', 'u_max', 'particle_speed_mean'].find(k => cols.includes(k)) || cols[1];
+  if (!yKey) return '';
+  const xs = ts['step'], ys = ts[yKey];
+  if (!xs || !ys || xs.length < 2) return '';
+  const W = 320, H = 60, pad = 4;
+  const xmin = Math.min(...xs), xmax = Math.max(...xs);
+  const ymin = Math.min(...ys), ymax = Math.max(...ys);
+  const sx = v => pad + (W - 2*pad) * (xmax === xmin ? 0 : (v - xmin)/(xmax - xmin));
+  const sy = v => H - pad - (H - 2*pad) * (ymax === ymin ? 0.5 : (v - ymin)/(ymax - ymin));
+  const pts = xs.map((x, i) => `${sx(x).toFixed(1)},${sy(ys[i]).toFixed(1)}`).join(' ');
+  return `<div class="muted" style="margin:6px 0 2px">${yKey} vs step</div>
+    <svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+      <polyline fill="none" stroke="#4f7cff" stroke-width="1.5" points="${pts}"/></svg>`;
+}
+
+async function loadResults(caseName) {
+  $('#resCase').textContent = caseName;
+  const { ok, body } = await api(`/api/results/${currentSweep}/${caseName}`);
+  const el = $('#resBody');
+  if (!ok) { el.innerHTML = `<span class="muted">${body.error || '結果なし'}</span>`; return; }
+  const metrics = body.metrics || {};
+  const kv = Object.entries(metrics).map(([k, v]) =>
+    `<div class="k">${k}</div><div>${v}</div>`).join('') || '<div class="muted">指標なし</div>';
+  el.innerHTML = `
+    <div class="row-actions">
+      <button id="copyPath">パスをコピー</button>
+      <button id="openPath">フォルダを開く</button>
+    </div>
+    <div class="path" id="resPath">${body.result_dir}</div>
+    <div class="kv" style="margin-top:10px">${kv}</div>
+    ${sparkline(body.time_series || {})}`;
+  $('#copyPath').onclick = () => navigator.clipboard.writeText(body.result_dir);
+  $('#openPath').onclick = () => api(`/api/results/${currentSweep}/${caseName}/open`);
+}
+
+$('#selAll').onclick = e => document.querySelectorAll('.caseCb').forEach(cb => cb.checked = e.target.checked);
+
+$('#runBtn').onclick = async () => {
+  const cases = [...document.querySelectorAll('.caseCb:checked')].map(cb => cb.dataset.alias);
+  if (!cases.length) { $('#runMsg').textContent = 'ケースを選択してください'; return; }
+  const options = { force: $('#optForce').checked, no_push: $('#optNoPush').checked, no_install: $('#optNoInstall').checked };
+  const { ok, body } = await api('/api/run', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sweep: currentSweep, cases, options }),
+  });
+  if (!ok) { $('#runMsg').textContent = '⚠ ' + (body.error || '起動失敗'); return; }
+  activeRunId = body.run_id; $('#runMsg').textContent = '起動: ' + body.cmd; $('#stopBtn').disabled = false;
+  refresh();
+};
+
+$('#stopBtn').onclick = async () => {
+  if (!activeRunId) return;
+  const { ok, body } = await api('/api/stop', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ run_id: activeRunId }),
+  });
+  $('#runMsg').textContent = ok ? '停止しました' : ('⚠ ' + (body.error || '停止失敗'));
+  refresh();
+};
+
+(async function init() {
+  await loadSweeps();
+  await refresh();
+  await loadConfig();
+  setInterval(() => { if (polling) refresh(); }, 2500);
+})();
+</script>
+</body>
+</html>

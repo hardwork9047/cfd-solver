@@ -60,6 +60,17 @@ twine = ">=5.0.0"
 black = ">=24.0.0"
 ruff = ">=0.3.0"
 
+# Optional: web UI for monitoring/controlling sweeps (./bin/sweep-web).
+# Skipped by default; install with `poetry install --with web`.
+[tool.poetry.group.web]
+optional = true
+
+[tool.poetry.group.web.dependencies]
+fastapi = ">=0.110"
+uvicorn = {extras = ["standard"], version = ">=0.29"}
+# Required by fastapi.testclient (used in tests/test_sweep_web.py).
+httpx = ">=0.27"
+
 [tool.black]
 line-length = 100
 target-version = ["py311", "py312", "py313"]

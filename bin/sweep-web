@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Launch the sweep monitoring/control web UI (needs: poetry install --with web).
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT" || exit 1
+HOST="${SWEEP_WEB_HOST:-127.0.0.1}"
+PORT="${SWEEP_WEB_PORT:-8765}"
+echo "Sweep Web UI -> http://${HOST}:${PORT}  (Ctrl-C to stop)"
+exec poetry run uvicorn runners.sweep_web:app --app-dir src --host "$HOST" --port "$PORT"

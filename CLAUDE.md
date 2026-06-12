@@ -31,9 +31,19 @@ poetry run python src/runners/run_lbm_dem.py \
 poetry run python src/runners/run_dem_packing.py \
   --config configs/dem_packing/<config>.json
 
-# Run a parameter sweep
+# Run a parameter sweep (factor expansion, single machine)
 poetry run python src/runners/run_lbm_dem_sweep.py \
   --sweep configs/lbm_dem/sweeps/fouling_screening_example.json
+
+# Multi-machine sweep of manually staged cases (git-coordinated)
+./bin/sweep list                       # registered sweeps and case aliases
+./bin/sweep status                     # cross-machine progress table
+./bin/sweep run <sweep> <case...|all>  # pull, run, harvest light results, push
+./bin/sweep harvest <sweep> all        # backfill completed local runs
+
+# Web UI to monitor/control sweeps on THIS machine (progress view is multi-machine)
+poetry install --with web
+./bin/sweep-web                        # serves http://127.0.0.1:8765
 
 # Analyse sweep results
 poetry run python src/tools/analyze_lbm_dem_design_sweeps.py <results_dir>

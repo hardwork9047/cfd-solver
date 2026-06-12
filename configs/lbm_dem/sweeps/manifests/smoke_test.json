@@ -1,0 +1,7 @@
+{
+  "name": "smoke_test",
+  "description": "20-step smoke case for verifying the sweep CLI end-to-end; also the template for new manifests",
+  "cases": [
+    {"alias": "smoke", "config": "configs/lbm_dem/cases/fouling_3d_smoke.json"}
+  ]
+}

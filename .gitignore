@@ -57,3 +57,6 @@ src/results/*
 *.png
 *.mp4
 *.gif
+
+# Sweep web UI runtime state (logs + local process registry)
+.sweep_web/

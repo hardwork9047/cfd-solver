@@ -1,0 +1,18 @@
+{
+  "name": "fouling_3d_20260609",
+  "description": "Manually staged 3D fouling sweep (2026-06-09): baseline + attraction/repulsion/volume-fraction/rolling-friction/gap variants",
+  "cases": [
+    {"alias": "b0", "config": "configs/lbm_dem/cases/fouling_3d_sweep_20260609_b0_baseline.json"},
+    {"alias": "a1", "config": "configs/lbm_dem/cases/fouling_3d_sweep_20260609_a1_attr_0015.json"},
+    {"alias": "a2", "config": "configs/lbm_dem/cases/fouling_3d_sweep_20260609_a2_attr_0010.json"},
+    {"alias": "a3", "config": "configs/lbm_dem/cases/fouling_3d_sweep_20260609_a3_attr_0005.json"},
+    {"alias": "r1", "config": "configs/lbm_dem/cases/fouling_3d_sweep_20260609_r1_rep_0005.json"},
+    {"alias": "r2", "config": "configs/lbm_dem/cases/fouling_3d_sweep_20260609_r2_rep_0010.json"},
+    {"alias": "c1", "config": "configs/lbm_dem/cases/fouling_3d_sweep_20260609_c1_phi_010.json"},
+    {"alias": "c2", "config": "configs/lbm_dem/cases/fouling_3d_sweep_20260609_c2_phi_020.json"},
+    {"alias": "f1", "config": "configs/lbm_dem/cases/fouling_3d_sweep_20260609_f1_roll_005.json"},
+    {"alias": "f2", "config": "configs/lbm_dem/cases/fouling_3d_sweep_20260609_f2_roll_030.json"},
+    {"alias": "g1", "config": "configs/lbm_dem/cases/fouling_3d_sweep_20260609_g1_gap_wide.json"},
+    {"alias": "g2", "config": "configs/lbm_dem/cases/fouling_3d_sweep_20260609_g2_gap_narrow.json"}
+  ]
+}
